@@ -1,0 +1,18 @@
+{
+  "name": "stellar-charters-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless balance simulator for the Stellar Charters game design (first ~12 turns).",
+  "scripts": {
+    "sim": "tsx src/cli/runSim.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

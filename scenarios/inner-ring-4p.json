@@ -1,0 +1,378 @@
+{
+  "name": "Inner Ring — 4 players",
+  "hubId": "hub",
+  "players": 4,
+  "turns": 12,
+  "systems": [
+    {
+      "id": "hub",
+      "name": "Wormhole Hub",
+      "yields": {},
+      "claimCost": 0,
+      "upkeep": 0,
+      "defense": 99,
+      "innerRing": false
+    },
+    {
+      "id": "s0",
+      "name": "Frosthaven",
+      "yields": {
+        "ice": 12,
+        "metals": 2
+      },
+      "claimCost": 1200,
+      "upkeep": 40,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s1",
+      "name": "Vesta Minor",
+      "yields": {
+        "metals": 14,
+        "ice": 2
+      },
+      "claimCost": 1100,
+      "upkeep": 40,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s2",
+      "name": "Pale Harbor",
+      "yields": {
+        "helium3": 8,
+        "ice": 2
+      },
+      "claimCost": 1800,
+      "upkeep": 55,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s3",
+      "name": "Caldera",
+      "yields": {
+        "food": 10,
+        "ice": 3
+      },
+      "claimCost": 1500,
+      "upkeep": 50,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s4",
+      "name": "Greywake",
+      "yields": {
+        "ice": 4,
+        "metals": 4,
+        "helium3": 2
+      },
+      "claimCost": 1400,
+      "upkeep": 45,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s5",
+      "name": "Deepwell",
+      "yields": {
+        "ice": 12,
+        "metals": 2
+      },
+      "claimCost": 1200,
+      "upkeep": 40,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s6",
+      "name": "Tycho Reach",
+      "yields": {
+        "metals": 14,
+        "ice": 2
+      },
+      "claimCost": 1100,
+      "upkeep": 40,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s7",
+      "name": "Cinder",
+      "yields": {
+        "helium3": 8,
+        "ice": 2
+      },
+      "claimCost": 1800,
+      "upkeep": 55,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s8",
+      "name": "Halcyon",
+      "yields": {
+        "food": 10,
+        "ice": 3
+      },
+      "claimCost": 1500,
+      "upkeep": 50,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "f0",
+      "name": "Brightfall Deep",
+      "yields": {
+        "rareIsotopes": 5,
+        "metals": 3
+      },
+      "claimCost": 2600,
+      "upkeep": 70,
+      "defense": 1,
+      "innerRing": false
+    },
+    {
+      "id": "f1",
+      "name": "Karst Deep",
+      "yields": {
+        "rareIsotopes": 5,
+        "metals": 3
+      },
+      "claimCost": 2600,
+      "upkeep": 70,
+      "defense": 1,
+      "innerRing": false
+    }
+  ],
+  "routes": [
+    {
+      "a": "hub",
+      "b": "s0",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s1",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s2",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s3",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s4",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s5",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s6",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s7",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "hub",
+      "b": "s8",
+      "transitTime": 1,
+      "stability": 0.9,
+      "capacity": 50,
+      "exposure": 0.3,
+      "authorityPresence": 0.8,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s0",
+      "b": "s1",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s1",
+      "b": "s2",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s2",
+      "b": "s3",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s3",
+      "b": "s4",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s4",
+      "b": "s5",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s5",
+      "b": "s6",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s6",
+      "b": "s7",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s7",
+      "b": "s8",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s8",
+      "b": "s0",
+      "transitTime": 1,
+      "stability": 0.7,
+      "capacity": 30,
+      "exposure": 0.6,
+      "authorityPresence": 0.3,
+      "requiredRange": 1,
+      "charted": true
+    },
+    {
+      "a": "s0",
+      "b": "f0",
+      "transitTime": 2,
+      "stability": 0.5,
+      "capacity": 20,
+      "exposure": 0.85,
+      "authorityPresence": 0.1,
+      "requiredRange": 2,
+      "charted": false
+    },
+    {
+      "a": "s3",
+      "b": "f1",
+      "transitTime": 2,
+      "stability": 0.5,
+      "capacity": 20,
+      "exposure": 0.85,
+      "authorityPresence": 0.1,
+      "requiredRange": 2,
+      "charted": false
+    }
+  ],
+  "bots": [
+    "miner",
+    "raider",
+    "balanced",
+    "miner"
+  ]
+}
