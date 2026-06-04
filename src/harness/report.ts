@@ -34,6 +34,14 @@ export interface Aggregate {
   avgRange2Turn: number;
   auctionRefundFracAvg: number;
   auctionFallbackUsageAvg: number;
+  // Late-game layers (Sections 08, 12, 17, 18).
+  acquisitionsPerGame: number;
+  distressPerGame: number;
+  freeOperatorsPerGame: number;
+  depotsPerGame: number;
+  taxPerTurnAvg: number;
+  populatedBeyondOutboundFrac: number; // fraction of owned systems that grew past outpost
+  topStageReached: string;
   flags: RiskFlag[];
 }
 
@@ -74,6 +82,16 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
   let range2Count = 0;
   let refundSum = 0;
   let fallbackSum = 0;
+  let acquisitionsSum = 0;
+  let distressSum = 0;
+  let freeOpsSum = 0;
+  let depotsSum = 0;
+  let taxSum = 0;
+  let taxObs = 0;
+  let grownSystems = 0;
+  let ownedSystems = 0;
+  const stageOrder = ["outpost", "settlement", "colony", "city", "metropolis"];
+  let topStageIdx = 0;
 
   for (const g of games) {
     // Prices.
@@ -123,6 +141,21 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
     }
     refundSum += g.auctionRefundFrac;
     fallbackSum += g.auctionFallbackUsage;
+
+    // Late-game layers.
+    acquisitionsSum += g.acquisitionsTotal;
+    distressSum += g.distressLiquidations;
+    freeOpsSum += g.finalFreeOperators;
+    depotsSum += g.depotsBuilt;
+    for (const s of g.snapshots) {
+      if (s.turn > 0) { taxSum += s.taxLevied; taxObs += 1; }
+    }
+    for (let i = 0; i < stageOrder.length; i++) {
+      const count = g.finalStageCounts[stageOrder[i] as keyof typeof g.finalStageCounts];
+      ownedSystems += count;
+      if (i > 0) grownSystems += count;
+      if (count > 0) topStageIdx = Math.max(topStageIdx, i);
+    }
   }
 
   const n = Math.max(1, games.length);
@@ -153,6 +186,13 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
     avgRange2Turn: round2(range2Count ? range2Sum / range2Count : -1),
     auctionRefundFracAvg: round2(refundSum / n),
     auctionFallbackUsageAvg: round2(fallbackSum / n),
+    acquisitionsPerGame: round2(acquisitionsSum / n),
+    distressPerGame: round2(distressSum / n),
+    freeOperatorsPerGame: round2(freeOpsSum / n),
+    depotsPerGame: round2(depotsSum / n),
+    taxPerTurnAvg: round2(taxObs ? taxSum / taxObs : 0),
+    populatedBeyondOutboundFrac: round2(ownedSystems ? grownSystems / ownedSystems : 0),
+    topStageReached: stageOrder[topStageIdx]!,
     flags: [],
   };
   agg.flags = computeFlags(agg);
@@ -186,6 +226,16 @@ function computeFlags(a: Aggregate): RiskFlag[] {
       triggered: a.valuationGiniAvg > 0.55 || a.leaderToMedianRatio > 4,
       detail: `valuation Gini ${a.valuationGiniAvg}, leader/median ${a.leaderToMedianRatio}`,
     },
+    {
+      name: "Takeover layer inert",
+      triggered: a.acquisitionsPerGame < 0.1 && a.distressPerGame < 0.1,
+      detail: `${a.acquisitionsPerGame} acquisitions + ${a.distressPerGame} liquidations per game`,
+    },
+    {
+      name: "Food micromanagement burden",
+      triggered: a.populatedBeyondOutboundFrac < 0.05,
+      detail: `only ${(a.populatedBeyondOutboundFrac * 100).toFixed(0)}% of systems grew past Outpost (top ${a.topStageReached})`,
+    },
   ];
 }
 
@@ -193,8 +243,9 @@ export function renderMarkdown(aggs: Aggregate[]): string {
   const lines: string[] = [];
   lines.push("# Stellar Charters — Balance Summary\n");
   lines.push(
-    "Headless all-bot simulation of the first ~12 turns. Each block is a batch of games " +
-      "across swept seeds. Flags map to the Section 21 design risks.\n",
+    "Headless all-bot simulation across swept seeds. Each block is a batch of games. " +
+      "Flags map to the Section 21 design risks plus the late-game layers " +
+      "(population/food, Trade Depots, debt/equity takeover, Free Operator).\n",
   );
   for (const a of aggs) {
     lines.push(`## ${a.players} players · ${a.games} games · ${a.turns} turns\n`);
@@ -232,6 +283,16 @@ export function renderMarkdown(aggs: Aggregate[]): string {
     lines.push(`- Route-traffic Gini: ${a.routeTrafficGiniAvg}`);
     lines.push(`- Valuation Gini: ${a.valuationGiniAvg}; leader/median ${a.leaderToMedianRatio}`);
     lines.push(`- Auction refund frac: ${a.auctionRefundFracAvg}; fallback usage ${a.auctionFallbackUsageAvg}`);
+    lines.push("");
+
+    lines.push("### Late game (population · depots · takeovers · free operators)");
+    lines.push(`- Tax levied per turn (avg): ${a.taxPerTurnAvg}`);
+    lines.push(
+      `- Systems grown past Outpost: ${(a.populatedBeyondOutboundFrac * 100).toFixed(0)}% (top stage reached: ${a.topStageReached})`,
+    );
+    lines.push(`- Trade Depots built per game: ${a.depotsPerGame}`);
+    lines.push(`- Acquisitions per game: ${a.acquisitionsPerGame}; distress liquidations: ${a.distressPerGame}`);
+    lines.push(`- Free Operators at game end (avg): ${a.freeOperatorsPerGame}`);
     lines.push("");
   }
   return lines.join("\n");

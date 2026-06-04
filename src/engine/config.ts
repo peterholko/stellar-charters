@@ -79,12 +79,44 @@ export interface Tuning {
   debtInterest: number;
   /** Population food consumption per stage, per turn. */
   foodNeed: Record<PopulationStage, number>;
-  /** Valuation weights (Section 17 light formula). */
+  /** Population ice (life-support) consumption per stage, per turn (Section 07/08). */
+  iceNeed: Record<PopulationStage, number>;
+  /** Tax credits a fed population pays its charter holder per stage, per turn. */
+  taxPerStage: Record<PopulationStage, number>;
+  /** Population growth added per fed turn, per current stage. */
+  growthRate: Record<PopulationStage, number>;
+  /** Progress points required to advance to the next stage. */
+  growthThreshold: number;
+  /** Unrest added per starved turn; production multiplier = 1 - unrestProductionPenalty*unrest. */
+  unrestPerStarvedTurn: number;
+  unrestRecoveryPerFedTurn: number;
+  unrestProductionPenalty: number;
+  /** Premium multiplier on emergency humanity food/ice imports (Section 08). */
+  emergencyImportPremium: number;
+  /** Hydroponics: build cost, ice consumed per turn, food produced per turn (Section 08). */
+  hydroponicsCost: number;
+  hydroponicsIceUse: number;
+  hydroponicsFoodOutput: number;
+  /** Trade Depot effects (Section 12). */
+  depotCost: number;
+  depotShippingDiscount: number; // fraction off shipping on incident routes
+  depotTransitBonus: number; // turns shaved off incident routes (min 1)
+  depotDefenseBonus: number; // added to local raid defense on incident routes
+  /** Equity & acquisition (Section 17). */
+  sharesOutstanding: number;
+  acquisitionThreshold: number; // fraction of shares for control
+  /** Max debt as a multiple of valuation. */
+  maxDebtToValuation: number;
+  /** Credits floor below which a charter falls into distress liquidation. */
+  distressCreditFloor: number;
+  /** Valuation weights (Section 17). */
   valuation: {
     perSystemYieldValue: number;
     populationValue: Record<PopulationStage, number>;
     shipValue: number;
+    depotValue: number;
     stockpileFrac: number;
+    earningsMomentumWeight: number;
   };
 }
 
@@ -106,6 +138,25 @@ export const DEFAULT_TUNING: Tuning = {
   rangeResearchCost: { 1: 0, 2: 1500, 3: 4500, 4: 9000 },
   debtInterest: 0.05,
   foodNeed: { outpost: 0, settlement: 2, colony: 6, city: 14, metropolis: 30 },
+  iceNeed: { outpost: 1, settlement: 1, colony: 2, city: 4, metropolis: 8 },
+  taxPerStage: { outpost: 0, settlement: 40, colony: 120, city: 280, metropolis: 600 },
+  growthRate: { outpost: 60, settlement: 30, colony: 18, city: 10, metropolis: 0 },
+  growthThreshold: 100,
+  unrestPerStarvedTurn: 0.25,
+  unrestRecoveryPerFedTurn: 0.15,
+  unrestProductionPenalty: 0.6,
+  emergencyImportPremium: 1.25,
+  hydroponicsCost: 600,
+  hydroponicsIceUse: 2,
+  hydroponicsFoodOutput: 6,
+  depotCost: 2000,
+  depotShippingDiscount: 0.35,
+  depotTransitBonus: 1,
+  depotDefenseBonus: 3,
+  sharesOutstanding: 100,
+  acquisitionThreshold: 0.5,
+  maxDebtToValuation: 1.0,
+  distressCreditFloor: -2000,
   valuation: {
     perSystemYieldValue: 40,
     populationValue: {
@@ -116,7 +167,9 @@ export const DEFAULT_TUNING: Tuning = {
       metropolis: 10000,
     },
     shipValue: 500,
+    depotValue: 2000,
     stockpileFrac: 0.5,
+    earningsMomentumWeight: 4,
   },
 };
 

@@ -1,13 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { Engine } from "../src/engine/engine.js";
 import { defaultRegistry } from "../src/engine/bots/registry.js";
+import type { Bot, BotFactory, PlayerView } from "../src/engine/bots/bot.js";
+import { bidList, sellSurplus, valueSystem } from "../src/engine/bots/strategy.js";
+import type { BidOrder, Order } from "../src/engine/types.js";
 import { tinyScenario } from "./helpers.js";
+
+/** A bot that only bids and sells surplus — no other spending, to isolate settlement. */
+class SellerBot implements Bot {
+  readonly id = "seller";
+  bid(view: PlayerView): BidOrder {
+    return { kind: "bid", priorities: bidList(view, (s) => valueSystem(view, s)) };
+  }
+  decide(view: PlayerView): Order[] {
+    return sellSurplus(view);
+  }
+}
 
 describe("engine resolution order", () => {
   it("defers convoy settlement to a later turn (no same-turn chaining)", () => {
-    // Single player, zero upkeep: credit changes come only from deferred sale payouts.
+    // Single seller-only player: credit changes come only from deferred sale payouts.
     const config = { ...tinyScenario(1, 1), turns: 6 };
-    const engine = new Engine(config, 0, defaultRegistry());
+    const registry = new Map<string, BotFactory>([["miner", () => new SellerBot()]]);
+    const engine = new Engine(config, 0, registry);
     const metrics = engine.run();
 
     const credAt = (t: number) =>

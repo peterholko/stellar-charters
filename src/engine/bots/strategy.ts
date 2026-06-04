@@ -62,13 +62,20 @@ export function bidList(
   return priorities;
 }
 
-/** Sell everything extractable beyond a small buffer, at the price floor so it fills. */
+/** Sell extractable surplus, reserving food/ice a populated system needs for upkeep. */
 export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
+  const t = view.config.tuning;
   const orders: MarketOrder[] = [];
   for (const sysId of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(sysId);
     for (const r of EXPORT_RESOURCES) {
-      const qty = sys.stockpile[r] - buffer;
+      // Keep two turns of life-support food/ice locally so we don't sell then re-import.
+      let reserve = buffer;
+      if (r === "food") reserve = Math.max(buffer, t.foodNeed[sys.populationStage] * 2);
+      if (r === "ice") {
+        reserve = Math.max(buffer, t.iceNeed[sys.populationStage] * 2 + sys.hydroponics * t.hydroponicsIceUse * 2);
+      }
+      const qty = sys.stockpile[r] - reserve;
       if (qty <= 0) continue;
       orders.push({
         kind: "market",
@@ -84,11 +91,128 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
   return orders;
 }
 
+/** Build a Trade Depot on the corp's best export hub once established (Section 12). */
+export function maybeBuildDepot(view: PlayerView): Order[] {
+  if (view.turn < 8 || view.me.ownedSystemIds.length < 2) return [];
+  if (view.me.credits < view.config.tuning.depotCost * 1.1) return [];
+  // Pick the owned system with the richest output and no depot yet.
+  const candidates = view.me.ownedSystemIds
+    .map((id) => view.galaxy.system(id))
+    .filter((s) => !s.hasDepot)
+    .sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a));
+  const target = candidates[0];
+  if (!target) return [];
+  return [{ kind: "buildDepot", systemId: target.id }];
+}
+
+/** Build hydroponics on a populated, food-short system to keep it growing (Section 08). */
+export function maybeBuildHydroponics(view: PlayerView): Order[] {
+  if (view.me.credits < view.config.tuning.hydroponicsCost * 1.5) return [];
+  for (const id of view.me.ownedSystemIds) {
+    const sys = view.galaxy.system(id);
+    if (sys.hydroponics >= 4) continue; // cap modules per system
+    const need = view.config.tuning.foodNeed[sys.populationStage];
+    const localFood = sys.yields.food + sys.hydroponics * view.config.tuning.hydroponicsFoodOutput;
+    // A colony that can't feed itself locally — local food is what unlocks growth now.
+    if (need > 0 && localFood < need) {
+      return [{ kind: "buildHydroponics", systemId: id }];
+    }
+  }
+  return [];
+}
+
+/** Mutable per-bot memory so a financier locks onto one acquisition target. */
+export interface BotState {
+  acqTarget?: string;
+}
+
+/** Resolve (and persist) which charter rival this corp is trying to take over. */
+function lockTarget(view: PlayerView, state: BotState): PlayerView["corporations"][number] | undefined {
+  const current = state.acqTarget
+    ? view.corporations.find((c) => c.id === state.acqTarget)
+    : undefined;
+  // Keep an existing valid, still-chartered target; otherwise pick the weakest rival.
+  if (current && current.hasCharter && current.ownedSystemIds.length > 0) return current;
+  const next = weakestRival(view);
+  state.acqTarget = next?.id;
+  return next;
+}
+
+/**
+ * Financier play (Section 17): once rivals have real assets and debt, lock onto the
+ * weakest charter and accumulate a controlling stake decisively (borrowing against our
+ * own valuation if cash is short), rather than spreading bids thin across rivals.
+ */
+export function financierOrders(
+  view: PlayerView,
+  state: BotState,
+  opts: { sinceTurn?: number; maxTargetStrength?: number } = {},
+): Order[] {
+  const since = opts.sinceTurn ?? 13;
+  if (view.turn < since) return [];
+  // Only an established charter pursues takeovers, and only of a meaningfully
+  // weaker rival — this keeps consolidation an endgame move, not a snowball that
+  // swallows near-peers (Section 17 onboarding pacing).
+  if (!view.me.hasCharter || view.me.valuation <= 0) return [];
+  const target = lockTarget(view, state);
+  if (!target) return [];
+  const maxStrength = opts.maxTargetStrength ?? 0.5;
+  if (target.valuation > view.me.valuation * maxStrength) {
+    state.acqTarget = undefined;
+    return [];
+  }
+
+  const price = target.sharePrice;
+  const held = target.shareRegister[view.me.id] ?? 0;
+  // Aim just past the control threshold and buy as much of the gap as affordable.
+  const goal = Math.ceil(view.config.tuning.acquisitionThreshold * target.sharesOutstanding) + 1;
+  const remaining = goal - held;
+  if (remaining <= 0) return [];
+
+  const orders: Order[] = [];
+  const cost = remaining * price;
+  if (cost > view.me.credits && view.me.valuation > 0) {
+    orders.push({ kind: "borrow", amount: Math.ceil(cost - view.me.credits) });
+  }
+  orders.push({ kind: "buyShares", targetId: target.id, shares: remaining });
+  return orders;
+}
+
+/** The most acquirable charter rival: lowest valuation among other charter holders. */
+function weakestRival(view: PlayerView): PlayerView["corporations"][number] | undefined {
+  return view.corporations
+    .filter((c) => c.id !== view.me.id && c.hasCharter && c.ownedSystemIds.length > 0)
+    .sort((a, b) => a.valuation - b.valuation)[0];
+}
+
+/**
+ * Post-charter play (Section 18): a Free Operator can't claim or build colonial
+ * infrastructure, so it earns through plunder and speculates on a comeback by buying
+ * a controlling stake in a weak charter.
+ */
+export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
+  const orders: Order[] = [];
+  // Merchant/privateer income: haunt the busiest lane.
+  orders.push(...planRaid(view, { fundFactor: 1.1 }));
+  // Comeback: buy toward control of a locked target charter when flush.
+  const target = lockTarget(view, state);
+  if (target && view.me.credits > target.sharePrice * 5) {
+    const held = target.shareRegister[view.me.id] ?? 0;
+    const goal = Math.ceil(view.config.tuning.acquisitionThreshold * target.sharesOutstanding) + 1;
+    const want = Math.min(
+      goal - held,
+      Math.floor((view.me.credits * 0.6) / Math.max(0.01, target.sharePrice)),
+    );
+    if (want > 0) orders.push({ kind: "buyShares", targetId: target.id, shares: want });
+  }
+  return orders;
+}
+
 /** Research Range 2 once the corp has spare cash and hasn't yet (Section 04). */
 export function maybeResearchRange2(view: PlayerView): Order[] {
   if (view.me.rangeTier >= 2) return [];
   const cost = view.config.tuning.rangeResearchCost[2];
-  if (view.turn >= 5 && view.me.credits > cost * 1.6) {
+  if (view.turn >= 4 && view.me.credits > cost * 1.3) {
     return [{ kind: "researchRange", targetTier: 2 }];
   }
   return [];
@@ -101,6 +225,8 @@ function grossYieldValue(view: PlayerView, sys: System): number {
 
 /** Claim the best unclaimed inner-ring system if affordable (second/third claim). */
 export function maybeExpand(view: PlayerView): Order[] {
+  // Cap early sprawl so cash is left for depots, frontier reach, and equity plays.
+  if (view.me.ownedSystemIds.length >= 3) return [];
   // Rank by gross output; over the remaining turns a productive system pays for itself.
   const candidates = view.galaxy
     .innerRingSystems()
@@ -134,7 +260,7 @@ export function maybeFrontier(view: PlayerView): Order[] {
       const anchor = r.a === sys.id ? r.b : r.a;
       return view.me.ownedSystemIds.includes(anchor);
     });
-    if (reachable && view.me.credits > sys.claimCost + 600) {
+    if (reachable && view.me.credits > sys.claimCost + 200) {
       orders.push({ kind: "claim", systemId: sys.id, amount: sys.claimCost });
       return orders;
     }

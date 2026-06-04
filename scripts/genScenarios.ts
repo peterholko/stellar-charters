@@ -100,19 +100,20 @@ function buildScenario(
   }
 
   // Frontier systems: rare isotopes, reachable only via Range-2 uncharted routes.
+  // Anchors are spread across the ring so most corps can reach a deep tunnel.
   for (let f = 0; f < frontierCount; f++) {
     const id = `f${f}`;
     systems.push({
       id,
       name: `${NAMES[(innerCount + f) % NAMES.length]!} Deep`,
       yields: { rareIsotopes: 5, metals: 3 },
-      claimCost: 2600,
+      claimCost: 1500,
       upkeep: 70,
       defense: 1,
       innerRing: false,
     });
-    // Hang each frontier system off an inner system via an exposed deep tunnel.
-    const anchor = `s${(f * 3) % innerCount}`;
+    // Hang each frontier system off a distinct inner system via an exposed deep tunnel.
+    const anchor = `s${Math.floor((f * innerCount) / frontierCount) % innerCount}`;
     routes.push({
       a: anchor,
       b: id,
@@ -126,21 +127,21 @@ function buildScenario(
     });
   }
 
-  return { name, hubId: "hub", players, turns: 12, systems, routes, bots };
+  return { name, hubId: "hub", players, turns: 24, systems, routes, bots };
 }
 
 const eightP = buildScenario(
   "Inner Ring — 8 players",
   8,
   16,
-  3,
+  5,
   ["miner", "raider", "balanced", "miner", "balanced", "raider", "miner", "balanced"],
 );
 const fourP = buildScenario(
   "Inner Ring — 4 players",
   4,
   9,
-  2,
+  3,
   ["miner", "raider", "balanced", "miner"],
 );
 

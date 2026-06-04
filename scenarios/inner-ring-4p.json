@@ -2,7 +2,7 @@
   "name": "Inner Ring — 4 players",
   "hubId": "hub",
   "players": 4,
-  "turns": 12,
+  "turns": 24,
   "systems": [
     {
       "id": "hub",
@@ -129,7 +129,7 @@
         "rareIsotopes": 5,
         "metals": 3
       },
-      "claimCost": 2600,
+      "claimCost": 1500,
       "upkeep": 70,
       "defense": 1,
       "innerRing": false
@@ -141,7 +141,19 @@
         "rareIsotopes": 5,
         "metals": 3
       },
-      "claimCost": 2600,
+      "claimCost": 1500,
+      "upkeep": 70,
+      "defense": 1,
+      "innerRing": false
+    },
+    {
+      "id": "f2",
+      "name": "Meridian Deep",
+      "yields": {
+        "rareIsotopes": 5,
+        "metals": 3
+      },
+      "claimCost": 1500,
       "upkeep": 70,
       "defense": 1,
       "innerRing": false
@@ -360,6 +372,17 @@
     {
       "a": "s3",
       "b": "f1",
+      "transitTime": 2,
+      "stability": 0.5,
+      "capacity": 20,
+      "exposure": 0.85,
+      "authorityPresence": 0.1,
+      "requiredRange": 2,
+      "charted": false
+    },
+    {
+      "a": "s6",
+      "b": "f2",
       "transitTime": 2,
       "stability": 0.5,
       "capacity": 20,

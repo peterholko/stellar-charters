@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Headless balance simulator for the Stellar Charters game design (first ~12 turns).",
+  "description": "Headless balance simulator for the Stellar Charters game design (full ~24-turn match, all-bot).",
   "scripts": {
     "sim": "tsx src/cli/runSim.ts",
     "test": "vitest run",

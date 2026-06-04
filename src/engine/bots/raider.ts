@@ -7,10 +7,20 @@
  */
 import type { BidOrder, Order } from "../types.js";
 import type { Bot, PlayerView } from "./bot.js";
-import { bidList, planRaid, routeExposureScore, sellSurplus, valueSystem } from "./strategy.js";
+import {
+  bidList,
+  financierOrders,
+  freeOperatorOrders,
+  planRaid,
+  routeExposureScore,
+  sellSurplus,
+  valueSystem,
+  type BotState,
+} from "./strategy.js";
 
 export class RaiderBot implements Bot {
   readonly id = "raider";
+  private readonly state: BotState = {};
 
   bid(view: PlayerView): BidOrder {
     // Prefer cheap systems sitting on exposed routes; mild weight on raw value.
@@ -25,11 +35,14 @@ export class RaiderBot implements Bot {
   }
 
   decide(view: PlayerView): Order[] {
+    if (view.me.isFreeOperator) return freeOperatorOrders(view, this.state);
     const orders: Order[] = [];
     // Raiders still export their own modest output to stay solvent.
     orders.push(...sellSurplus(view, 0));
     // Aggressively haunt the busiest export lane from turn 3 onward.
     if (view.turn >= 3) orders.push(...planRaid(view, { fundFactor: 1.2 }));
+    // Having bled a rival via raids, move to seize it through equity (Section 17).
+    orders.push(...financierOrders(view, this.state, { sinceTurn: 16 }));
     return orders;
   }
 }

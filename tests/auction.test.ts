@@ -1,23 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { resolveAuction } from "../src/engine/auction.js";
-import type { BidOrder, Corporation } from "../src/engine/types.js";
-import { tinyScenario } from "./helpers.js";
+import type { BidOrder } from "../src/engine/types.js";
+import { makeCorp, tinyScenario } from "./helpers.js";
 
-function corp(id: string): Corporation {
-  return {
-    id,
-    name: id,
-    credits: 10000,
-    debt: 0,
-    ownedSystemIds: [],
-    ships: [],
-    privateers: [],
-    rangeTier: 1,
-    valuation: 0,
-    botId: "miner",
-    hasCharter: false,
-  };
-}
+const corp = (id: string) => makeCorp({ id });
 
 describe("opening auction", () => {
   it("awards each contested system to the highest bidder, one per player", () => {

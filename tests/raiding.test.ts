@@ -3,7 +3,7 @@ import { Rng } from "../src/engine/rng.js";
 import { canRaidRoute, resolveRaid } from "../src/engine/raiding.js";
 import { Galaxy } from "../src/engine/galaxy.js";
 import type { Convoy, Corporation, WarpRoute } from "../src/engine/types.js";
-import { tinyScenario } from "./helpers.js";
+import { makeCorp, tinyScenario } from "./helpers.js";
 
 function convoy(): Convoy {
   return {
@@ -40,20 +40,7 @@ function route(exposure: number, authority: number): WarpRoute {
 }
 
 function corp(over: Partial<Corporation>): Corporation {
-  return {
-    id: "atk",
-    name: "atk",
-    credits: 0,
-    debt: 0,
-    ownedSystemIds: [],
-    ships: [],
-    privateers: [],
-    rangeTier: 1,
-    valuation: 0,
-    botId: "raider",
-    hasCharter: false,
-    ...over,
-  };
+  return makeCorp({ id: "atk", name: "atk", credits: 0, botId: "raider", ...over });
 }
 
 describe("raid outcomes", () => {

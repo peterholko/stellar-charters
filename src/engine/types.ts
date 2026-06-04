@@ -42,6 +42,14 @@ export interface System {
   claimCost: number;
   upkeep: number;
   populationStage: PopulationStage;
+  /** Progress (0..100) toward the next population stage (Section 08). */
+  populationProgress: number;
+  /** Social unrest (0..1) from starvation; lowers tax and production. */
+  unrest: number;
+  /** Number of hydroponic modules built (each adds food production). */
+  hydroponics: number;
+  /** True if a Trade Depot has been built here (Section 12). */
+  hasDepot: boolean;
   /** Defensive strength against raids at this system's tunnel mouths. */
   defense: number;
   /** Ids of warp routes incident to this system. */
@@ -127,8 +135,20 @@ export interface Corporation {
   privateers: Privateer[];
   /** Best range tier the corporation can field (from research/licensing). */
   rangeTier: RangeTier;
-  /** Latest computed valuation (Section 17, light formula). */
+  /** Latest computed valuation (Section 17). */
   valuation: number;
+  /** Latest per-share price = valuation / sharesOutstanding. */
+  sharePrice: number;
+  /** Total shares issued by this corporation (constant). */
+  sharesOutstanding: number;
+  /** Who holds this corporation's shares: holderCorpId -> share count. */
+  shareRegister: Record<string, number>;
+  /** Original controlling player's id (the founder block holder). */
+  founderId: string;
+  /** Recent per-turn net earnings, for valuation momentum (Section 17). */
+  recentEarnings: number[];
+  /** True once the corporation has lost/sold its charter (Section 18). */
+  isFreeOperator: boolean;
   /** Bot strategy id controlling this corporation. */
   botId: string;
   /** True once the corporation holds at least one charter claim. */
@@ -209,6 +229,27 @@ export interface EscortOrder {
   strength: number;
 }
 
+export interface BuildDepotOrder {
+  kind: "buildDepot";
+  systemId: string;
+}
+
+export interface BuildHydroponicsOrder {
+  kind: "buildHydroponics";
+  systemId: string;
+}
+
+export interface BuySharesOrder {
+  kind: "buyShares";
+  targetId: string;
+  shares: number;
+}
+
+export interface BorrowOrder {
+  kind: "borrow";
+  amount: number;
+}
+
 export type Order =
   | BidOrder
   | MarketOrder
@@ -220,4 +261,8 @@ export type Order =
   | HirePrivateerOrder
   | InterdictOrder
   | TargetConvoyOrder
-  | EscortOrder;
+  | EscortOrder
+  | BuildDepotOrder
+  | BuildHydroponicsOrder
+  | BuySharesOrder
+  | BorrowOrder;

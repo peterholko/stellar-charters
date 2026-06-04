@@ -2,6 +2,32 @@
  * Small scenario builders for tests.
  */
 import { loadScenario, type GameConfig, type Scenario } from "../src/engine/config.js";
+import type { Corporation } from "../src/engine/types.js";
+
+/** A fully-formed Corporation for unit tests, with sensible equity defaults. */
+export function makeCorp(over: Partial<Corporation> = {}): Corporation {
+  const id = over.id ?? "c";
+  return {
+    id,
+    name: id,
+    credits: 10000,
+    debt: 0,
+    ownedSystemIds: [],
+    ships: [],
+    privateers: [],
+    rangeTier: 1,
+    valuation: 0,
+    sharePrice: 0,
+    sharesOutstanding: 100,
+    shareRegister: { [id]: 100 },
+    founderId: id,
+    recentEarnings: [],
+    isFreeOperator: false,
+    botId: "miner",
+    hasCharter: false,
+    ...over,
+  };
+}
 
 /** A minimal hub + N inner systems, each on a 1-turn charted lane to the hub. */
 export function tinyScenario(players: number, innerCount: number): GameConfig {

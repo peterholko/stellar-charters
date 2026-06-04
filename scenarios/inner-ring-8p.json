@@ -2,7 +2,7 @@
   "name": "Inner Ring — 8 players",
   "hubId": "hub",
   "players": 8,
-  "turns": 12,
+  "turns": 24,
   "systems": [
     {
       "id": "hub",
@@ -215,7 +215,7 @@
         "rareIsotopes": 5,
         "metals": 3
       },
-      "claimCost": 2600,
+      "claimCost": 1500,
       "upkeep": 70,
       "defense": 1,
       "innerRing": false
@@ -227,7 +227,7 @@
         "rareIsotopes": 5,
         "metals": 3
       },
-      "claimCost": 2600,
+      "claimCost": 1500,
       "upkeep": 70,
       "defense": 1,
       "innerRing": false
@@ -239,7 +239,31 @@
         "rareIsotopes": 5,
         "metals": 3
       },
-      "claimCost": 2600,
+      "claimCost": 1500,
+      "upkeep": 70,
+      "defense": 1,
+      "innerRing": false
+    },
+    {
+      "id": "f3",
+      "name": "Roan Deep",
+      "yields": {
+        "rareIsotopes": 5,
+        "metals": 3
+      },
+      "claimCost": 1500,
+      "upkeep": 70,
+      "defense": 1,
+      "innerRing": false
+    },
+    {
+      "id": "f4",
+      "name": "Sable Deep",
+      "yields": {
+        "rareIsotopes": 5,
+        "metals": 3
+      },
+      "claimCost": 1500,
       "upkeep": 70,
       "defense": 1,
       "innerRing": false
@@ -623,6 +647,28 @@
     {
       "a": "s6",
       "b": "f2",
+      "transitTime": 2,
+      "stability": 0.5,
+      "capacity": 20,
+      "exposure": 0.85,
+      "authorityPresence": 0.1,
+      "requiredRange": 2,
+      "charted": false
+    },
+    {
+      "a": "s9",
+      "b": "f3",
+      "transitTime": 2,
+      "stability": 0.5,
+      "capacity": 20,
+      "exposure": 0.85,
+      "authorityPresence": 0.1,
+      "requiredRange": 2,
+      "charted": false
+    },
+    {
+      "a": "s12",
+      "b": "f4",
       "transitTime": 2,
       "stability": 0.5,
       "capacity": 20,

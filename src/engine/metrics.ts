@@ -6,7 +6,7 @@
  * chokepoint dominance, order/UX fatigue, run-away leaders).
  */
 import type { RaidOutcome } from "./raiding.js";
-import { RESOURCES, type Resource } from "./types.js";
+import { RESOURCES, type PopulationStage, type Resource } from "./types.js";
 
 export interface TurnSnapshot {
   turn: number;
@@ -23,6 +23,13 @@ export interface TurnSnapshot {
   raidOutcomes: Record<RaidOutcome, number>;
   /** Convoys per route this turn, keyed by route id (chokepoint metric). */
   routeTraffic: Record<string, number>;
+  /** Tax credited to charter holders this turn (population economy). */
+  taxLevied: number;
+  /** Acquisitions and distress liquidations resolved this turn (Sections 17–18). */
+  acquisitions: number;
+  distress: number;
+  /** Free Operators active at end of this turn. */
+  freeOperators: number;
 }
 
 export interface GameMetrics {
@@ -37,6 +44,12 @@ export interface GameMetrics {
   auctionRefundFrac: number;
   auctionFallbackUsage: number;
   finalValuation: Record<string, number>;
+  /** Late-game layers (Sections 12, 17, 18). */
+  acquisitionsTotal: number;
+  distressLiquidations: number;
+  finalFreeOperators: number;
+  depotsBuilt: number;
+  finalStageCounts: Record<PopulationStage, number>;
 }
 
 export function emptyRaidOutcomes(): Record<RaidOutcome, number> {
