@@ -27,6 +27,8 @@ export {
   type RaidResult,
 } from "./raiding.js";
 export { Engine, type EngineOptions } from "./engine.js";
+export { type TurnEvent, type TurnReport } from "./report.js";
+export { HumanBot } from "./bots/human.js";
 export {
   gini,
   coefficientOfVariation,

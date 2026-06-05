@@ -2,3 +2,7 @@ node_modules/
 out/
 *.log
 .DS_Store
+
+# Web build + Cloudflare local state
+web/dist/
+.wrangler/

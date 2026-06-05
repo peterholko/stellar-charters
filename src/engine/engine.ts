@@ -34,6 +34,7 @@ import {
   type Resource,
 } from "./types.js";
 import type { Bot, BotFactory, PlayerView } from "./bots/bot.js";
+import type { TurnEvent, TurnReport } from "./report.js";
 
 export interface EngineOptions {
   /** Optional per-turn text logger for `--verbose` single-game runs. */
@@ -53,6 +54,11 @@ export class Engine {
   private readonly claimedTurn = new Map<string, number>();
   private turn = 0;
   private readonly log: (line: string) => void;
+
+  /** Observations collected during the current turn for the interactive TurnReport. */
+  private events: TurnEvent[] = [];
+  /** Tax levied during the most recent turn (surfaced in the TurnReport). */
+  private lastTaxLevied = 0;
 
   private readonly metrics: GameMetrics;
 
@@ -135,10 +141,81 @@ export class Engine {
     return this.metrics;
   }
 
+  // ----- Interactive stepping API (web client) -----
+  //
+  // The headless `run()` drives the whole match in one call. The web client drives
+  // it one turn at a time, injecting the human seat's orders between turns (via a
+  // HumanBot whose bid()/decide() return UI-staged orders). These wrappers add no new
+  // resolution logic — they reuse the same private turn methods — so the simulator and
+  // its determinism tests are unaffected.
+
+  /** True once the match has played its final turn. */
+  get isOver(): boolean {
+    return this.turn >= this.config.turns;
+  }
+
+  /** The current turn number (0 before the auction, 1 = auction, then 2..N). */
+  get currentTurn(): number {
+    return this.turn;
+  }
+
+  /** Convoys currently live on the map. */
+  get activeConvoys(): readonly Convoy[] {
+    return this.convoys;
+  }
+
+  /** A player's full view of the game (the same surface bots reason over). */
+  playerView(corpId: string): PlayerView {
+    const corp = this.corps.find((c) => c.id === corpId);
+    if (!corp) throw new Error(`Unknown corporation ${corpId}`);
+    return this.viewFor(corp);
+  }
+
+  /** Resolve the opening Inner Ring auction (turn 1) and return its report. */
+  stepAuction(): TurnReport {
+    if (this.turn !== 0) throw new Error("Auction already resolved");
+    this.turn = 1;
+    this.runAuctionTurn();
+    return this.buildReport("auction");
+  }
+
+  /** Resolve one normal turn and return its report. */
+  stepTurn(): TurnReport {
+    if (this.turn < 1) throw new Error("Call stepAuction() before stepTurn()");
+    if (this.isOver) throw new Error("Match is over");
+    this.turn += 1;
+    this.runNormalTurn();
+    if (this.isOver) {
+      for (const c of this.corps) {
+        this.metrics.finalValuation[c.id] = c.valuation;
+        if (c.isFreeOperator) this.metrics.finalFreeOperators += 1;
+      }
+    }
+    return this.buildReport("normal");
+  }
+
+  private buildReport(phase: "auction" | "normal"): TurnReport {
+    return {
+      turn: this.turn,
+      phase,
+      events: this.events.slice(),
+      prices: { ...this.market.prices },
+      corps: this.corps.map((c) => ({
+        id: c.id,
+        credits: Math.round(c.credits),
+        valuation: c.valuation,
+        sharePrice: c.sharePrice,
+      })),
+      taxLevied: Math.round(this.lastTaxLevied),
+    };
+  }
+
   // ----- Opening auction (Section 05) -----
 
   private runAuctionTurn(): void {
     this.log(`\n=== Turn 1 — Inner Ring Claim Auction ===`);
+    this.events = [];
+    this.lastTaxLevied = 0;
     const bids = new Map<string, ReturnType<Bot["bid"]>>();
     let fallbackUsers = 0;
     for (const corp of this.corps) {
@@ -179,6 +256,7 @@ export class Engine {
         corp.ownedSystemIds.push(wonSystem);
         corp.hasCharter = true;
         this.claimedTurn.set(wonSystem, 1);
+        this.events.push({ type: "auctionAward", corpId: corp.id, systemId: wonSystem, amount: spent });
         this.log(
           `  ${corp.name} (${corp.botId}) wins ${sys.name} for ${spent} cr`,
         );
@@ -197,6 +275,7 @@ export class Engine {
 
   private runNormalTurn(): void {
     this.log(`\n=== Turn ${this.turn} ===`);
+    this.events = [];
     const creditsBefore = new Map(this.corps.map((c) => [c.id, c.credits]));
 
     // 1. Lock: collect orders from every bot.
@@ -226,6 +305,7 @@ export class Engine {
 
     // 8. Upkeep, population/food, tax, debt.
     const popStats = this.resolvePopulationAndUpkeep();
+    this.lastTaxLevied = popStats.taxLevied;
 
     // 9. Valuation + share prices.
     this.updateValuations();
@@ -265,6 +345,7 @@ export class Engine {
             ) {
               this.metrics.secondClaimTurn[corp.id] = this.turn;
             }
+            this.events.push({ type: "build", corpId: corp.id, what: "Claimed system", systemId: sys.id });
             this.log(`  ${corp.name} claims ${sys.name} for ${order.amount} cr`);
             break;
           }
@@ -274,6 +355,7 @@ export class Engine {
             if (corp.credits < this.config.tuning.surveyCost) break;
             corp.credits -= this.config.tuning.surveyCost;
             route.charted = true;
+            this.events.push({ type: "build", corpId: corp.id, what: "Charted warp route" });
             this.log(`  ${corp.name} charts route ${route.id}`);
             break;
           }
@@ -301,6 +383,12 @@ export class Engine {
               stationedAt: sys.id,
             });
             this.metrics.shipsBuilt += 1;
+            this.events.push({
+              type: "build",
+              corpId: corp.id,
+              what: `Range-${order.rangeTier} ${order.raider ? "raider" : "escort"}`,
+              systemId: sys.id,
+            });
             this.log(
               `  ${corp.name} builds a Range-${order.rangeTier} ${order.raider ? "raider" : "escort"} at ${sys.name}`,
             );
@@ -315,6 +403,7 @@ export class Engine {
             if (order.targetTier >= 2 && this.metrics.range2Turn[corp.id] === -1) {
               this.metrics.range2Turn[corp.id] = this.turn;
             }
+            this.events.push({ type: "build", corpId: corp.id, what: `Researched Range ${order.targetTier}` });
             this.log(`  ${corp.name} researches Range ${order.targetTier}`);
             break;
           }
@@ -326,6 +415,7 @@ export class Engine {
               strength: this.config.tuning.privateerStrength,
               turnsLeft: this.config.tuning.privateerTurns,
             });
+            this.events.push({ type: "build", corpId: corp.id, what: "Hired privateer", systemId: order.basedAt });
             this.log(`  ${corp.name} hires a privateer at ${order.basedAt}`);
             break;
           }
@@ -338,6 +428,7 @@ export class Engine {
             corp.credits -= this.config.tuning.depotCost;
             sys.hasDepot = true;
             this.metrics.depotsBuilt += 1;
+            this.events.push({ type: "build", corpId: corp.id, what: "Trade Depot", systemId: sys.id });
             this.log(`  ${corp.name} builds a Trade Depot at ${sys.name}`);
             break;
           }
@@ -348,6 +439,7 @@ export class Engine {
             if (corp.credits < this.config.tuning.hydroponicsCost) break;
             corp.credits -= this.config.tuning.hydroponicsCost;
             sys.hydroponics += 1;
+            this.events.push({ type: "build", corpId: corp.id, what: "Hydroponics module", systemId: sys.id });
             this.log(`  ${corp.name} builds hydroponics at ${sys.name}`);
             break;
           }
@@ -360,6 +452,7 @@ export class Engine {
             corp.credits -= this.config.tuning.platformCost;
             sys.platforms += 1;
             this.metrics.platformsBuilt += 1;
+            this.events.push({ type: "build", corpId: corp.id, what: "Defense platform", systemId: sys.id });
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
             break;
           }
@@ -469,6 +562,15 @@ export class Engine {
         if (affordable <= 0) continue;
         corp.credits -= affordable * unitCost;
         const value = affordable * this.config.tuning.basePrices[resource];
+        this.events.push({
+          type: "fill",
+          corpId: corp.id,
+          side: "buy",
+          resource,
+          quantity: affordable,
+          price,
+          systemId: fill.order.systemId,
+        });
         this.convoys.push(
           this.makeConvoy(corp.id, "buy", resource, affordable, path.systems, path.routes, 0, 0, value),
         );
@@ -493,6 +595,15 @@ export class Engine {
         const shipping = this.config.tuning.shippingFeePerHop * hops * qty * shipMult;
         const payout = Math.max(0, qty * price - shipping);
         const value = qty * this.config.tuning.basePrices[resource];
+        this.events.push({
+          type: "fill",
+          corpId: corp.id,
+          side: "sell",
+          resource,
+          quantity: qty,
+          price,
+          systemId: sys.id,
+        });
         // Warships stationed at the origin escort its outbound convoys automatically.
         const escort =
           this.stationedDefense(sys.id, corp.id) + (escortBySystem.get(`${corp.id}:${sys.id}`) ?? 0);
@@ -540,8 +651,19 @@ export class Engine {
     let cargoValueLost = 0;
     const raided = new Set<string>();
 
-    const applyResult = (result: RaidResult, convoy: Convoy, attacker: Corporation) => {
+    const applyResult = (result: RaidResult, convoy: Convoy, attacker: Corporation, routeId: string) => {
       outcomes[result.outcome]++;
+      if (result.outcome !== "noContact") {
+        this.events.push({
+          type: "raid",
+          attackerId: attacker.id,
+          defenderId: convoy.owner,
+          routeId,
+          outcome: result.outcome,
+          resource: convoy.resource,
+          cargoLost: result.cargoDestroyed + result.cargoPlundered,
+        });
+      }
       if (
         result.outcome === "noContact" ||
         result.outcome === "shadowed"
@@ -599,7 +721,7 @@ export class Engine {
             strength,
             this.localDefenseFor(target),
           );
-          applyResult(result, target, corp);
+          applyResult(result, target, corp, route.id);
           this.log(
             `  raid: ${corp.name} interdicts ${route.id} → ${result.outcome}` +
               (result.cargoPlundered ? ` (+${result.cargoPlundered} ${target.resource})` : ""),
@@ -627,7 +749,7 @@ export class Engine {
           raidStrength(corp),
           this.localDefenseFor(target),
         );
-        applyResult(result, target, corp);
+        applyResult(result, target, corp, route.id);
       }
     }
 
@@ -663,6 +785,15 @@ export class Engine {
   private deliverConvoy(convoy: Convoy): void {
     const owner = this.corps.find((c) => c.id === convoy.owner);
     if (!owner) return;
+    this.events.push({
+      type: "arrival",
+      corpId: convoy.owner,
+      kind: convoy.kind,
+      resource: convoy.resource,
+      quantity: convoy.quantity,
+      payout: convoy.kind === "sell" ? convoy.payout : 0,
+      destSystemId: convoy.path[convoy.path.length - 1]!,
+    });
     if (convoy.kind === "sell") {
       owner.credits += convoy.payout;
       this.log(
@@ -690,6 +821,7 @@ export class Engine {
         const food = this.consumeOrImport(corp, sys, "food", foodNeed);
         const ice = this.consumeOrImport(corp, sys, "ice", iceNeed);
         const fed = food.met && ice.met;
+        if (!fed) this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
         // Growth requires LOCAL food (garden/hydroponics/transfer), not emergency
         // imports: imports keep a colony alive but only local supply lets it thrive.
         const thriving = fed && food.local;
@@ -711,6 +843,7 @@ export class Engine {
           if (sys.populationProgress >= t.growthThreshold && idx < stages.length - 1) {
             sys.populationStage = stages[idx + 1]!;
             sys.populationProgress = 0;
+            this.events.push({ type: "growth", corpId: corp.id, systemId: sys.id, newStage: sys.populationStage });
             this.log(`  ${sys.name} grows to ${sys.populationStage}`);
           }
         } else if (!fed) {
@@ -837,6 +970,7 @@ export class Engine {
       corp.isFreeOperator = true;
       this.metrics.distressLiquidations += 1;
       distress += 1;
+      this.events.push({ type: "distress", corpId: corp.id });
       this.log(`  ${corp.name} collapses into distress liquidation → Free Operator`);
     }
 
@@ -873,6 +1007,7 @@ export class Engine {
     acquirer.hasCharter = true;
     acquirer.isFreeOperator = false;
     this.metrics.acquisitionsTotal += 1;
+    this.events.push({ type: "acquisition", acquirerId: acquirer.id, targetId: target.id });
     this.log(`  ACQUISITION: ${acquirer.name} absorbs ${target.name}'s charter`);
   }
 
