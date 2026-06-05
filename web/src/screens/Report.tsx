@@ -7,21 +7,22 @@ import { Panel, PanelTitle, Badge, EmptyState } from "../ui/primitives";
 import { Icon } from "../ui/icons";
 
 export function Report() {
-  const { reports, view, match } = useApp();
+  const { reports, view, humanCorpId } = useApp();
+  if (!view) return null;
   const [sel, setSel] = useState<number | null>(null);
   if (reports.length === 0) {
     return (
       <div className="reportscreen">
         <Panel>
           <PanelTitle icon="report" eyebrow="Resolution Digest" title="No turns resolved yet" />
-          <EmptyState icon="report">Submit the opening auction, then your first turn, to see the resolution digest here.</EmptyState>
+          <EmptyState icon="report">Submit your first turn to see the resolution digest here.</EmptyState>
         </Panel>
       </div>
     );
   }
   const idx = sel == null ? reports.length - 1 : sel;
   const report = reports[idx]!;
-  const lines = buildDigest(report, view, match.humanCorpId);
+  const lines = buildDigest(report, view, humanCorpId);
   const mine = lines.filter((l) => l.scope === "me");
   const world = lines.filter((l) => l.scope === "world");
 

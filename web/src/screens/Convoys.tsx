@@ -5,10 +5,11 @@ import { Panel, PanelTitle, Segmented, Badge, EmptyState } from "../ui/primitive
 import { Icon } from "../ui/icons";
 
 export function Convoys() {
-  const { view, match } = useApp();
+  const { view, humanCorpId } = useApp();
+  if (!view) return null;
   const [tab, setTab] = useState<"mine" | "rivals">("mine");
   const galaxy = view.galaxy;
-  const mineId = match.humanCorpId;
+  const mineId = humanCorpId;
   const convoys = view.convoys.filter((c) => (tab === "mine" ? c.owner === mineId : c.owner !== mineId));
 
   return (

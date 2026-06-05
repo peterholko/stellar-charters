@@ -1,13 +1,15 @@
 import { useSyncExternalStore } from "react";
 import {
   RESOURCES,
-  type BidOrder,
+  type ClientState,
+  type GamePhase,
   type Order,
   type PlayerView,
   type Resource,
   type TurnReport,
 } from "@engine";
-import { createMatch, type Match } from "./createMatch";
+import { ensureGame, newGame, submitOrders } from "../net/game";
+import { reconstructView } from "./clientView";
 
 export type ViewId =
   | "dashboard"
@@ -32,21 +34,19 @@ export interface StagedOrder {
   order: Order;
 }
 
-export interface BidPriority {
-  systemId: string;
-  amount: number;
-}
-
 export interface AppState {
-  match: Match;
-  phase: "auction" | "play" | "over";
+  status: "loading" | "ready" | "error";
+  error: string | null;
+  gameId: string;
+  phase: GamePhase;
   turn: number;
   totalTurns: number;
-  view: PlayerView;
+  humanCorpId: string;
+  /** Read-only view reconstructed from the server's redacted ClientState (null while loading). */
+  view: PlayerView | null;
   staged: StagedOrder[];
-  bid: BidPriority[];
-  lastReport: TurnReport | null;
   reports: TurnReport[];
+  lastReport: TurnReport | null;
   priceHistory: Record<Resource, number[]>;
   valuationHistory: number[];
   nav: ViewId;
@@ -57,12 +57,6 @@ export interface AppState {
 
 const THEME_KEY = "sc.theme";
 
-function emptyPriceHistory(view: PlayerView): Record<Resource, number[]> {
-  const h = {} as Record<Resource, number[]>;
-  for (const r of RESOURCES) h[r] = [view.market.prices[r]];
-  return h;
-}
-
 function loadTheme(): ThemeId {
   const t = (typeof localStorage !== "undefined" && localStorage.getItem(THEME_KEY)) as ThemeId | null;
   return t === "used-future" || t === "clean" || t === "terminal" ? t : "terminal";
@@ -71,37 +65,40 @@ function loadTheme(): ThemeId {
 let oid = 0;
 const nextId = () => `o${oid++}`;
 
+function emptyHistory(): Record<Resource, number[]> {
+  const h = {} as Record<Resource, number[]>;
+  for (const r of RESOURCES) h[r] = [];
+  return h;
+}
+
 class Store {
   private listeners = new Set<() => void>();
-  state: AppState;
-
-  constructor() {
-    const match = createMatch();
-    const view = match.engine.playerView(match.humanCorpId);
-    this.state = {
-      match,
-      phase: "auction",
-      turn: 0,
-      totalTurns: match.engine.config.turns,
-      view,
-      staged: [],
-      bid: [],
-      lastReport: null,
-      reports: [],
-      priceHistory: emptyPriceHistory(view),
-      valuationHistory: [],
-      nav: "dashboard",
-      selection: { kind: "system", id: "hub" },
-      theme: loadTheme(),
-      resolving: false,
-    };
-  }
+  private initStarted = false;
+  private lastUserKey = "";
+  state: AppState = {
+    status: "loading",
+    error: null,
+    gameId: "",
+    phase: "play",
+    turn: 0,
+    totalTurns: 42,
+    humanCorpId: "corp-0",
+    view: null,
+    staged: [],
+    reports: [],
+    lastReport: null,
+    priceHistory: emptyHistory(),
+    valuationHistory: [],
+    nav: "dashboard",
+    selection: { kind: "system", id: "hub" },
+    theme: loadTheme(),
+    resolving: false,
+  };
 
   subscribe = (l: () => void): (() => void) => {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
   };
-
   getSnapshot = (): AppState => this.state;
 
   private set(patch: Partial<AppState>): void {
@@ -109,20 +106,53 @@ class Store {
     for (const l of this.listeners) l();
   }
 
-  private refreshView(): PlayerView {
-    return this.state.match.engine.playerView(this.state.match.humanCorpId);
+  /**
+   * Called when the app mounts (after auth). Resumes or starts the player's game.
+   * Keyed on the user id so logging in as a different account reloads their game.
+   */
+  init(userKey: string): void {
+    if (this.initStarted && this.lastUserKey === userKey) return;
+    const switching = this.lastUserKey !== "" && this.lastUserKey !== userKey;
+    this.initStarted = true;
+    this.lastUserKey = userKey;
+    if (typeof document !== "undefined") document.documentElement.setAttribute("data-theme", this.state.theme);
+    if (switching) this.set({ status: "loading", view: null });
+    void ensureGame()
+      .then((cs) => this.applyState(cs))
+      .catch((e) => this.set({ status: "error", error: String(e) }));
+  }
+
+  private applyState(cs: ClientState, navTo?: ViewId): void {
+    const view = reconstructView(cs);
+    const priceHistory = emptyHistory();
+    for (const r of RESOURCES) {
+      priceHistory[r] = cs.reports.length ? cs.reports.map((rep) => rep.prices[r]) : [cs.prices[r]];
+    }
+    const valuationHistory = cs.reports.map(
+      (rep) => rep.corps.find((c) => c.id === cs.humanCorpId)?.valuation ?? 0,
+    );
+    this.set({
+      status: "ready",
+      error: null,
+      gameId: cs.gameId,
+      phase: cs.phase,
+      turn: cs.turn,
+      totalTurns: cs.totalTurns,
+      humanCorpId: cs.humanCorpId,
+      view,
+      reports: cs.reports,
+      lastReport: cs.reports.length ? cs.reports[cs.reports.length - 1]! : null,
+      priceHistory,
+      valuationHistory,
+      staged: [],
+      resolving: false,
+      ...(navTo ? { nav: navTo } : {}),
+    });
   }
 
   // ----- navigation / selection / theme -----
-
-  setNav(nav: ViewId): void {
-    this.set({ nav });
-  }
-
-  select(selection: Selection): void {
-    this.set({ selection });
-  }
-
+  setNav(nav: ViewId): void { this.set({ nav }); }
+  select(selection: Selection): void { this.set({ selection }); }
   setTheme(theme: ThemeId): void {
     if (typeof document !== "undefined") document.documentElement.setAttribute("data-theme", theme);
     if (typeof localStorage !== "undefined") localStorage.setItem(THEME_KEY, theme);
@@ -130,101 +160,30 @@ class Store {
   }
 
   // ----- order staging -----
+  stage(order: Order): void { this.set({ staged: [...this.state.staged, { id: nextId(), order }] }); }
+  unstage(id: string): void { this.set({ staged: this.state.staged.filter((s) => s.id !== id) }); }
+  clearStaged(): void { this.set({ staged: [] }); }
 
-  stage(order: Order): void {
-    this.set({ staged: [...this.state.staged, { id: nextId(), order }] });
-  }
-
-  unstage(id: string): void {
-    this.set({ staged: this.state.staged.filter((s) => s.id !== id) });
-  }
-
-  clearStaged(): void {
-    this.set({ staged: [] });
-  }
-
-  // ----- auction bid draft -----
-
-  setBid(bid: BidPriority[]): void {
-    this.set({ bid });
-  }
-
-  addBid(systemId: string, amount: number): void {
-    if (this.state.bid.some((b) => b.systemId === systemId)) return;
-    this.set({ bid: [...this.state.bid, { systemId, amount }] });
-  }
-
-  removeBidAt(i: number): void {
-    this.set({ bid: this.state.bid.filter((_, j) => j !== i) });
-  }
-
-  setBidAmount(i: number, amount: number): void {
-    this.set({ bid: this.state.bid.map((b, j) => (j === i ? { ...b, amount } : b)) });
-  }
-
-  moveBid(i: number, dir: -1 | 1): void {
-    const j = i + dir;
-    const next = [...this.state.bid];
-    if (j < 0 || j >= next.length) return;
-    [next[i], next[j]] = [next[j]!, next[i]!];
-    this.set({ bid: next });
-  }
-
-  // ----- turn resolution -----
-
+  // ----- turn resolution (server-authoritative) -----
   submit(): void {
-    if (this.state.resolving) return;
+    if (this.state.resolving || this.state.status !== "ready") return;
     this.set({ resolving: true });
-    // Brief cosmetic "resolving" reveal; the engine step itself is synchronous.
-    window.setTimeout(() => this.resolveNow(), 620);
+    const { gameId, staged } = this.state;
+    void submitOrders(gameId, staged.map((s) => s.order) as Order[])
+      .then((cs) => this.applyState(cs, "report"))
+      .catch((e) => this.set({ resolving: false, error: String(e) }));
   }
 
-  private resolveNow(): void {
-    const { match, phase } = this.state;
-    let report: TurnReport;
-    if (phase === "auction") {
-      const bidOrder: BidOrder = { kind: "bid", priorities: this.state.bid };
-      match.human.pendingBid = bidOrder;
-      report = match.engine.stepAuction();
-    } else {
-      match.human.pendingOrders = this.state.staged.map((s) => s.order);
-      report = match.engine.stepTurn();
-    }
-
-    const view = this.refreshView();
-    const priceHistory = { ...this.state.priceHistory };
-    for (const r of RESOURCES) priceHistory[r] = [...priceHistory[r], report.prices[r]];
-    const valuationHistory = [...this.state.valuationHistory, view.me.valuation];
-
-    this.set({
-      view,
-      turn: match.engine.currentTurn,
-      phase: match.engine.isOver ? "over" : "play",
-      staged: [],
-      bid: [],
-      lastReport: report,
-      reports: [...this.state.reports, report],
-      priceHistory,
-      valuationHistory,
-      resolving: false,
-      nav: "report",
-    });
+  newMatch(): void {
+    this.set({ status: "loading", resolving: false });
+    void newGame()
+      .then((cs) => this.applyState(cs, "dashboard"))
+      .catch((e) => this.set({ status: "error", error: String(e) }));
   }
 }
 
 export const store = new Store();
 
-// Apply persisted theme to the document on load.
-if (typeof document !== "undefined") {
-  document.documentElement.setAttribute("data-theme", store.state.theme);
-}
-
 export function useApp(): AppState {
   return useSyncExternalStore(store.subscribe, store.getSnapshot);
-}
-
-// ----- convenience selectors -----
-
-export function totalStagedCost(state: AppState, describe: (o: Order) => number): number {
-  return state.staged.reduce((sum, s) => sum + describe(s.order), 0);
 }

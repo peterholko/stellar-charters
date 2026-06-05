@@ -1,3 +1,4 @@
+import type { PlayerView } from "@engine";
 import { store, useApp } from "../match/store";
 import { buildDigest } from "../match/digest";
 import { corpColor, formatCr } from "../match/format";
@@ -11,7 +12,7 @@ function phaseOf(turn: number, total: number): { label: string; note: string } {
   return { label: "Corporate Consolidation", note: "Debt, equity, and hostile takeovers decide the charter hegemon." };
 }
 
-function coachTip(view: ReturnType<typeof useApp>["view"], turn: number): string | null {
+function coachTip(view: PlayerView, turn: number): string | null {
   const me = view.me;
   if (me.ownedSystemIds.length === 0) return "You hold no systems. Claim an open system from the Map or Systems screen to start producing.";
   if (turn <= 3) return "Sell surplus from your system on the Exchange — exports pay on arrival, so cash lags a turn.";
@@ -21,10 +22,11 @@ function coachTip(view: ReturnType<typeof useApp>["view"], turn: number): string
 }
 
 export function Dashboard() {
-  const { view, lastReport, valuationHistory, turn, totalTurns, match } = useApp();
+  const { view, lastReport, valuationHistory, turn, totalTurns, humanCorpId } = useApp();
+  if (!view) return null;
   const me = view.me;
   const phase = phaseOf(Math.max(1, turn), totalTurns);
-  const digest = lastReport ? buildDigest(lastReport, view, match.humanCorpId).filter((l) => l.scope === "me") : [];
+  const digest = lastReport ? buildDigest(lastReport, view, humanCorpId).filter((l) => l.scope === "me") : [];
   const tip = coachTip(view, turn);
 
   const standings = [...view.corporations]
@@ -44,7 +46,7 @@ export function Dashboard() {
 
       <div className="dashboard__grid">
         <Panel className="dashboard__phase">
-          <PanelTitle icon="bolt" eyebrow={`Turn ${Math.max(1, turn)} of ${totalTurns}`} title={phase.label} />
+          <PanelTitle icon="bolt" eyebrow={`Turn ${Math.min(turn + 1, totalTurns)} of ${totalTurns}`} title={phase.label} />
           <p className="dashboard__phase-note">{phase.note}</p>
           {tip && (
             <div className="coach">

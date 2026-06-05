@@ -7,6 +7,7 @@ import { Icon } from "../ui/icons";
 
 export function Exchange() {
   const { view, priceHistory } = useApp();
+  if (!view) return null;
   const galaxy = view.galaxy;
   const mySystems = view.me.ownedSystemIds.map((id) => galaxy.system(id));
   const [side, setSide] = useState<"sell" | "buy">("sell");

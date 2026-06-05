@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { store, useApp, type ViewId } from "./match/store";
 import { formatCr } from "./match/format";
 import { Icon, type IconName } from "./ui/icons";
@@ -6,7 +6,6 @@ import { useAuth } from "./auth/AuthContext";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { Inspector } from "./components/Inspector";
 import { OrderTray } from "./components/OrderTray";
-import { Auction } from "./screens/Auction";
 import { Dashboard } from "./screens/Dashboard";
 import { GalaxyMap } from "./screens/GalaxyMap";
 import { Systems } from "./screens/Systems";
@@ -42,10 +41,33 @@ function Screen({ nav }: { nav: ViewId }) {
 
 export function App() {
   const state = useApp();
-  const { phase, nav, view, staged, resolving, turn, totalTurns, selection, match } = state;
+  const { status, phase, nav, view, staged, resolving, turn, totalTurns, selection, humanCorpId } = state;
   const [drawer, setDrawer] = useState(false);
-  const me = view.me;
   const { user, logout } = useAuth();
+
+  useEffect(() => {
+    store.init(user.id);
+  }, [user.id]);
+
+  if (status === "error") {
+    return (
+      <div className="auth auth--loading">
+        <div className="auth__field" aria-hidden />
+        <p style={{ color: "var(--negative)", fontFamily: "var(--font-display)" }}>
+          Uplink failed. Reload to retry.
+        </p>
+      </div>
+    );
+  }
+  if (status !== "ready" || !view) {
+    return (
+      <div className="auth auth--loading">
+        <div className="auth__field" aria-hidden />
+        <div className="auth__spinner" />
+      </div>
+    );
+  }
+  const me = view.me;
 
   const top = (
     <header className="topbar">
@@ -57,7 +79,7 @@ export function App() {
         </div>
       </div>
       <div className="topbar__turn">
-        <span className="topbar__turnnum"><Icon name="clock" size={14} /> {phase === "auction" ? "Opening Auction" : `Turn ${turn} / ${totalTurns}`}</span>
+        <span className="topbar__turnnum"><Icon name="clock" size={14} /> Turn {Math.min(turn + 1, totalTurns)} / {totalTurns}</span>
         <span className={`topbar__phase ${resolving ? "is-resolving" : ""}`}>{resolving ? "Resolving…" : phase === "over" ? "Match complete" : "Drafting orders"}</span>
       </div>
       <div className="topbar__right">
@@ -78,18 +100,6 @@ export function App() {
     </header>
   );
 
-  if (phase === "auction") {
-    return (
-      <div className="shell shell--auction">
-        {top}
-        <main className="shell__auction">
-          <Auction />
-        </main>
-        {resolving && <ResolveOverlay label="Sealing bids…" />}
-      </div>
-    );
-  }
-
   return (
     <div className={`shell ${drawer ? "shell--drawer" : ""}`}>
       {top}
@@ -108,7 +118,7 @@ export function App() {
         </main>
 
         <aside className="sidestack">
-          <Inspector view={view} humanCorpId={match.humanCorpId} selection={selection} />
+          <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
           <OrderTray view={view} staged={staged} resolving={resolving} turn={turn} totalTurns={totalTurns} />
         </aside>
       </div>
@@ -148,30 +158,31 @@ function ResolveOverlay({ label }: { label: string }) {
 }
 
 function OverModal() {
-  const { view, match } = useApp();
+  const { view, humanCorpId } = useApp();
+  if (!view) return null;
   const standings = [...view.corporations].sort((a, b) => b.valuation - a.valuation);
   const winner = standings[0]!;
-  const myRank = standings.findIndex((c) => c.id === match.humanCorpId) + 1;
+  const myRank = standings.findIndex((c) => c.id === humanCorpId) + 1;
   return (
     <div className="over">
       <div className="over__panel">
         <p className="eyebrow">Charter Mandate Concluded</p>
-        <h1>{winner.id === match.humanCorpId ? "Hegemony Achieved" : "Match Complete"}</h1>
+        <h1>{winner.id === humanCorpId ? "Hegemony Achieved" : "Match Complete"}</h1>
         <p className="over__sub">
-          {winner.id === match.humanCorpId
+          {winner.id === humanCorpId
             ? "Your charter dominates the frontier."
             : `${winner.name} holds the strongest charter. You finished #${myRank} of ${standings.length}.`}
         </p>
         <ol className="over__board">
           {standings.map((c, i) => (
-            <li key={c.id} className={c.id === match.humanCorpId ? "is-me" : ""}>
+            <li key={c.id} className={c.id === humanCorpId ? "is-me" : ""}>
               <span>{i + 1}</span>
-              <strong>{c.name}{c.id === match.humanCorpId ? " (you)" : ""}</strong>
+              <strong>{c.name}{c.id === humanCorpId ? " (you)" : ""}</strong>
               <em>{formatCr(c.valuation)}</em>
             </li>
           ))}
         </ol>
-        <button type="button" className="primary-btn" onClick={() => location.reload()}>
+        <button type="button" className="primary-btn" onClick={() => store.newMatch()}>
           <Icon name="bolt" size={15} /> New match
         </button>
       </div>

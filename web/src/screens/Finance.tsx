@@ -5,7 +5,8 @@ import { Panel, PanelTitle, Badge, Bar, Stat } from "../ui/primitives";
 import { Icon } from "../ui/icons";
 
 export function Finance() {
-  const { view, match } = useApp();
+  const { view } = useApp();
+  if (!view) return null;
   const t = view.config.tuning;
   const me = view.me;
   const [borrow, setBorrow] = useState(1000);

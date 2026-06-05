@@ -9,7 +9,6 @@
  * available only in the next order window. Newly launched convoys therefore do not
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
-import { resolveAuction } from "./auction.js";
 import type { GameConfig } from "./config.js";
 import { Galaxy } from "./galaxy.js";
 import { Market, type ClearableOrder } from "./market.js";
@@ -122,13 +121,35 @@ export class Engine {
       platformsBuilt: 0,
       finalStageCounts: { outpost: 0, settlement: 0, colony: 0, city: 0, metropolis: 0 },
     };
+
+    // No opening auction: each corporation is randomly seeded onto a distinct inner-ring
+    // system at match start (deterministic via the seeded Rng).
+    this.assignStartingSystems();
+  }
+
+  /**
+   * Randomly assign each corporation a distinct inner-ring starting system. Replaces the
+   * opening auction — systems are owned from turn 1 and produce immediately.
+   */
+  private assignStartingSystems(): void {
+    const pool = this.galaxy.innerRingSystems().filter((s) => s.owner === null);
+    // Fisher–Yates shuffle using the seeded Rng (deterministic for replay).
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng.next() * (i + 1));
+      [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+    }
+    this.corps.forEach((corp, idx) => {
+      const sys = pool[idx];
+      if (!sys) return;
+      sys.owner = corp.id;
+      corp.ownedSystemIds.push(sys.id);
+      corp.hasCharter = true;
+    });
   }
 
   /** Run the whole game and return collected metrics. */
   run(): GameMetrics {
-    this.turn = 1;
-    this.runAuctionTurn();
-    for (this.turn = 2; this.turn <= this.config.turns; this.turn++) {
+    for (this.turn = 1; this.turn <= this.config.turns; this.turn++) {
       this.runNormalTurn();
     }
     for (const c of this.corps) {
@@ -154,7 +175,7 @@ export class Engine {
     return this.turn >= this.config.turns;
   }
 
-  /** The current turn number (0 before the auction, 1 = auction, then 2..N). */
+  /** The current turn number (0 before the first turn, then 1..N as turns resolve). */
   get currentTurn(): number {
     return this.turn;
   }
@@ -171,17 +192,8 @@ export class Engine {
     return this.viewFor(corp);
   }
 
-  /** Resolve the opening Inner Ring auction (turn 1) and return its report. */
-  stepAuction(): TurnReport {
-    if (this.turn !== 0) throw new Error("Auction already resolved");
-    this.turn = 1;
-    this.runAuctionTurn();
-    return this.buildReport("auction");
-  }
-
-  /** Resolve one normal turn and return its report. */
+  /** Resolve one turn and return its report. (Turn 1 is the first playable turn.) */
   stepTurn(): TurnReport {
-    if (this.turn < 1) throw new Error("Call stepAuction() before stepTurn()");
     if (this.isOver) throw new Error("Match is over");
     this.turn += 1;
     this.runNormalTurn();
@@ -194,7 +206,7 @@ export class Engine {
     return this.buildReport("normal");
   }
 
-  private buildReport(phase: "auction" | "normal"): TurnReport {
+  private buildReport(phase: "auction" | "normal" = "normal"): TurnReport {
     return {
       turn: this.turn,
       phase,
@@ -208,67 +220,6 @@ export class Engine {
       })),
       taxLevied: Math.round(this.lastTaxLevied),
     };
-  }
-
-  // ----- Opening auction (Section 05) -----
-
-  private runAuctionTurn(): void {
-    this.log(`\n=== Turn 1 — Inner Ring Claim Auction ===`);
-    this.events = [];
-    this.lastTaxLevied = 0;
-    const bids = new Map<string, ReturnType<Bot["bid"]>>();
-    let fallbackUsers = 0;
-    for (const corp of this.corps) {
-      const bot = this.bots.get(corp.id)!;
-      const order = bot.bid(this.viewFor(corp));
-      bids.set(corp.id, order);
-      if (order.priorities.length > 1) fallbackUsers++;
-    }
-
-    const result = resolveAuction(this.config, this.corps, bids);
-    const refundFrac = this.config.tuning.bidRefundFrac;
-    let totalDeposits = 0;
-    let totalRefunded = 0;
-
-    for (const corp of this.corps) {
-      const order = bids.get(corp.id)!;
-      const wonSystem = result.awarded.get(corp.id);
-      const spent = result.spent.get(corp.id) ?? 0;
-
-      // Fallback bidding is encouraged (Section 05), so it must not be punished:
-      // a player pays only its winning bid. A player who wins nothing forfeits just
-      // the non-refunded fraction of its top deposit (90–95% returned).
-      const topBid = order.priorities[0]?.amount ?? 0;
-      if (wonSystem) {
-        corp.credits -= spent;
-        totalDeposits += topBid;
-        totalRefunded += topBid; // deposit fully returned to a winner
-      } else {
-        const forfeit = topBid * (1 - refundFrac);
-        corp.credits -= forfeit;
-        totalDeposits += topBid;
-        totalRefunded += topBid - forfeit;
-      }
-
-      if (wonSystem) {
-        const sys = this.galaxy.system(wonSystem);
-        sys.owner = corp.id;
-        corp.ownedSystemIds.push(wonSystem);
-        corp.hasCharter = true;
-        this.claimedTurn.set(wonSystem, 1);
-        this.events.push({ type: "auctionAward", corpId: corp.id, systemId: wonSystem, amount: spent });
-        this.log(
-          `  ${corp.name} (${corp.botId}) wins ${sys.name} for ${spent} cr`,
-        );
-      } else {
-        this.log(`  ${corp.name} (${corp.botId}) won nothing`);
-      }
-    }
-
-    this.metrics.auctionRefundFrac =
-      totalDeposits > 0 ? totalRefunded / totalDeposits : 1;
-    this.metrics.auctionFallbackUsage = fallbackUsers / this.corps.length;
-    this.recordSnapshot(0, {});
   }
 
   // ----- Normal turn -----

@@ -2,7 +2,8 @@ import { store, useApp } from "../match/store";
 import { SystemMap } from "../components/SystemMap";
 
 export function GalaxyMap() {
-  const { view, selection, match } = useApp();
+  const { view, selection, humanCorpId } = useApp();
+  if (!view) return null;
   return (
     <div className="mapscreen">
       <div className="mapscreen__head">
@@ -19,7 +20,7 @@ export function GalaxyMap() {
         </div>
       </div>
       <div className="mapscreen__canvas">
-        <SystemMap view={view} humanCorpId={match.humanCorpId} selection={selection} onSelect={(s) => store.select(s)} />
+        <SystemMap view={view} humanCorpId={humanCorpId} selection={selection} onSelect={(s) => store.select(s)} />
       </div>
       <p className="mapscreen__hint">Click a system, warp lane, or convoy to inspect and act. Actions queue in the order tray.</p>
     </div>

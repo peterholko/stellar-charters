@@ -9,7 +9,8 @@ import { Icon } from "../ui/icons";
 const TIERS: RangeTier[] = [1, 2, 3, 4];
 
 export function Fleet() {
-  const { view, match } = useApp();
+  const { view, humanCorpId } = useApp();
+  if (!view) return null;
   const t = view.config.tuning;
   const me = view.me;
   const mySystems = me.ownedSystemIds.map((id) => view.galaxy.system(id));
@@ -17,7 +18,7 @@ export function Fleet() {
   const [raider, setRaider] = useState(false);
   const [baseId, setBaseId] = useState(mySystems[0]?.id ?? "");
 
-  const rivalConvoys = view.convoys.filter((c) => c.owner !== match.humanCorpId);
+  const rivalConvoys = view.convoys.filter((c) => c.owner !== humanCorpId);
 
   return (
     <div className="fleet">

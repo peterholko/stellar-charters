@@ -1,0 +1,100 @@
+/**
+ * Reconstruct a read-only PlayerView from the server's redacted ClientState.
+ *
+ * The engine is browser-portable, so the client rebuilds a Galaxy/Market from the static
+ * scenario and overlays the server's authoritative (already fog-of-war-redacted) dynamic
+ * state. This keeps every existing screen working against a `PlayerView` while resolution
+ * happens only on the server.
+ */
+import {
+  Galaxy,
+  Market,
+  RESOURCES,
+  Rng,
+  loadScenario,
+  type ClientState,
+  type Convoy,
+  type Corporation,
+  type GameConfig,
+  type PlayerView,
+  type Scenario,
+} from "@engine";
+import rawScenario from "../../../scenarios/inner-ring-8p.json";
+
+export function reconstructView(state: ClientState): PlayerView {
+  const base = rawScenario as unknown as Scenario;
+  const scenario: Scenario = { ...base, players: state.corps.length };
+  const config: GameConfig = loadScenario(scenario);
+  const galaxy = new Galaxy(config);
+
+  for (const cs of state.systems) {
+    const sys = galaxy.systems.get(cs.id);
+    if (!sys) continue;
+    sys.owner = cs.owner;
+    sys.populationStage = cs.populationStage;
+    sys.hydroponics = cs.hydroponics;
+    sys.platforms = cs.platforms;
+    sys.hasDepot = cs.hasDepot;
+    sys.populationProgress = cs.populationProgress ?? 0;
+    sys.unrest = cs.unrest ?? 0;
+    if (cs.stockpile) sys.stockpile = cs.stockpile;
+  }
+
+  for (const cr of state.routes) {
+    const rt = galaxy.routes.get(cr.id);
+    if (!rt) continue;
+    rt.charted = cr.charted;
+    rt.trafficHistory = cr.trafficHistory;
+  }
+
+  const market = new Market(config.tuning);
+  for (const r of RESOURCES) market.prices[r] = state.prices[r];
+
+  const corporations: Corporation[] = state.corps.map((c) => ({
+    id: c.id,
+    name: c.name,
+    credits: c.credits ?? 0,
+    debt: c.debt ?? 0,
+    ownedSystemIds: c.ownedSystemIds,
+    ships: c.ships ?? [],
+    privateers: c.privateers ?? [],
+    rangeTier: c.rangeTier,
+    valuation: c.valuation,
+    sharePrice: c.sharePrice,
+    sharesOutstanding: c.sharesOutstanding,
+    shareRegister: c.shareRegister,
+    founderId: c.founderId,
+    recentEarnings: c.recentEarnings ?? [],
+    isFreeOperator: c.isFreeOperator,
+    botId: "",
+    hasCharter: c.hasCharter,
+  }));
+  const me = corporations.find((c) => c.id === state.humanCorpId) ?? corporations[0]!;
+
+  const convoys: Convoy[] = state.convoys.map((c) => ({
+    id: c.id,
+    owner: c.owner,
+    kind: c.kind,
+    resource: c.resource,
+    quantity: c.quantity,
+    path: c.path,
+    routeIds: c.routeIds,
+    position: c.position,
+    segmentTurnsLeft: c.segmentTurnsLeft,
+    launchedTurn: c.launchedTurn,
+    payout: c.payout,
+    escort: c.escort,
+    value: c.value,
+  }));
+
+  return {
+    turn: state.turn,
+    config,
+    galaxy,
+    market,
+    me,
+    corporations,
+    convoys,
+    rng: new Rng(0), // present for type-compatibility; views never draw randomness
+  };
+}

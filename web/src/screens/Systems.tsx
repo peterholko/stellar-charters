@@ -14,7 +14,8 @@ import { Panel, PanelTitle, Badge, Bar } from "../ui/primitives";
 import { Icon } from "../ui/icons";
 
 export function Systems() {
-  const { view, match } = useApp();
+  const { view } = useApp();
+  if (!view) return null;
   const galaxy = view.galaxy;
   const mine = view.me.ownedSystemIds.map((id) => galaxy.system(id));
   const open = galaxy.allSystems().filter((s) => s.owner === null && s.id !== galaxy.hubId);

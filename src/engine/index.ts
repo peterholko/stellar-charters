@@ -30,6 +30,16 @@ export { Engine, type EngineOptions } from "./engine.js";
 export { type TurnEvent, type TurnReport } from "./report.js";
 export { HumanBot } from "./bots/human.js";
 export {
+  buildClientState,
+  gamePhase,
+  type ClientState,
+  type ClientSystem,
+  type ClientRoute,
+  type ClientCorp,
+  type ClientConvoy,
+  type GamePhase,
+} from "./clientState.js";
+export {
   gini,
   coefficientOfVariation,
   emptyRaidOutcomes,
