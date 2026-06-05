@@ -111,6 +111,27 @@ class ShipyardBot implements Bot {
   }
 }
 
+class PlatformBot implements Bot {
+  readonly id = "noop";
+  bid(view: PlayerView): BidOrder {
+    return { kind: "bid", priorities: bidList(view, (s) => valueSystem(view, s)) };
+  }
+  decide(view: PlayerView): Order[] {
+    const sys = view.me.ownedSystemIds[0];
+    return sys ? [{ kind: "buildPlatform", systemId: sys }] : [];
+  }
+}
+
+describe("defense platforms (Section 15)", () => {
+  it("builds stationary platforms up to the per-system cap", () => {
+    const scenario = oneSystem({ ice: 12, metals: 4 });
+    scenario.tuning = { startingCredits: 20000 };
+    const engine = new Engine(loadScenario(scenario), 1, new Map([["noop", () => new PlatformBot()]]));
+    engine.run();
+    expect(engine.galaxy.system("s0").platforms).toBe(engine.config.tuning.platformCap);
+  });
+});
+
 describe("warships & rare-isotope hulls (Sections 04, 07, 13)", () => {
   it("builds a Range-2 escort that consumes rare isotopes and is stationed at its system", () => {
     const scenario = oneSystem({ rareIsotopes: 5, ice: 4 });

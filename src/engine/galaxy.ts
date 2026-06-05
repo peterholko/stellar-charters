@@ -29,6 +29,7 @@ export class Galaxy {
         populationProgress: 0,
         unrest: 0,
         hydroponics: 0,
+        platforms: 0,
         hasDepot: false,
         defense: s.defense ?? 1,
         routeIds: [],

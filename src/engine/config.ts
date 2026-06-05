@@ -102,6 +102,10 @@ export interface Tuning {
   hydroponicsCost: number;
   hydroponicsIceUse: number;
   hydroponicsFoodOutput: number;
+  /** Stationary defense platform: build cost and raid-defense added per platform (Section 15). */
+  platformCost: number;
+  platformDefense: number;
+  platformCap: number;
   /** Trade Depot effects (Section 12). */
   depotCost: number;
   depotShippingDiscount: number; // fraction off shipping on incident routes
@@ -135,19 +139,19 @@ export const DEFAULT_TUNING: Tuning = {
   shippingFeePerHop: 1.5,
   bidRefundFrac: 0.92,
   surveyCost: 300,
-  shipCost: { 1: 600, 2: 1100, 3: 2600, 4: 6000 },
+  shipCost: { 1: 600, 2: 1100, 3: 2100, 4: 4000 },
   raiderShipExtraCost: 400,
   shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11 },
   raiderCombatBonus: 1,
   shipIsotopeCost: { 1: 0, 2: 2, 3: 6, 4: 14 },
   privateerCost: 500,
-  privateerStrength: 3,
+  privateerStrength: 5,
   privateerTurns: 3,
-  rangeResearchCost: { 1: 0, 2: 1500, 3: 4500, 4: 9000 },
+  rangeResearchCost: { 1: 0, 2: 1100, 3: 2200, 4: 3800 },
   debtInterest: 0.05,
   foodNeed: { outpost: 0, settlement: 2, colony: 6, city: 14, metropolis: 30 },
   iceNeed: { outpost: 1, settlement: 1, colony: 2, city: 4, metropolis: 8 },
-  taxPerStage: { outpost: 0, settlement: 40, colony: 120, city: 280, metropolis: 600 },
+  taxPerStage: { outpost: 0, settlement: 55, colony: 180, city: 430, metropolis: 920 },
   growthRate: { outpost: 60, settlement: 30, colony: 18, city: 10, metropolis: 0 },
   growthThreshold: 100,
   unrestPerStarvedTurn: 0.25,
@@ -157,6 +161,9 @@ export const DEFAULT_TUNING: Tuning = {
   hydroponicsCost: 600,
   hydroponicsIceUse: 2,
   hydroponicsFoodOutput: 6,
+  platformCost: 350,
+  platformDefense: 1,
+  platformCap: 2,
   depotCost: 2000,
   depotShippingDiscount: 0.35,
   depotTransitBonus: 1,

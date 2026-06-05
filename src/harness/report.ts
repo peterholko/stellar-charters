@@ -40,6 +40,7 @@ export interface Aggregate {
   freeOperatorsPerGame: number;
   depotsPerGame: number;
   shipsPerGame: number;
+  platformsPerGame: number;
   taxPerTurnAvg: number;
   populatedBeyondOutboundFrac: number; // fraction of owned systems that grew past outpost
   topStageReached: string;
@@ -88,6 +89,7 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
   let freeOpsSum = 0;
   let depotsSum = 0;
   let shipsSum = 0;
+  let platformsSum = 0;
   let taxSum = 0;
   let taxObs = 0;
   let grownSystems = 0;
@@ -150,6 +152,7 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
     freeOpsSum += g.finalFreeOperators;
     depotsSum += g.depotsBuilt;
     shipsSum += g.shipsBuilt;
+    platformsSum += g.platformsBuilt;
     for (const s of g.snapshots) {
       if (s.turn > 0) { taxSum += s.taxLevied; taxObs += 1; }
     }
@@ -194,6 +197,7 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
     freeOperatorsPerGame: round2(freeOpsSum / n),
     depotsPerGame: round2(depotsSum / n),
     shipsPerGame: round2(shipsSum / n),
+    platformsPerGame: round2(platformsSum / n),
     taxPerTurnAvg: round2(taxObs ? taxSum / taxObs : 0),
     populatedBeyondOutboundFrac: round2(ownedSystems ? grownSystems / ownedSystems : 0),
     topStageReached: stageOrder[topStageIdx]!,
@@ -294,7 +298,9 @@ export function renderMarkdown(aggs: Aggregate[]): string {
     lines.push(
       `- Systems grown past Outpost: ${(a.populatedBeyondOutboundFrac * 100).toFixed(0)}% (top stage reached: ${a.topStageReached})`,
     );
-    lines.push(`- Trade Depots built per game: ${a.depotsPerGame}; warships built per game: ${a.shipsPerGame}`);
+    lines.push(
+      `- Trade Depots per game: ${a.depotsPerGame}; warships: ${a.shipsPerGame}; defense platforms: ${a.platformsPerGame}`,
+    );
     lines.push(`- Acquisitions per game: ${a.acquisitionsPerGame}; distress liquidations: ${a.distressPerGame}`);
     lines.push(`- Free Operators at game end (avg): ${a.freeOperatorsPerGame}`);
     lines.push("");

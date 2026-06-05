@@ -211,12 +211,20 @@ export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
   return orders;
 }
 
-/** Research Range 2 once the corp has spare cash and hasn't yet (Section 04). */
-export function maybeResearchRange2(view: PlayerView): Order[] {
-  if (view.me.rangeTier >= 2) return [];
-  const cost = view.config.tuning.rangeResearchCost[2];
-  if (view.turn >= 4 && view.me.credits > cost * 1.3) {
-    return [{ kind: "researchRange", targetTier: 2 }];
+/** Earliest turn a corp will reach for each range tier (keeps fleets advancing). */
+const RANGE_MIN_TURN: Record<number, number> = { 2: 4, 3: 9, 4: 15 };
+
+/**
+ * Climb the range-tech ladder one tier at a time (Section 04). Reaching Range 2 opens
+ * the frontier; Range 3/4 unlock progressively stronger hulls so fleets don't stall.
+ */
+export function maybeResearchRange(view: PlayerView): Order[] {
+  const next = (view.me.rangeTier + 1) as RangeTier;
+  if (next > 4) return [];
+  const cost = view.config.tuning.rangeResearchCost[next];
+  const minTurn = RANGE_MIN_TURN[next] ?? 99;
+  if (view.turn >= minTurn && view.me.credits > cost * 1.3) {
+    return [{ kind: "researchRange", targetTier: next }];
   }
   return [];
 }
@@ -329,6 +337,25 @@ export function planRaid(
 }
 
 /**
+ * Build a cheap stationary defense platform (Section 15) on an under-defended owned
+ * system. Platforms are the baseline guard — they don't escort convoys like ships, but
+ * they cheaply harden a system's tunnel mouths, especially on exposed frontier lanes.
+ */
+export function maybeBuildPlatforms(view: PlayerView): Order[] {
+  if (view.turn < 4 || view.me.credits < view.config.tuning.platformCost * 2) return [];
+  const ranked = view.me.ownedSystemIds
+    .map((id) => view.galaxy.system(id))
+    // Baseline guard: one platform per system, two on exposed frontier worlds.
+    .map((s) => ({ sys: s, want: s.yields.rareIsotopes > 0 ? 2 : 1 }))
+    .filter((e) => e.sys.platforms < Math.min(e.want, view.config.tuning.platformCap))
+    .map((e) => ({ sys: e.sys, score: routeExposureScore(view, e.sys) + grossYieldValue(view, e.sys) / 50 }))
+    .sort((a, b) => b.score - a.score);
+  const target = ranked[0];
+  if (!target) return [];
+  return [{ kind: "buildPlatform", systemId: target.sys.id }];
+}
+
+/**
  * Build escort/defense warships and station them at the corp's most valuable, most
  * exposed systems — defending those systems' tunnel mouths and automatically escorting
  * the convoys that carry their trade goods. Higher-tier hulls consume rare isotopes, so
@@ -337,19 +364,25 @@ export function planRaid(
 export function maybeBuildWarships(view: PlayerView): Order[] {
   if (view.turn < 5 || view.me.ownedSystemIds.length === 0) return [];
 
-  // Field the best hull our tech allows. Its rare-isotope cost is covered by our own
-  // frontier output first, with any shortfall bought from the exchange — so estimate
-  // the full bill (hull + isotopes) before committing.
+  // Field the best hull we can AFFORD up to our tech tier — falling back to a cheaper
+  // tier rather than stalling. Rare-isotope cost is covered by our own frontier output
+  // first, with any shortfall bought from the exchange (priced into the bill).
   const t = view.config.tuning;
-  const tier: RangeTier = view.me.rangeTier;
   const localIsotopes = view.me.ownedSystemIds.reduce(
     (s, id) => s + view.galaxy.system(id).stockpile.rareIsotopes,
     0,
   );
-  const isotopeBill =
-    Math.max(0, t.shipIsotopeCost[tier] - localIsotopes) * view.market.prices.rareIsotopes;
-  const totalCost = t.shipCost[tier] + isotopeBill;
-  if (view.me.credits <= totalCost * 1.1) return [];
+  let tier: RangeTier | undefined;
+  for (let cand = view.me.rangeTier; cand >= 1; cand--) {
+    const isoBill =
+      Math.max(0, t.shipIsotopeCost[cand as RangeTier] - localIsotopes) *
+      view.market.prices.rareIsotopes;
+    if (view.me.credits > (t.shipCost[cand as RangeTier] + isoBill) * 1.1) {
+      tier = cand as RangeTier;
+      break;
+    }
+  }
+  if (tier === undefined) return [];
 
   // A system needs a hull if it is under-guarded, or if we can now field a strictly
   // better tier than anything stationed there (an isotope-fuelled flagship upgrade).

@@ -11,7 +11,9 @@ import {
   bidList,
   financierOrders,
   freeOperatorOrders,
+  maybeBuildPlatforms,
   maybeBuildWarships,
+  maybeResearchRange,
   planRaid,
   routeExposureScore,
   sellSurplus,
@@ -42,7 +44,9 @@ export class RaiderBot implements Bot {
     orders.push(...sellSurplus(view, 0));
     // Aggressively haunt the busiest export lane from turn 3 onward.
     if (view.turn >= 3) orders.push(...planRaid(view, { fundFactor: 1.2 }));
-    // Defend its own home system and convoys.
+    // Advance range tech, then defend its home system and convoys.
+    orders.push(...maybeResearchRange(view));
+    orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
     // Having bled a rival via raids, move to seize it through equity (Section 17).
     orders.push(...financierOrders(view, this.state, { sinceTurn: 16 }));

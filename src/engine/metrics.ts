@@ -50,6 +50,7 @@ export interface GameMetrics {
   finalFreeOperators: number;
   depotsBuilt: number;
   shipsBuilt: number;
+  platformsBuilt: number;
   finalStageCounts: Record<PopulationStage, number>;
 }
 

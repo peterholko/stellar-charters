@@ -48,6 +48,8 @@ export interface System {
   unrest: number;
   /** Number of hydroponic modules built (each adds food production). */
   hydroponics: number;
+  /** Number of stationary defense platforms built here (each adds raid defense). */
+  platforms: number;
   /** True if a Trade Depot has been built here (Section 12). */
   hasDepot: boolean;
   /** Defensive strength against raids at this system's tunnel mouths. */
@@ -243,6 +245,11 @@ export interface BuildHydroponicsOrder {
   systemId: string;
 }
 
+export interface BuildPlatformOrder {
+  kind: "buildPlatform";
+  systemId: string;
+}
+
 export interface BuySharesOrder {
   kind: "buyShares";
   targetId: string;
@@ -268,5 +275,6 @@ export type Order =
   | EscortOrder
   | BuildDepotOrder
   | BuildHydroponicsOrder
+  | BuildPlatformOrder
   | BuySharesOrder
   | BorrowOrder;

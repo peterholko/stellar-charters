@@ -12,10 +12,11 @@ import {
   freeOperatorOrders,
   maybeBuildDepot,
   maybeBuildHydroponics,
+  maybeBuildPlatforms,
   maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
-  maybeResearchRange2,
+  maybeResearchRange,
   planRaid,
   sellSurplus,
   valueSystem,
@@ -35,10 +36,11 @@ export class BalancedBot implements Bot {
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
     orders.push(...maybeExpand(view));
-    orders.push(...maybeResearchRange2(view));
+    orders.push(...maybeResearchRange(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildHydroponics(view));
+    orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
 
     // Once established, opportunistically harass a busy lane (later and more

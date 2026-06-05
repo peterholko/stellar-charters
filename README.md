@@ -10,11 +10,12 @@ It now covers a **full ~24-turn match** spanning the early, mid, and late game:
 - **Early/mid (Sections 04–16):** opening auction, local production, the Galactic
   Exchange, warp-route convoys, one-turn interdiction, privateer raiding, Range-2 and
   frontier (rare-isotope) expansion.
-- **Fleets (Sections 04, 13–16):** corps build **escort/defense warships** stationed at
-  their systems — they harden those systems' tunnel mouths against raids and automatically
-  escort the convoys carrying their trade goods. Higher-tier hulls consume **rare
-  isotopes** (mined at the frontier or bought on the exchange), so controlling the frontier
-  translates into stronger fleets.
+- **Fleets & defense (Sections 04, 13–16):** corps climb the **range-tech ladder**
+  (1→2→3→4) and build **escort/defense warships** stationed at their systems — these harden
+  the systems' tunnel mouths against raids and automatically escort the convoys carrying
+  their trade goods. Higher-tier hulls consume **rare isotopes** (mined at the frontier or
+  bought on the exchange), so controlling the frontier translates into stronger fleets.
+  Cheap stationary **defense platforms** give a baseline guard distinct from mobile fleets.
 - **Late game (Sections 08, 12, 17, 18):** deep **population/food** (five stages growing
   to metropolis, gated on local food, with tax, unrest, life-support imports, and
   hydroponics), **Trade Depots** (shipping/transit/defense), **debt & equity takeovers**
@@ -84,11 +85,13 @@ and Free Operators. `out/per-turn-*.csv` and `out/per-game-*.csv` hold the raw s
 The simulator runs a full 24-turn match with simple heuristic bots, and all layers fire:
 populations grow to metropolis where they are **locally fed** (importing food keeps a
 colony alive but only local food/hydroponics fuels growth — the doc's Section 08 intent),
-Trade Depots get built, corps **build escort fleets** (~20/game) that station at systems
-and defend convoys (raids are now repelled/ambushed ~13% of the time instead of never,
-and only ~0.4% of cargo value is lost), the frontier is reached and rare isotopes flow
-into **advanced hulls**, and the endgame **consolidates via hostile takeovers** into a
-charter hegemon, turning ousted players into Free Operators.
+Trade Depots get built, corps climb to Range 2 (and some to Range 3) and **build escort
+fleets and defense platforms** (~25 ships + ~13 platforms/game) that station at systems
+and defend convoys — raids now split roughly 20% delay/damage/loot vs 15% repelled/ambushed
+(heavy fleets turn raiders back; light defense still lets raids through), with only ~0.3%
+of cargo value lost. The frontier is reached and rare isotopes flow into **advanced hulls**,
+and the endgame **consolidates via hostile takeovers** into a charter hegemon, turning
+ousted players into Free Operators.
 
 Two flags fire under the current tuning and are worth noting as *findings*, not bugs:
 **metals fully crashes to its floor** (the designed overproduction resource — population

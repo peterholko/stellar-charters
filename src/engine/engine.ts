@@ -113,6 +113,7 @@ export class Engine {
       finalFreeOperators: 0,
       depotsBuilt: 0,
       shipsBuilt: 0,
+      platformsBuilt: 0,
       finalStageCounts: { outpost: 0, settlement: 0, colony: 0, city: 0, metropolis: 0 },
     };
   }
@@ -351,6 +352,18 @@ export class Engine {
             corp.credits -= this.config.tuning.hydroponicsCost;
             sys.hydroponics += 1;
             this.log(`  ${corp.name} builds hydroponics at ${sys.name}`);
+            break;
+          }
+          case "buildPlatform": {
+            if (corp.isFreeOperator) break;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            if (sys.platforms >= this.config.tuning.platformCap) break;
+            if (corp.credits < this.config.tuning.platformCost) break;
+            corp.credits -= this.config.tuning.platformCost;
+            sys.platforms += 1;
+            this.metrics.platformsBuilt += 1;
+            this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
             break;
           }
           case "borrow": {
@@ -759,6 +772,7 @@ export class Engine {
         value += v.populationValue[sys.populationStage] * (1 - sys.unrest);
         if (sys.hasDepot) value += v.depotValue;
         value += sys.hydroponics * (v.depotValue * 0.25);
+        value += sys.platforms * this.config.tuning.platformCost;
         for (const r of RESOURCES) {
           value += sys.stockpile[r] * this.config.tuning.basePrices[r] * v.stockpileFrac;
         }
@@ -945,6 +959,8 @@ export class Engine {
       const sys = this.galaxy.systems.get(ep);
       if (sys && sys.owner === convoy.owner) {
         def += sys.defense;
+        // Stationary defense platforms harden the system's tunnel mouths (Section 15).
+        def += sys.platforms * this.config.tuning.platformDefense;
         // Depot patrols harden connected tunnels against raiders (Section 12).
         if (sys.hasDepot) def += this.config.tuning.depotDefenseBonus;
         // Warships stationed here defend the system's tunnel mouths.
