@@ -33,6 +33,7 @@ import {
   type Resource,
 } from "./types.js";
 import type { Bot, BotFactory, PlayerView } from "./bots/bot.js";
+import { HybridBot } from "./bots/hybrid.js";
 import type { TurnEvent, TurnReport } from "./report.js";
 
 export interface EngineOptions {
@@ -190,6 +191,29 @@ export class Engine {
     const corp = this.corps.find((c) => c.id === corpId);
     if (!corp) throw new Error(`Unknown corporation ${corpId}`);
     return this.viewFor(corp);
+  }
+
+  /**
+   * Make a seat human-controllable: wrap its AI bot in a HybridBot so it can take human
+   * orders (and fall back to the AI on turns with none). Idempotent-ish; call once per
+   * human seat after construction.
+   */
+  makeHybrid(corpId: string): void {
+    const existing = this.bots.get(corpId);
+    if (existing && !(existing instanceof HybridBot)) {
+      this.bots.set(corpId, new HybridBot(existing));
+    }
+  }
+
+  /**
+   * Stage a human seat's orders for the next `stepTurn`. Pass `null` to defer that seat
+   * to its fallback AI for this turn (how replay reproduces pre-takeover turns).
+   */
+  setHumanOrders(corpId: string, orders: Order[] | null): void {
+    const bot = this.bots.get(corpId);
+    if (bot && "pendingOrders" in bot) {
+      (bot as { pendingOrders: Order[] | null }).pendingOrders = orders;
+    }
   }
 
   /** Resolve one turn and return its report. (Turn 1 is the first playable turn.) */

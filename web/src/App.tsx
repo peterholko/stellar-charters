@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ClientPlayer } from "@engine";
 import { store, useApp, type ViewId } from "./match/store";
 import { formatCr } from "./match/format";
 import { Icon, type IconName } from "./ui/icons";
@@ -41,7 +42,7 @@ function Screen({ nav }: { nav: ViewId }) {
 
 export function App() {
   const state = useApp();
-  const { status, phase, nav, view, staged, resolving, turn, totalTurns, selection, humanCorpId } = state;
+  const { status, phase, nav, view, staged, resolving, turn, totalTurns, selection, humanCorpId, mySeat, players, submittedCount } = state;
   const [drawer, setDrawer] = useState(false);
   const { user, logout } = useAuth();
 
@@ -59,7 +60,7 @@ export function App() {
       </div>
     );
   }
-  if (status !== "ready" || !view) {
+  if (status !== "ready") {
     return (
       <div className="auth auth--loading">
         <div className="auth__field" aria-hidden />
@@ -67,7 +68,9 @@ export function App() {
       </div>
     );
   }
+  if (!mySeat || !view) return <InProgress username={user.username} />;
   const me = view.me;
+  const waiting = phase === "play" && !!players.find((p) => p.isYou)?.submitted && submittedCount < players.length;
 
   const top = (
     <header className="topbar">
@@ -80,7 +83,7 @@ export function App() {
       </div>
       <div className="topbar__turn">
         <span className="topbar__turnnum"><Icon name="clock" size={14} /> Turn {Math.min(turn + 1, totalTurns)} / {totalTurns}</span>
-        <span className={`topbar__phase ${resolving ? "is-resolving" : ""}`}>{resolving ? "Resolving…" : phase === "over" ? "Match complete" : "Drafting orders"}</span>
+        <span className={`topbar__phase ${resolving || waiting ? "is-resolving" : ""}`}>{resolving ? "Submitting…" : waiting ? "Waiting for players" : phase === "over" ? "Match complete" : "Drafting orders"}</span>
       </div>
       <div className="topbar__right">
         <span className="topbar__credits"><Icon name="wallet" size={15} /> {formatCr(me.credits)}</span>
@@ -140,8 +143,41 @@ export function App() {
       </button>
       {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
 
-      {resolving && <ResolveOverlay label="Resolving turn…" />}
+      {resolving && <ResolveOverlay label="Submitting…" />}
+      {!resolving && waiting && <WaitingOverlay players={players} submittedCount={submittedCount} />}
       {phase === "over" && <OverModal />}
+    </div>
+  );
+}
+
+function WaitingOverlay({ players, submittedCount }: { players: ClientPlayer[]; submittedCount: number }) {
+  return (
+    <div className="resolve-overlay">
+      <div className="resolve-overlay__core">
+        <span className="resolve-overlay__ring" />
+        <p>Waiting for players · {submittedCount}/{players.length} submitted</p>
+        <div className="waiting-list">
+          {players.map((p) => (
+            <span key={p.corpId} className={p.submitted ? "is-in" : ""}>
+              {p.submitted ? "✓" : "○"} {p.name}{p.isYou ? " (you)" : ""}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InProgress({ username }: { username: string }) {
+  return (
+    <div className="auth auth--loading">
+      <div className="auth__field" aria-hidden />
+      <main className="auth__panel" style={{ textAlign: "center" }}>
+        <p className="auth__eyebrow">{username} · Charter Command</p>
+        <h1 className="auth__title" style={{ fontSize: "1.6rem" }}>All seats taken</h1>
+        <p className="auth__sub">Every charter in the galaxy is controlled. You'll be seated when a seat opens or a new game begins.</p>
+        <button type="button" className="auth__submit" onClick={() => location.reload()}>Refresh</button>
+      </main>
     </div>
   );
 }

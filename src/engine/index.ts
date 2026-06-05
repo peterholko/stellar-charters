@@ -37,6 +37,7 @@ export {
   type ClientRoute,
   type ClientCorp,
   type ClientConvoy,
+  type ClientPlayer,
   type GamePhase,
 } from "./clientState.js";
 export {

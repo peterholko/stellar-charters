@@ -20,6 +20,15 @@ import {
 
 export type GamePhase = "play" | "over";
 
+/** A human seat in a (possibly shared) game. */
+export interface ClientPlayer {
+  corpId: string;
+  name: string;
+  isYou: boolean;
+  /** Whether this player has submitted orders for the upcoming turn. */
+  submitted: boolean;
+}
+
 export interface ClientSystem {
   id: string;
   name: string;
@@ -96,6 +105,7 @@ export interface ClientState {
   turn: number;
   phase: GamePhase;
   totalTurns: number;
+  /** The corporation this client controls (its perspective for fog of war). */
   humanCorpId: string;
   prices: Record<Resource, number>;
   systems: ClientSystem[];
@@ -103,6 +113,17 @@ export interface ClientState {
   corps: ClientCorp[];
   convoys: ClientConvoy[];
   reports: TurnReport[];
+  // ----- multiplayer / lobby (filled by the server) -----
+  /** This client's seat, or null if it hasn't joined. */
+  mySeat: string | null;
+  /** True if this client can start the match (lobby host). */
+  isHost: boolean;
+  /** Human seats in the game. */
+  players: ClientPlayer[];
+  /** Total seats (humans + bots). */
+  totalSeats: number;
+  /** How many human seats have submitted for the upcoming turn. */
+  submittedCount: number;
 }
 
 export function gamePhase(engine: Engine): GamePhase {
@@ -215,5 +236,11 @@ export function buildClientState(
     corps,
     convoys,
     reports,
+    // Multiplayer fields default here; the server overrides them with DB membership.
+    mySeat: humanCorpId,
+    isHost: false,
+    players: [],
+    totalSeats: engine.corps.length,
+    submittedCount: 0,
   };
 }

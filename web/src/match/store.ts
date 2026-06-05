@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import {
   RESOURCES,
+  type ClientPlayer,
   type ClientState,
   type GamePhase,
   type Order,
@@ -8,7 +9,7 @@ import {
   type Resource,
   type TurnReport,
 } from "@engine";
-import { ensureGame, newGame, submitOrders } from "../net/game";
+import { fetchState, newGame, submitOrders } from "../net/game";
 import { reconstructView } from "./clientView";
 
 export type ViewId =
@@ -42,7 +43,6 @@ export interface AppState {
   turn: number;
   totalTurns: number;
   humanCorpId: string;
-  /** Read-only view reconstructed from the server's redacted ClientState (null while loading). */
   view: PlayerView | null;
   staged: StagedOrder[];
   reports: TurnReport[];
@@ -53,6 +53,12 @@ export interface AppState {
   selection: Selection;
   theme: ThemeId;
   resolving: boolean;
+  // ----- multiplayer / lobby -----
+  mySeat: string | null;
+  isHost: boolean;
+  players: ClientPlayer[];
+  totalSeats: number;
+  submittedCount: number;
 }
 
 const THEME_KEY = "sc.theme";
@@ -75,6 +81,8 @@ class Store {
   private listeners = new Set<() => void>();
   private initStarted = false;
   private lastUserKey = "";
+  private polling = false;
+
   state: AppState = {
     status: "loading",
     error: null,
@@ -93,6 +101,11 @@ class Store {
     selection: { kind: "system", id: "hub" },
     theme: loadTheme(),
     resolving: false,
+    mySeat: null,
+    isHost: false,
+    players: [],
+    totalSeats: 4,
+    submittedCount: 0,
   };
 
   subscribe = (l: () => void): (() => void) => {
@@ -106,10 +119,7 @@ class Store {
     for (const l of this.listeners) l();
   }
 
-  /**
-   * Called when the app mounts (after auth). Resumes or starts the player's game.
-   * Keyed on the user id so logging in as a different account reloads their game.
-   */
+  /** Resumes / loads the shared game. Keyed on user id so account switches reload. */
   init(userKey: string): void {
     if (this.initStarted && this.lastUserKey === userKey) return;
     const switching = this.lastUserKey !== "" && this.lastUserKey !== userKey;
@@ -117,19 +127,20 @@ class Store {
     this.lastUserKey = userKey;
     if (typeof document !== "undefined") document.documentElement.setAttribute("data-theme", this.state.theme);
     if (switching) this.set({ status: "loading", view: null });
-    void ensureGame()
+    void fetchState()
       .then((cs) => this.applyState(cs))
       .catch((e) => this.set({ status: "error", error: String(e) }));
   }
 
-  private applyState(cs: ClientState, navTo?: ViewId): void {
-    const view = reconstructView(cs);
+  private applyState(cs: ClientState, opts?: { nav?: ViewId }): void {
+    const advanced = cs.turn > this.state.turn;
+    const view = cs.systems.length === 0 ? null : reconstructView(cs);
     const priceHistory = emptyHistory();
     for (const r of RESOURCES) {
       priceHistory[r] = cs.reports.length ? cs.reports.map((rep) => rep.prices[r]) : [cs.prices[r]];
     }
     const valuationHistory = cs.reports.map(
-      (rep) => rep.corps.find((c) => c.id === cs.humanCorpId)?.valuation ?? 0,
+      (rep) => rep.corps.find((c) => c.id === (cs.mySeat ?? cs.humanCorpId))?.valuation ?? 0,
     );
     this.set({
       status: "ready",
@@ -138,7 +149,7 @@ class Store {
       phase: cs.phase,
       turn: cs.turn,
       totalTurns: cs.totalTurns,
-      humanCorpId: cs.humanCorpId,
+      humanCorpId: cs.mySeat ?? cs.humanCorpId,
       view,
       reports: cs.reports,
       lastReport: cs.reports.length ? cs.reports[cs.reports.length - 1]! : null,
@@ -146,8 +157,41 @@ class Store {
       valuationHistory,
       staged: [],
       resolving: false,
-      ...(navTo ? { nav: navTo } : {}),
+      mySeat: cs.mySeat,
+      isHost: cs.isHost,
+      players: cs.players,
+      totalSeats: cs.totalSeats,
+      submittedCount: cs.submittedCount,
+      ...(opts?.nav ? { nav: opts.nav } : advanced ? { nav: "report" as ViewId } : {}),
     });
+    this.maybePoll();
+  }
+
+  // ----- polling (lobby sync + waiting-for-players) -----
+  private shouldPoll(): boolean {
+    const s = this.state;
+    if (s.status !== "ready") return false;
+    if (s.mySeat === null) return true; // spectating (game full) — watch for an opening
+    const me = s.players.find((p) => p.isYou);
+    return s.phase === "play" && !!me?.submitted && s.submittedCount < s.players.length;
+  }
+
+  private maybePoll(): void {
+    if (this.polling || !this.shouldPoll()) return;
+    this.polling = true;
+    const loop = () => {
+      if (!this.shouldPoll()) {
+        this.polling = false;
+        return;
+      }
+      window.setTimeout(() => {
+        void fetchState()
+          .then((cs) => this.applyState(cs))
+          .catch(() => {})
+          .finally(loop);
+      }, 2500);
+    };
+    loop();
   }
 
   // ----- navigation / selection / theme -----
@@ -164,21 +208,18 @@ class Store {
   unstage(id: string): void { this.set({ staged: this.state.staged.filter((s) => s.id !== id) }); }
   clearStaged(): void { this.set({ staged: [] }); }
 
-  // ----- turn resolution (server-authoritative) -----
+  // ----- turn resolution -----
   submit(): void {
     if (this.state.resolving || this.state.status !== "ready") return;
     this.set({ resolving: true });
-    const { gameId, staged } = this.state;
-    void submitOrders(gameId, staged.map((s) => s.order) as Order[])
-      .then((cs) => this.applyState(cs, "report"))
+    void submitOrders(this.state.staged.map((s) => s.order) as Order[])
+      .then((cs) => this.applyState(cs))
       .catch((e) => this.set({ resolving: false, error: String(e) }));
   }
 
   newMatch(): void {
     this.set({ status: "loading", resolving: false });
-    void newGame()
-      .then((cs) => this.applyState(cs, "dashboard"))
-      .catch((e) => this.set({ status: "error", error: String(e) }));
+    void newGame().then((cs) => this.applyState(cs, { nav: "dashboard" })).catch((e) => this.set({ status: "error", error: String(e) }));
   }
 }
 

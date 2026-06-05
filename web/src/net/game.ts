@@ -1,20 +1,21 @@
 import type { ClientState, Order } from "@engine";
 
-async function postJson(path: string, body: unknown): Promise<ClientState> {
+async function req(path: string, method: "GET" | "POST", body?: unknown): Promise<ClientState> {
   const res = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body ?? {}),
+    method,
+    headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return (await res.json()) as ClientState;
 }
 
-/** Resume the active game, creating one if the player has none. */
-export const ensureGame = (): Promise<ClientState> => postJson("/api/game", {});
+/** Fetch the global game's state for this player (auto-joins an open seat; used for polling). */
+export const fetchState = (): Promise<ClientState> => req("/api/game", "GET");
 
-/** End the active game and start a fresh one. */
-export const newGame = (): Promise<ClientState> => postJson("/api/game/new", {});
+/** Submit this turn's orders. Resolves once every seated human has submitted. */
+export const submitOrders = (orders: Order[]): Promise<ClientState> =>
+  req("/api/game/submit", "POST", { orders });
 
-export const submitOrders = (gameId: string, orders: Order[]): Promise<ClientState> =>
-  postJson(`/api/game/${gameId}/orders`, { orders });
+/** Start a fresh global game (only once the current one has ended). */
+export const newGame = (): Promise<ClientState> => req("/api/game/new", "POST");
