@@ -313,15 +313,19 @@ export function planRaid(
   const fundFactor = opts.fundFactor ?? 1.5;
   const maxLanes = opts.lanes ?? 3;
 
-  // Estimate each lane's prize from the value of rivals' convoys currently on or
-  // approaching it — raiders hunt the fat isotope/antimatter lanes, not bulk ice.
-  const prize = new Map<string, number>();
+  // Score each lane by the export value of the systems it connects (frontier/antimatter
+  // lanes are fat; bulk-ice lanes are lean), nudged by any rich convoy seen on it now.
+  const convoyPrize = new Map<string, number>();
   for (const c of view.convoys) {
     if (c.owner === view.me.id) continue;
     for (const rid of [c.routeIds[c.position], c.routeIds[c.position + 1]]) {
-      if (rid) prize.set(rid, Math.max(prize.get(rid) ?? 0, c.value));
+      if (rid) convoyPrize.set(rid, Math.max(convoyPrize.get(rid) ?? 0, c.value));
     }
   }
+  const exportValue = (sysId: string) => {
+    const sys = view.galaxy.systems.get(sysId);
+    return sys ? grossYieldValue(view, sys) : 0;
+  };
 
   const lanes: { routeId: string; mouth: string; traffic: number; value: number }[] = [];
   for (const route of view.galaxy.routes.values()) {
@@ -329,9 +333,15 @@ export function planRaid(
     if (mouth === view.galaxy.hubId) continue; // wholly inside protected space
     const traffic = view.galaxy.recentTraffic(route.id, view.turn - 1);
     if (traffic < minTraffic) continue;
-    lanes.push({ routeId: route.id, mouth, traffic, value: prize.get(route.id) ?? 0 });
+    const value = Math.max(
+      exportValue(route.a),
+      exportValue(route.b),
+      convoyPrize.get(route.id) ?? 0,
+    );
+    lanes.push({ routeId: route.id, mouth, traffic, value });
   }
-  // Prioritise by expected loot value, then by traffic as a tiebreaker.
+  // Prioritise the richest lanes first (so a limited privateer budget hunts the best loot),
+  // then fall back to busy lanes.
   lanes.sort((a, b) => b.value - a.value || b.traffic - a.traffic);
 
   const orders: Order[] = [];
@@ -344,9 +354,7 @@ export function planRaid(
           (o) => o === lane.mouth || view.galaxy.routeBetween(o, lane.mouth) !== undefined,
         ));
     if (!covered) {
-      // Only rent a privateer when the lane's expected plunder can pay for it.
-      const worthIt = lane.value * view.config.tuning.plunderFenceRate * 0.4 > view.config.tuning.privateerCost;
-      if (!worthIt || budget <= view.config.tuning.privateerCost * fundFactor) continue;
+      if (budget <= view.config.tuning.privateerCost * fundFactor) continue; // can't reach this lane
       orders.push({ kind: "hirePrivateer", basedAt: lane.mouth });
       budget -= view.config.tuning.privateerCost;
     }

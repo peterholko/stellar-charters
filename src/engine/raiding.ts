@@ -130,21 +130,22 @@ export function resolveRaid(
     return { ...base, outcome: "shadowed" };
   }
 
-  // Outcome bands scale with raider advantage. Plunder (the raider keeps the cargo) is
-  // the most common successful result, so raiding is a viable living, not just sabotage.
-  // Total loss still only happens to a valuable, exposed, weakly defended convoy.
-  if (roll < 0.15 - ratio * 0.1) {
+  // Outcome bands scale with raider advantage. When a raid does land it more often
+  // plunders (raider keeps the cargo) than destroys, so raiding is a viable living and
+  // not just sabotage — but most contacts only shadow or delay, so the cargo lost across
+  // all trade stays a moderate tax, not a wipeout.
+  if (roll < 0.18 - ratio * 0.1) {
     return { ...base, outcome: "shadowed" };
   }
-  if (roll < 0.4 - ratio * 0.2) {
+  if (roll < 0.55 - ratio * 0.2) {
     return { ...base, outcome: "harassed", delayAdded: 1 };
   }
-  if (roll < 0.6 - ratio * 0.1) {
-    const destroyed = Math.max(1, Math.round(convoy.quantity * (0.2 + ratio * 0.3)));
+  if (roll < 0.75 - ratio * 0.1) {
+    const destroyed = Math.max(1, Math.round(convoy.quantity * (0.15 + ratio * 0.25)));
     return { ...base, outcome: "damaged", cargoDestroyed: Math.min(convoy.quantity, destroyed) };
   }
   // Plundered: steal a portion, delivered to the raider.
-  const plundered = Math.max(1, Math.round(convoy.quantity * (0.4 + ratio * 0.5)));
+  const plundered = Math.max(1, Math.round(convoy.quantity * (0.3 + ratio * 0.4)));
   return {
     ...base,
     outcome: "plundered",
