@@ -39,6 +39,22 @@ export type PopulationStage =
 /** Ship range tiers (Section 04). The slice uses Range 1 and Range 2. */
 export type RangeTier = 1 | 2 | 3 | 4;
 
+/** Spatial region a system belongs to, from the protected core out to the deep abyss. */
+export type SystemRegion = "hub" | "core" | "frontier" | "abyss";
+
+/**
+ * A system's place on the galaxy atlas. Carried through to the client so the map renders
+ * the same organic layout the generator produced (rather than recomputing a radial guess).
+ * `x`/`y` are in an arbitrary world space centred on the hub; the renderer fits the camera.
+ * `visualSeed` lets the renderer vary a system's glyph deterministically.
+ */
+export interface SystemPosition {
+  x: number;
+  y: number;
+  region: SystemRegion;
+  visualSeed: number;
+}
+
 export interface System {
   id: string;
   name: string;
@@ -67,6 +83,8 @@ export interface System {
   stockpile: Stockpile;
   /** True for inner-ring systems offered in the opening auction. */
   innerRing: boolean;
+  /** Atlas coordinates / region (procedural scenarios carry this; legacy JSON may omit it). */
+  position?: SystemPosition;
 }
 
 export interface WarpRoute {

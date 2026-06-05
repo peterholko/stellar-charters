@@ -291,29 +291,9 @@ input, select { font-family: inherit; }
   radial-gradient(700px 500px at 50% 40%, var(--map-glow), transparent 70%), var(--bg-2); position: relative; }
 .mapscreen__hint { margin: 0; font-size: 0.68rem; color: var(--ink-faint); text-align: center; }
 
-.galaxy { width: 100%; height: 100%; display: block; }
-.route__hit { stroke: transparent; stroke-width: 2.4; cursor: pointer; }
-.route__line { stroke: var(--accent-2); opacity: 0.4; transition: 0.15s; }
-.route__line--guarded { stroke: color-mix(in srgb, var(--accent-2) 70%, var(--ink)); opacity: 0.35; }
-.route__line--high { stroke: var(--warn); opacity: 0.5; }
-.route__line--severe { stroke: var(--negative); opacity: 0.6; }
-.route__line--uncharted { stroke: var(--ink-faint); opacity: 0.3; stroke-dasharray: 1.4 1.4; }
-.route__line.is-selected { opacity: 1; filter: drop-shadow(0 0 2px var(--accent)); }
-.route:hover .route__line { opacity: 0.9; }
-.sys { cursor: pointer; }
-.sys__halo { fill: var(--bg-2); stroke: var(--line); stroke-width: 0.2; }
-.sys__core { transition: 0.15s; }
-.sys__ring { fill: none; stroke: var(--accent); stroke-width: 0.4; opacity: 0.8; }
-.sys__label { font-size: 2px; fill: var(--ink-dim); text-anchor: middle; font-family: var(--font-display); pointer-events: none; }
-.sys:hover .sys__core { filter: drop-shadow(0 0 1.5px var(--accent)); }
-.sys.is-selected .sys__halo { stroke: var(--accent); stroke-width: 0.5; }
-.sys.is-selected .sys__label { fill: var(--ink); }
-.sys--hub .sys__label { fill: var(--accent); }
-.convoy { cursor: pointer; }
-.convoy path { fill: var(--accent-2); }
-.convoy--rival path { fill: #ff6f9c; }
-.convoy__halo { fill: currentColor; opacity: 0.12; }
-.convoy.is-selected path { filter: drop-shadow(0 0 1.5px var(--accent)); }
+/* PixiJS WebGL galaxy fills the canvas; touch-action none lets it own wheel/drag gestures. */
+.pixigalaxy { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.pixigalaxy:active { cursor: grabbing; }
 
 /* ============================ exchange ============================ */
 .exchange { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1rem; align-items: start; }
@@ -532,7 +512,16 @@ input, select { font-family: inherit; }
 .lobby__hint { margin: 1rem 0 0; font-size: 0.66rem; color: var(--ink-faint); }
 
 .waiting-list { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.9rem; font-size: 0.76rem; color: var(--ink-dim); }
+.waiting-list span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .waiting-list span.is-in { color: var(--positive); }
+
+/* non-blocking "submitted, waiting for players" panel inside the order tray */
+.tray__waiting { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 1.6rem 1rem; gap: 0.4rem; }
+.tray__waiting-mark { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 16%, transparent); border: 1px solid color-mix(in srgb, var(--positive) 42%, transparent); margin-bottom: 0.3rem; }
+.tray__waiting-title { margin: 0; font-family: var(--font-display); font-size: 0.95rem; color: var(--ink); }
+.tray__waiting-sub { margin: 0; font-size: 0.74rem; color: var(--ink-dim); line-height: 1.5; max-width: 240px; }
+.tray__waiting .waiting-list { align-items: center; }
 
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 

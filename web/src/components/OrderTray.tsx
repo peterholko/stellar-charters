@@ -1,4 +1,4 @@
-import type { PlayerView } from "@engine";
+import type { ClientPlayer, PlayerView } from "@engine";
 import { store, type StagedOrder } from "../match/store";
 import { describeOrder } from "../match/orderCost";
 import { formatCr } from "../match/format";
@@ -11,13 +11,52 @@ export function OrderTray({
   resolving,
   turn,
   totalTurns,
+  submitted,
+  players,
+  submittedCount,
 }: {
   view: PlayerView;
   staged: StagedOrder[];
   resolving: boolean;
   turn: number;
   totalTurns: number;
+  submitted: boolean;
+  players: ClientPlayer[];
+  submittedCount: number;
 }) {
+  // Already submitted this turn → show a non-blocking "waiting for players" panel so the
+  // rest of the console stays fully usable for reviewing your charter.
+  if (submitted) {
+    const remaining = players.length - submittedCount;
+    return (
+      <section className="tray">
+        <header className="tray__head">
+          <div>
+            <p className="eyebrow">Turn {Math.min(turn + 1, totalTurns)}</p>
+            <h2>Orders Locked In</h2>
+          </div>
+          <span className="tray__count">{submittedCount}/{players.length}</span>
+        </header>
+        <div className="tray__waiting">
+          <span className="tray__waiting-mark"><Icon name="check" size={20} /></span>
+          <p className="tray__waiting-title">Orders submitted</p>
+          <p className="tray__waiting-sub">
+            {remaining > 0
+              ? `Waiting for ${remaining} more ${remaining === 1 ? "player" : "players"}. Review your charter while the turn processes.`
+              : "Resolving the turn…"}
+          </p>
+          <div className="waiting-list">
+            {players.map((p) => (
+              <span key={p.corpId} className={p.submitted ? "is-in" : ""}>
+                <Icon name={p.submitted ? "check" : "clock"} size={12} /> {p.name}{p.isYou ? " (you)" : ""}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const infos = staged.map((s) => ({ s, info: describeOrder(s.order, view) }));
   const totalCost = infos.reduce((sum, { info }) => sum + info.cost, 0);
   const remaining = view.me.credits - totalCost;
@@ -82,7 +121,7 @@ export function OrderTray({
           onClick={() => store.submit()}
         >
           <Icon name="send" size={16} />
-          {resolving ? "Resolving…" : "Submit & Resolve Turn"}
+          {resolving ? "Submitting…" : "Submit Turn"}
         </button>
       </div>
     </section>

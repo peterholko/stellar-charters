@@ -10,6 +10,7 @@ import type {
   RangeTier,
   Resource,
   Stockpile,
+  SystemPosition,
 } from "./types.js";
 import { RESOURCES } from "./types.js";
 
@@ -23,6 +24,8 @@ export interface ScenarioSystem {
   populationStage?: PopulationStage;
   defense?: number;
   innerRing?: boolean;
+  /** Atlas coordinates (procedural scenarios). Absent for legacy authored maps. */
+  position?: SystemPosition;
 }
 
 /** Raw route entry as authored in a scenario JSON. */
@@ -40,6 +43,8 @@ export interface ScenarioRoute {
 
 export interface Scenario {
   name: string;
+  /** Stable id used to rebuild the scenario (e.g. "procedural-atlas-v1", "inner-ring-8p"). */
+  id?: string;
   hubId: string;
   players: number;
   turns: number;

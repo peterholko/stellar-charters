@@ -36,6 +36,7 @@ export class Galaxy {
         owner: null,
         stockpile: emptyStockpile(),
         innerRing: s.innerRing ?? false,
+        position: s.position,
       });
       this.adj.set(s.id, []);
     }

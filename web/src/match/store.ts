@@ -204,7 +204,11 @@ class Store {
   }
 
   // ----- order staging -----
-  stage(order: Order): void { this.set({ staged: [...this.state.staged, { id: nextId(), order }] }); }
+  stage(order: Order): void {
+    // Orders are locked once submitted for the turn; ignore staging while waiting to resolve.
+    if (this.state.players.find((p) => p.isYou)?.submitted) return;
+    this.set({ staged: [...this.state.staged, { id: nextId(), order }] });
+  }
   unstage(id: string): void { this.set({ staged: this.state.staged.filter((s) => s.id !== id) }); }
   clearStaged(): void { this.set({ staged: [] }); }
 

@@ -1,5 +1,5 @@
 import { store, useApp } from "../match/store";
-import { SystemMap } from "../components/SystemMap";
+import { PixiGalaxyMap } from "../components/PixiGalaxyMap";
 
 export function GalaxyMap() {
   const { view, selection, humanCorpId } = useApp();
@@ -20,9 +20,9 @@ export function GalaxyMap() {
         </div>
       </div>
       <div className="mapscreen__canvas">
-        <SystemMap view={view} humanCorpId={humanCorpId} selection={selection} onSelect={(s) => store.select(s)} />
+        <PixiGalaxyMap view={view} humanCorpId={humanCorpId} selection={selection} onSelect={(s) => store.select(s)} />
       </div>
-      <p className="mapscreen__hint">Click a system, warp lane, or convoy to inspect and act. Actions queue in the order tray.</p>
+      <p className="mapscreen__hint">Scroll to zoom, drag to pan, double-click to focus. Click a system, warp lane, or convoy to inspect and act.</p>
     </div>
   );
 }

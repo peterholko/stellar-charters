@@ -1,10 +1,12 @@
 /**
  * Reconstruct a read-only PlayerView from the server's redacted ClientState.
  *
- * The engine is browser-portable, so the client rebuilds a Galaxy/Market from the static
- * scenario and overlays the server's authoritative (already fog-of-war-redacted) dynamic
- * state. This keeps every existing screen working against a `PlayerView` while resolution
- * happens only on the server.
+ * The engine is browser-portable, so the client rebuilds a Galaxy/Market directly from the
+ * server snapshot — the systems and routes (with their atlas positions) come down in the
+ * state itself, so the display galaxy matches whatever the server generated without the
+ * client needing the scenario id, seed, or any committed JSON. Authoritative (already
+ * fog-of-war-redacted) dynamic state is then overlaid. Every existing screen keeps working
+ * against a `PlayerView` while resolution happens only on the server.
  */
 import {
   Galaxy,
@@ -18,12 +20,48 @@ import {
   type GameConfig,
   type PlayerView,
   type Scenario,
+  type ScenarioRoute,
+  type ScenarioSystem,
 } from "@engine";
-import rawScenario from "../../../scenarios/inner-ring-8p.json";
+
+/** Rebuild a Scenario skeleton from the server snapshot (static fields + atlas positions). */
+function scenarioFromState(state: ClientState): Scenario {
+  const systems: ScenarioSystem[] = state.systems.map((s) => ({
+    id: s.id,
+    name: s.name,
+    yields: s.yields,
+    claimCost: s.claimCost,
+    upkeep: s.upkeep,
+    populationStage: s.populationStage,
+    defense: s.defense,
+    innerRing: s.innerRing,
+    position: s.position,
+  }));
+  // Routes come down in construction order, so `new Galaxy` reassigns the same route-N ids.
+  const routes: ScenarioRoute[] = state.routes.map((r) => ({
+    a: r.a,
+    b: r.b,
+    transitTime: r.transitTime,
+    stability: r.stability,
+    capacity: r.capacity,
+    exposure: r.exposure,
+    authorityPresence: r.authorityPresence,
+    requiredRange: r.requiredRange,
+    charted: r.charted,
+  }));
+  return {
+    name: "live",
+    id: state.scenarioId,
+    hubId: "hub",
+    players: state.corps.length,
+    turns: state.totalTurns,
+    systems,
+    routes,
+  };
+}
 
 export function reconstructView(state: ClientState): PlayerView {
-  const base = rawScenario as unknown as Scenario;
-  const scenario: Scenario = { ...base, players: state.corps.length };
+  const scenario = scenarioFromState(state);
   const config: GameConfig = loadScenario(scenario);
   const galaxy = new Galaxy(config);
 

@@ -17,6 +17,11 @@ export {
   type Tuning,
 } from "./config.js";
 export { Galaxy } from "./galaxy.js";
+export {
+  generateProceduralScenario,
+  PROCEDURAL_SCENARIO_ID,
+  type ProceduralOptions,
+} from "./procedural.js";
 export { Market, type ClearableOrder, type MarketFill } from "./market.js";
 export { resolveAuction, type AuctionResult } from "./auction.js";
 export {

@@ -9,9 +9,11 @@
  */
 import {
   Engine,
+  PROCEDURAL_SCENARIO_ID,
   buildClientState,
   defaultRegistry,
   gamePhase,
+  generateProceduralScenario,
   loadScenario,
   type ClientPlayer,
   type ClientState,
@@ -19,10 +21,12 @@ import {
   type Scenario,
   type TurnReport,
 } from "../src/engine/index.js";
-import scenarioJson from "../scenarios/inner-ring-8p.json";
+import scenarioJson8p from "../scenarios/inner-ring-8p.json";
+import scenarioJson4p from "../scenarios/inner-ring-4p.json";
 import { currentUser, json, readJson, type Env, type SessionUser } from "./session.js";
 
-const SCENARIO_ID = "inner-ring-8p";
+/** New games are grown procedurally from their seed; legacy ids still replay from JSON. */
+const SCENARIO_ID = PROCEDURAL_SCENARIO_ID;
 const TOTAL_SEATS = 4;
 const CHARTER_NAMES = [
   "Astra Meridian Charter",
@@ -35,16 +39,33 @@ const CHARTER_NAMES = [
   "Brightfall Ventures",
 ];
 
-const BASE_CONFIG = loadScenario({ ...(scenarioJson as unknown as Scenario), players: TOTAL_SEATS });
+const BASE_CONFIG = loadScenario(generateProceduralScenario({ seed: 1, players: TOTAL_SEATS }));
 const TOTAL_TURNS = BASE_CONFIG.turns;
 
 interface GameRow {
   id: string;
   seed: number;
+  scenario: string;
   players: number;
   turn: number;
   phase: string;
   status: string;
+}
+
+/**
+ * Rebuild the base scenario a game was created from. Procedural games regrow from their
+ * seed + player count; legacy rows keep replaying their committed authored JSON.
+ */
+function resolveScenario(game: GameRow): Scenario {
+  switch (game.scenario) {
+    case "inner-ring-8p":
+      return scenarioJson8p as unknown as Scenario;
+    case "inner-ring-4p":
+      return scenarioJson4p as unknown as Scenario;
+    case PROCEDURAL_SCENARIO_ID:
+    default:
+      return generateProceduralScenario({ seed: game.seed, players: game.players });
+  }
 }
 interface MemberRow {
   corp_id: string;
@@ -94,6 +115,7 @@ async function createGlobalGame(env: Env, creator: SessionUser): Promise<GameRow
   const row: GameRow = {
     id: crypto.randomUUID(),
     seed: crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff,
+    scenario: SCENARIO_ID,
     players: TOTAL_SEATS,
     turn: 0,
     phase: "play",
@@ -130,11 +152,11 @@ async function autoJoin(env: Env, game: GameRow, user: SessionUser, mem: MemberR
 // ----- engine reconstruction (AI + human takeover) -----
 
 function buildEngine(game: GameRow, mem: MemberRow[]): Engine {
-  const base = scenarioJson as unknown as Scenario;
+  const base = resolveScenario(game);
   const baseBots = base.bots ?? ["balanced"];
   const bots: string[] = [];
   for (let i = 0; i < game.players; i++) bots[i] = baseBots[i % baseBots.length]!;
-  const config = loadScenario({ ...base, players: game.players, bots });
+  const config = loadScenario({ ...base, id: game.scenario, players: game.players, bots });
   const engine = new Engine(config, game.seed, defaultRegistry());
   // Make seated corps human-controllable; name them after their player.
   const nameByCorp = new Map(mem.map((m) => [m.corp_id, m.display_name]));
@@ -171,6 +193,7 @@ function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn
   }));
   return {
     gameId: game.id,
+    scenarioId: game.scenario,
     turn,
     phase,
     totalTurns: TOTAL_TURNS,

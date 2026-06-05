@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { ClientPlayer } from "@engine";
 import { store, useApp, type ViewId } from "./match/store";
 import { formatCr } from "./match/format";
 import { Icon, type IconName } from "./ui/icons";
@@ -70,7 +69,8 @@ export function App() {
   }
   if (!mySeat || !view) return <InProgress username={user.username} />;
   const me = view.me;
-  const waiting = phase === "play" && !!players.find((p) => p.isYou)?.submitted && submittedCount < players.length;
+  const iSubmitted = players.find((p) => p.isYou)?.submitted ?? false;
+  const waiting = phase === "play" && iSubmitted && submittedCount < players.length;
 
   const top = (
     <header className="topbar">
@@ -122,7 +122,7 @@ export function App() {
 
         <aside className="sidestack">
           <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
-          <OrderTray view={view} staged={staged} resolving={resolving} turn={turn} totalTurns={totalTurns} />
+          <OrderTray view={view} staged={staged} resolving={resolving} turn={turn} totalTurns={totalTurns} submitted={iSubmitted} players={players} submittedCount={submittedCount} />
         </aside>
       </div>
 
@@ -143,27 +143,7 @@ export function App() {
       </button>
       {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
 
-      {resolving && <ResolveOverlay label="Submitting…" />}
-      {!resolving && waiting && <WaitingOverlay players={players} submittedCount={submittedCount} />}
       {phase === "over" && <OverModal />}
-    </div>
-  );
-}
-
-function WaitingOverlay({ players, submittedCount }: { players: ClientPlayer[]; submittedCount: number }) {
-  return (
-    <div className="resolve-overlay">
-      <div className="resolve-overlay__core">
-        <span className="resolve-overlay__ring" />
-        <p>Waiting for players · {submittedCount}/{players.length} submitted</p>
-        <div className="waiting-list">
-          {players.map((p) => (
-            <span key={p.corpId} className={p.submitted ? "is-in" : ""}>
-              {p.submitted ? "✓" : "○"} {p.name}{p.isYou ? " (you)" : ""}
-            </span>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -178,17 +158,6 @@ function InProgress({ username }: { username: string }) {
         <p className="auth__sub">Every charter in the galaxy is controlled. You'll be seated when a seat opens or a new game begins.</p>
         <button type="button" className="auth__submit" onClick={() => location.reload()}>Refresh</button>
       </main>
-    </div>
-  );
-}
-
-function ResolveOverlay({ label }: { label: string }) {
-  return (
-    <div className="resolve-overlay">
-      <div className="resolve-overlay__core">
-        <span className="resolve-overlay__ring" />
-        <p>{label}</p>
-      </div>
     </div>
   );
 }

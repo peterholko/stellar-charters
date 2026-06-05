@@ -16,6 +16,7 @@ import {
   type Resource,
   type Ship,
   type Stockpile,
+  type SystemPosition,
 } from "./types.js";
 
 export type GamePhase = "play" | "over";
@@ -43,6 +44,8 @@ export interface ClientSystem {
   platforms: number;
   hasDepot: boolean;
   routeIds: string[];
+  /** Atlas coordinates / region for map rendering (procedural scenarios). */
+  position?: SystemPosition;
   /** Owner-only: progress / unrest / local stockpile (null for systems you don't own). */
   populationProgress: number | null;
   unrest: number | null;
@@ -102,6 +105,8 @@ export interface ClientConvoy {
 
 export interface ClientState {
   gameId: string;
+  /** Id of the scenario this game was built from (e.g. "procedural-atlas-v1"). */
+  scenarioId: string;
   turn: number;
   phase: GamePhase;
   totalTurns: number;
@@ -157,6 +162,7 @@ export function buildClientState(
       platforms: s.platforms,
       hasDepot: s.hasDepot,
       routeIds: [...s.routeIds],
+      position: s.position,
       populationProgress: mine ? s.populationProgress : null,
       unrest: mine ? s.unrest : null,
       stockpile: mine ? { ...s.stockpile } : null,
@@ -226,6 +232,7 @@ export function buildClientState(
 
   return {
     gameId,
+    scenarioId: engine.config.scenario.id ?? "legacy",
     turn: engine.currentTurn,
     phase: gamePhase(engine),
     totalTurns: engine.config.turns,
