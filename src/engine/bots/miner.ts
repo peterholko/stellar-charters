@@ -11,7 +11,7 @@ import {
   freeOperatorOrders,
   maybeBuildDepot,
   maybeBuildHydroponics,
-  maybeEscort,
+  maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
   maybeResearchRange2,
@@ -39,7 +39,7 @@ export class MinerBot implements Bot {
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeBuildHydroponics(view));
-    orders.push(...maybeEscort(view));
+    orders.push(...maybeBuildWarships(view));
     return orders;
   }
 }

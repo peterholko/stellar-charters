@@ -86,7 +86,7 @@ describe("raid eligibility", () => {
     expect(
       canRaidRoute(
         galaxy,
-        corp({ ownedSystemIds: ["s0"], ships: [{ rangeTier: 1, combat: 3, raider: true }] }),
+        corp({ ownedSystemIds: ["s0"], ships: [{ rangeTier: 1, combat: 3, raider: true, stationedAt: "s0" }] }),
         hubRoute,
       ),
     ).toBe(true);

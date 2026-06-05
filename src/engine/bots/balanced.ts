@@ -12,7 +12,7 @@ import {
   freeOperatorOrders,
   maybeBuildDepot,
   maybeBuildHydroponics,
-  maybeEscort,
+  maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
   maybeResearchRange2,
@@ -39,7 +39,7 @@ export class BalancedBot implements Bot {
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildHydroponics(view));
-    orders.push(...maybeEscort(view));
+    orders.push(...maybeBuildWarships(view));
 
     // Once established, opportunistically harass a busy lane (later and more
     // cautiously than a dedicated raider).

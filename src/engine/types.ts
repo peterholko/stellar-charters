@@ -115,6 +115,8 @@ export interface Ship {
   combat: number;
   /** True if this ship can perform interdiction/raids. */
   raider: boolean;
+  /** Owned system this ship is based at (defends it and escorts its convoys); "" if unstationed. */
+  stationedAt: string;
 }
 
 export interface Privateer {
@@ -200,6 +202,8 @@ export interface BuildShipOrder {
   kind: "buildShip";
   rangeTier: RangeTier;
   raider: boolean;
+  /** Owned system to base the ship at. */
+  systemId: string;
 }
 
 export interface ResearchRangeOrder {

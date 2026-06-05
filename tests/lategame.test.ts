@@ -94,3 +94,36 @@ describe("equity, acquisition & free operators (Sections 17–18)", () => {
     expect(engine.corps.some((c) => c.isFreeOperator)).toBe(true);
   });
 });
+
+/** Researches Range 2, then builds a Range-2 escort at its system. */
+class ShipyardBot implements Bot {
+  readonly id = "noop";
+  bid(view: PlayerView): BidOrder {
+    return { kind: "bid", priorities: bidList(view, (s) => valueSystem(view, s)) };
+  }
+  decide(view: PlayerView): Order[] {
+    if (view.me.rangeTier < 2) return [{ kind: "researchRange", targetTier: 2 }];
+    if (!view.me.ships.some((s) => s.rangeTier === 2)) {
+      const sys = view.me.ownedSystemIds[0];
+      if (sys) return [{ kind: "buildShip", rangeTier: 2, raider: false, systemId: sys }];
+    }
+    return [];
+  }
+}
+
+describe("warships & rare-isotope hulls (Sections 04, 07, 13)", () => {
+  it("builds a Range-2 escort that consumes rare isotopes and is stationed at its system", () => {
+    const scenario = oneSystem({ rareIsotopes: 5, ice: 4 });
+    scenario.tuning = { startingCredits: 20000 };
+    const engine = new Engine(loadScenario(scenario), 1, new Map([["noop", () => new ShipyardBot()]]));
+    engine.run();
+
+    const corp = engine.corps[0]!;
+    const escort = corp.ships.find((s) => s.rangeTier === 2 && !s.raider);
+    expect(escort).toBeDefined();
+    expect(escort!.stationedAt).toBe("s0");
+    expect(escort!.combat).toBe(engine.config.tuning.shipCombat[2]);
+    // Stationed escorts defend the system and escort its convoys: combat is non-zero.
+    expect(escort!.combat).toBeGreaterThan(0);
+  });
+});

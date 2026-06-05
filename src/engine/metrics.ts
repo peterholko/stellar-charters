@@ -49,6 +49,7 @@ export interface GameMetrics {
   distressLiquidations: number;
   finalFreeOperators: number;
   depotsBuilt: number;
+  shipsBuilt: number;
   finalStageCounts: Record<PopulationStage, number>;
 }
 

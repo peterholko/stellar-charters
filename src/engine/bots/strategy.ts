@@ -4,7 +4,7 @@
  * These are greedy, expected-value style helpers — enough varied behaviour to
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
-import { RESOURCES, type MarketOrder, type Order, type Resource, type System } from "../types.js";
+import { RESOURCES, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
 import type { PlayerView } from "./bot.js";
 
 /** Resources a corporation exports. Outpost-stage systems consume no food, so a
@@ -75,6 +75,9 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
       if (r === "ice") {
         reserve = Math.max(buffer, t.iceNeed[sys.populationStage] * 2 + sys.hydroponics * t.hydroponicsIceUse * 2);
       }
+      // Keep a few rare isotopes back to build higher-tier warships once Range 2+,
+      // but still sell the surplus (frontier income funds those hulls).
+      if (r === "rareIsotopes" && view.me.rangeTier >= 2) reserve = Math.max(buffer, 4);
       const qty = sys.stockpile[r] - reserve;
       if (qty <= 0) continue;
       orders.push({
@@ -325,12 +328,48 @@ export function planRaid(
   return orders;
 }
 
-/** Escort the busiest owned export system if the corp has defensive ships. */
-export function maybeEscort(view: PlayerView): Order[] {
-  const capacity = view.me.ships
-    .filter((s) => !s.raider)
-    .reduce((s, sh) => s + sh.combat, 0);
-  if (capacity <= 0 || view.me.ownedSystemIds.length === 0) return [];
-  const sysId = view.me.ownedSystemIds[0]!;
-  return [{ kind: "escort", systemId: sysId, strength: capacity }];
+/**
+ * Build escort/defense warships and station them at the corp's most valuable, most
+ * exposed systems — defending those systems' tunnel mouths and automatically escorting
+ * the convoys that carry their trade goods. Higher-tier hulls consume rare isotopes, so
+ * controlling the frontier translates directly into stronger fleets.
+ */
+export function maybeBuildWarships(view: PlayerView): Order[] {
+  if (view.turn < 5 || view.me.ownedSystemIds.length === 0) return [];
+
+  // Field the best hull our tech allows. Its rare-isotope cost is covered by our own
+  // frontier output first, with any shortfall bought from the exchange — so estimate
+  // the full bill (hull + isotopes) before committing.
+  const t = view.config.tuning;
+  const tier: RangeTier = view.me.rangeTier;
+  const localIsotopes = view.me.ownedSystemIds.reduce(
+    (s, id) => s + view.galaxy.system(id).stockpile.rareIsotopes,
+    0,
+  );
+  const isotopeBill =
+    Math.max(0, t.shipIsotopeCost[tier] - localIsotopes) * view.market.prices.rareIsotopes;
+  const totalCost = t.shipCost[tier] + isotopeBill;
+  if (view.me.credits <= totalCost * 1.1) return [];
+
+  // A system needs a hull if it is under-guarded, or if we can now field a strictly
+  // better tier than anything stationed there (an isotope-fuelled flagship upgrade).
+  const ranked = view.me.ownedSystemIds
+    .map((id) => view.galaxy.system(id))
+    .map((s) => {
+      const escorts = view.me.ships.filter((sh) => !sh.raider && sh.stationedAt === s.id);
+      const bestTier = escorts.reduce((m, sh) => Math.max(m, sh.rangeTier), 0);
+      return {
+        sys: s,
+        value: grossYieldValue(view, s),
+        count: escorts.length,
+        bestTier,
+        desired: s.yields.rareIsotopes > 0 ? 3 : 2,
+      };
+    })
+    .filter((e) => e.value > 0 && (e.count < e.desired || e.bestTier < tier))
+    .sort((a, b) => b.value - a.value);
+
+  const target = ranked[0];
+  if (!target) return [];
+  return [{ kind: "buildShip", rangeTier: tier, raider: false, systemId: target.sys.id }];
 }

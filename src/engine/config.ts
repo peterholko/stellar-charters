@@ -71,6 +71,11 @@ export interface Tuning {
   surveyCost: number;
   shipCost: Record<RangeTier, number>;
   raiderShipExtraCost: number;
+  /** Combat strength of a (non-raider escort) ship by tier; raiders get +raiderCombatBonus. */
+  shipCombat: Record<RangeTier, number>;
+  raiderCombatBonus: number;
+  /** Rare isotopes consumed to build a ship of each tier (higher tiers need them). */
+  shipIsotopeCost: Record<RangeTier, number>;
   privateerCost: number;
   privateerStrength: number;
   privateerTurns: number;
@@ -130,8 +135,11 @@ export const DEFAULT_TUNING: Tuning = {
   shippingFeePerHop: 1.5,
   bidRefundFrac: 0.92,
   surveyCost: 300,
-  shipCost: { 1: 600, 2: 1400, 3: 3200, 4: 7000 },
+  shipCost: { 1: 600, 2: 1100, 3: 2600, 4: 6000 },
   raiderShipExtraCost: 400,
+  shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11 },
+  raiderCombatBonus: 1,
+  shipIsotopeCost: { 1: 0, 2: 2, 3: 6, 4: 14 },
   privateerCost: 500,
   privateerStrength: 3,
   privateerTurns: 3,

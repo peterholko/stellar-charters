@@ -81,7 +81,7 @@ export class Engine {
         credits: config.tuning.startingCredits,
         debt: 0,
         ownedSystemIds: [],
-        ships: [{ rangeTier: 1, combat: 0, raider: false }],
+        ships: [{ rangeTier: 1, combat: 0, raider: false, stationedAt: "" }],
         privateers: [],
         rangeTier: 1,
         valuation: 0,
@@ -112,6 +112,7 @@ export class Engine {
       distressLiquidations: 0,
       finalFreeOperators: 0,
       depotsBuilt: 0,
+      shipsBuilt: 0,
       finalStageCounts: { outpost: 0, settlement: 0, colony: 0, city: 0, metropolis: 0 },
     };
   }
@@ -276,17 +277,35 @@ export class Engine {
             break;
           }
           case "buildShip": {
-            const cost =
-              this.config.tuning.shipCost[order.rangeTier] +
-              (order.raider ? this.config.tuning.raiderShipExtraCost : 0);
-            if (corp.credits < cost) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break; // must base it at an owned system
             if (order.rangeTier > corp.rangeTier) break;
-            corp.credits -= cost;
+            const cost =
+              t.shipCost[order.rangeTier] + (order.raider ? t.raiderShipExtraCost : 0);
+            // Higher-tier hulls require rare isotopes: drawn from the corp's own
+            // stockpiles first, and any shortfall purchased from the exchange. Owning a
+            // frontier makes advanced fleets cheaper; everyone else pays market price.
+            const isotopeNeed = t.shipIsotopeCost[order.rangeTier];
+            const localIsotopes = corp.ownedSystemIds.reduce(
+              (s, id) => s + this.galaxy.system(id).stockpile.rareIsotopes,
+              0,
+            );
+            const boughtIsotopes = Math.max(0, isotopeNeed - localIsotopes);
+            const isotopeBill = boughtIsotopes * this.market.prices.rareIsotopes;
+            if (corp.credits < cost + isotopeBill) break;
+            this.consumeFromStockpiles(corp, "rareIsotopes", Math.min(isotopeNeed, localIsotopes));
+            corp.credits -= cost + isotopeBill;
             corp.ships.push({
               rangeTier: order.rangeTier,
-              combat: order.raider ? 3 : 1,
+              combat: t.shipCombat[order.rangeTier] + (order.raider ? t.raiderCombatBonus : 0),
               raider: order.raider,
+              stationedAt: sys.id,
             });
+            this.metrics.shipsBuilt += 1;
+            this.log(
+              `  ${corp.name} builds a Range-${order.rangeTier} ${order.raider ? "raider" : "escort"} at ${sys.name}`,
+            );
             break;
           }
           case "researchRange": {
@@ -464,10 +483,9 @@ export class Engine {
         const shipping = this.config.tuning.shippingFeePerHop * hops * qty * shipMult;
         const payout = Math.max(0, qty * price - shipping);
         const value = qty * this.config.tuning.basePrices[resource];
-        const escort = Math.min(
-          escortBySystem.get(`${corp.id}:${sys.id}`) ?? 0,
-          this.escortCapacity(corp),
-        );
+        // Warships stationed at the origin escort its outbound convoys automatically.
+        const escort =
+          this.stationedDefense(sys.id, corp.id) + (escortBySystem.get(`${corp.id}:${sys.id}`) ?? 0);
         this.convoys.push(
           this.makeConvoy(corp.id, "sell", resource, qty, path.systems, path.routes, payout, escort, value),
         );
@@ -490,10 +508,8 @@ export class Engine {
         if (!path) continue;
         from.stockpile[order.resource] -= qty;
         const value = qty * this.config.tuning.basePrices[order.resource];
-        const escort = Math.min(
-          escortBySystem.get(`${corp.id}:${from.id}`) ?? 0,
-          this.escortCapacity(corp),
-        );
+        const escort =
+          this.stationedDefense(from.id, corp.id) + (escortBySystem.get(`${corp.id}:${from.id}`) ?? 0);
         this.convoys.push(
           this.makeConvoy(corp.id, "transfer", order.resource, qty, path.systems, path.routes, 0, escort, value),
         );
@@ -802,6 +818,7 @@ export class Engine {
       if (corp.credits >= this.config.tuning.distressCreditFloor) continue;
       for (const sysId of corp.ownedSystemIds) this.galaxy.system(sysId).owner = null;
       corp.ownedSystemIds = [];
+      for (const s of corp.ships) s.stationedAt = ""; // fleet retreats from lost systems
       corp.hasCharter = false;
       corp.isFreeOperator = true;
       this.metrics.distressLiquidations += 1;
@@ -835,6 +852,7 @@ export class Engine {
     acquirer.debt += target.debt;
     target.debt = 0;
     target.ownedSystemIds = [];
+    for (const s of target.ships) s.stationedAt = ""; // ousted fleet leaves the charter's systems
     target.hasCharter = false;
     target.isFreeOperator = true;
     // A Free Operator that takes control of a charter re-enters charter play (Section 18).
@@ -907,8 +925,13 @@ export class Engine {
     return c.routeIds[c.position];
   }
 
-  private escortCapacity(corp: Corporation): number {
-    return corp.ships.filter((s) => !s.raider).reduce((s, sh) => s + sh.combat, 0);
+  /** Combat of (non-raider) escort ships a corp has stationed at a system. */
+  private stationedDefense(systemId: string, corpId: string): number {
+    const corp = this.corps.find((c) => c.id === corpId);
+    if (!corp) return 0;
+    return corp.ships
+      .filter((s) => !s.raider && s.stationedAt === systemId)
+      .reduce((sum, s) => sum + s.combat, 0);
   }
 
   private localDefenseFor(convoy: Convoy): number {
@@ -924,9 +947,28 @@ export class Engine {
         def += sys.defense;
         // Depot patrols harden connected tunnels against raiders (Section 12).
         if (sys.hasDepot) def += this.config.tuning.depotDefenseBonus;
+        // Warships stationed here defend the system's tunnel mouths.
+        def += this.stationedDefense(sys.id, convoy.owner);
       }
     }
     return def;
+  }
+
+  /** Consume `need` of a resource from a corp's owned-system stockpiles; true if covered. */
+  private consumeFromStockpiles(corp: Corporation, resource: Resource, need: number): boolean {
+    if (need <= 0) return true;
+    let have = 0;
+    for (const id of corp.ownedSystemIds) have += this.galaxy.system(id).stockpile[resource];
+    if (have < need) return false;
+    let remaining = need;
+    for (const id of corp.ownedSystemIds) {
+      if (remaining <= 0) break;
+      const sys = this.galaxy.system(id);
+      const take = Math.min(sys.stockpile[resource], remaining);
+      sys.stockpile[resource] -= take;
+      remaining -= take;
+    }
+    return true;
   }
 
   private applyRaiderLosses(corp: Corporation, losses: number): void {

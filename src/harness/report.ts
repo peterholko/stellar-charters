@@ -39,6 +39,7 @@ export interface Aggregate {
   distressPerGame: number;
   freeOperatorsPerGame: number;
   depotsPerGame: number;
+  shipsPerGame: number;
   taxPerTurnAvg: number;
   populatedBeyondOutboundFrac: number; // fraction of owned systems that grew past outpost
   topStageReached: string;
@@ -86,6 +87,7 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
   let distressSum = 0;
   let freeOpsSum = 0;
   let depotsSum = 0;
+  let shipsSum = 0;
   let taxSum = 0;
   let taxObs = 0;
   let grownSystems = 0;
@@ -147,6 +149,7 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
     distressSum += g.distressLiquidations;
     freeOpsSum += g.finalFreeOperators;
     depotsSum += g.depotsBuilt;
+    shipsSum += g.shipsBuilt;
     for (const s of g.snapshots) {
       if (s.turn > 0) { taxSum += s.taxLevied; taxObs += 1; }
     }
@@ -190,6 +193,7 @@ export function aggregate(config: GameConfig, games: GameMetrics[]): Aggregate {
     distressPerGame: round2(distressSum / n),
     freeOperatorsPerGame: round2(freeOpsSum / n),
     depotsPerGame: round2(depotsSum / n),
+    shipsPerGame: round2(shipsSum / n),
     taxPerTurnAvg: round2(taxObs ? taxSum / taxObs : 0),
     populatedBeyondOutboundFrac: round2(ownedSystems ? grownSystems / ownedSystems : 0),
     topStageReached: stageOrder[topStageIdx]!,
@@ -290,7 +294,7 @@ export function renderMarkdown(aggs: Aggregate[]): string {
     lines.push(
       `- Systems grown past Outpost: ${(a.populatedBeyondOutboundFrac * 100).toFixed(0)}% (top stage reached: ${a.topStageReached})`,
     );
-    lines.push(`- Trade Depots built per game: ${a.depotsPerGame}`);
+    lines.push(`- Trade Depots built per game: ${a.depotsPerGame}; warships built per game: ${a.shipsPerGame}`);
     lines.push(`- Acquisitions per game: ${a.acquisitionsPerGame}; distress liquidations: ${a.distressPerGame}`);
     lines.push(`- Free Operators at game end (avg): ${a.freeOperatorsPerGame}`);
     lines.push("");
