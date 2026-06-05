@@ -88,10 +88,13 @@ populations grow to metropolis where they are **locally fed** (importing food ke
 colony alive but only local food/hydroponics fuels growth — the doc's Section 08 intent),
 Trade Depots get built, corps **climb the full range-tech ladder** (Range 2 by ~turn 7,
 Range 3/4 in the late game) and **build escort fleets and defense platforms** that station
-at systems and defend convoys — across a typical batch the fleet mix runs ~60% Range-1 /
-~30% Range-2 / ~9% Range-3 / ~2% Range-4, and raids split roughly 20% delay/damage/loot vs
-15% repelled/ambushed (heavy fleets turn raiders back; light defense still lets raids
-through), with only ~0.3% of cargo value lost. The frontier is reached and rare isotopes
+at systems and defend convoys. Raiders work several lanes a turn (and a strong force hits
+multiple shipments on a congested lane), so raiding is a real economic pressure: ~12% of
+convoys are intercepted and ~2.2% of cargo value is erased on average — biting hardest on
+exposed frontier lanes — while still never wiping out whole shipments. Of raids that make
+contact, ~28% delay/damage/loot vs ~11% repelled/ambushed, and the pressure follows a
+security-war arc (strongest early, dips mid-game as escorts/platforms deploy, rebounds late
+as raider forces and Free Operators grow). The frontier is reached and rare isotopes
 flow into those **advanced hulls**, and the endgame **consolidates via hostile takeovers**
 into a charter hegemon, turning ousted players into Free Operators.
 

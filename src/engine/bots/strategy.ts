@@ -292,47 +292,49 @@ export function maybeFrontier(view: PlayerView): Order[] {
 }
 
 /**
- * Plan a raid on the busiest exposed warp lane (Sections 13–14).
+ * Plan raids on the busiest exposed warp lanes (Sections 13–14).
  *
- * Privateers can haunt any tunnel, so the raider bases one at the lane's vulnerable
- * (non-hub) mouth and issues an interdiction there. The hire and interdict are
- * submitted together: the engine processes the hire (administrative step) before it
- * resolves raids, so the freshly-contracted privateer is eligible the same turn.
+ * Privateers can haunt any tunnel, so the raider bases them at each lane's vulnerable
+ * (non-hub) mouth and issues interdictions there. Hire + interdict are submitted together:
+ * the engine processes the hire (administrative step) before it resolves raids, so a
+ * freshly-contracted privateer is eligible the same turn. Raiders work several lanes at
+ * once so raiding scales with the convoy volume rather than touching one shipment a turn.
  */
 export function planRaid(
   view: PlayerView,
-  opts: { minTraffic?: number; fundFactor?: number } = {},
+  opts: { minTraffic?: number; fundFactor?: number; lanes?: number } = {},
 ): Order[] {
   const minTraffic = opts.minTraffic ?? 1;
   const fundFactor = opts.fundFactor ?? 1.5;
+  const maxLanes = opts.lanes ?? 3;
 
-  let best: { routeId: string; mouth: string; traffic: number } | undefined;
+  // Rank every reachable, trafficked lane by recent traffic.
+  const lanes: { routeId: string; mouth: string; traffic: number }[] = [];
   for (const route of view.galaxy.routes.values()) {
     const mouth = route.a === view.galaxy.hubId ? route.b : route.a;
     if (mouth === view.galaxy.hubId) continue; // wholly inside protected space
     const traffic = view.galaxy.recentTraffic(route.id, view.turn - 1);
     if (traffic < minTraffic) continue;
-    if (!best || traffic > best.traffic) best = { routeId: route.id, mouth, traffic };
+    lanes.push({ routeId: route.id, mouth, traffic });
   }
-  if (!best) return [];
+  lanes.sort((a, b) => b.traffic - a.traffic);
 
   const orders: Order[] = [];
-  const haveLivePrivateer = view.me.privateers.some(
-    (p) => p.basedAt === best!.mouth && p.turnsLeft > 0,
-  );
-  const haveAdjacentRaiderShip =
-    view.me.ships.some((s) => s.raider) &&
-    view.me.ownedSystemIds.some(
-      (o) => o === best!.mouth || view.galaxy.routeBetween(o, best!.mouth) !== undefined,
-    );
-  if (
-    !haveLivePrivateer &&
-    !haveAdjacentRaiderShip &&
-    view.me.credits > view.config.tuning.privateerCost * fundFactor
-  ) {
-    orders.push({ kind: "hirePrivateer", basedAt: best.mouth });
+  let budget = view.me.credits;
+  for (const lane of lanes.slice(0, maxLanes)) {
+    const covered =
+      view.me.privateers.some((p) => p.basedAt === lane.mouth && p.turnsLeft > 0) ||
+      (view.me.ships.some((s) => s.raider) &&
+        view.me.ownedSystemIds.some(
+          (o) => o === lane.mouth || view.galaxy.routeBetween(o, lane.mouth) !== undefined,
+        ));
+    if (!covered) {
+      if (budget <= view.config.tuning.privateerCost * fundFactor) continue; // can't reach this lane
+      orders.push({ kind: "hirePrivateer", basedAt: lane.mouth });
+      budget -= view.config.tuning.privateerCost;
+    }
+    orders.push({ kind: "interdict", routeId: lane.routeId });
   }
-  orders.push({ kind: "interdict", routeId: best.routeId });
   return orders;
 }
 

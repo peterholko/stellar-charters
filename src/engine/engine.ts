@@ -570,12 +570,14 @@ export class Engine {
     };
 
     // 5. Predictive interdiction: hits convoys whose current segment matches the route.
+    //    A stronger raid force can strike several shipments on a congested lane.
     for (const corp of this.corps) {
       for (const order of ordersByCorp.get(corp.id) ?? []) {
         if (order.kind !== "interdict") continue;
         const route = this.galaxy.routes.get(order.routeId);
         if (!route) continue;
         if (!canRaidRoute(this.galaxy, corp, route)) continue;
+        const strength = raidStrength(corp);
         const targets = this.convoys
           .filter(
             (c) =>
@@ -585,26 +587,27 @@ export class Engine {
               this.convoyCurrentRoute(c) === route.id,
           )
           .sort((a, b) => b.value - a.value);
-        const target = targets[0];
-        if (!target) {
+        if (targets.length === 0) {
           outcomes.noContact++;
           continue;
         }
-        raided.add(target.id);
-        const localDefense = this.localDefenseFor(target);
-        const result = resolveRaid(
-          this.rng,
-          target,
-          route,
-          corp.id,
-          raidStrength(corp),
-          localDefense,
-        );
-        applyResult(result, target, corp);
-        this.log(
-          `  raid: ${corp.name} interdicts ${route.id} → ${result.outcome}` +
-            (result.cargoPlundered ? ` (+${result.cargoPlundered} ${target.resource})` : ""),
-        );
+        const maxHits = 1 + Math.floor(strength / 4); // e.g. a strength-5 privateer hits 2
+        for (const target of targets.slice(0, maxHits)) {
+          raided.add(target.id);
+          const result = resolveRaid(
+            this.rng,
+            target,
+            route,
+            corp.id,
+            strength,
+            this.localDefenseFor(target),
+          );
+          applyResult(result, target, corp);
+          this.log(
+            `  raid: ${corp.name} interdicts ${route.id} → ${result.outcome}` +
+              (result.cargoPlundered ? ` (+${result.cargoPlundered} ${target.resource})` : ""),
+          );
+        }
       }
     }
 
