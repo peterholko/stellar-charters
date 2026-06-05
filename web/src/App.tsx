@@ -2,6 +2,7 @@ import { useState } from "react";
 import { store, useApp, type ViewId } from "./match/store";
 import { formatCr } from "./match/format";
 import { Icon, type IconName } from "./ui/icons";
+import { useAuth } from "./auth/AuthContext";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { Inspector } from "./components/Inspector";
 import { OrderTray } from "./components/OrderTray";
@@ -44,6 +45,7 @@ export function App() {
   const { phase, nav, view, staged, resolving, turn, totalTurns, selection, match } = state;
   const [drawer, setDrawer] = useState(false);
   const me = view.me;
+  const { user, logout } = useAuth();
 
   const top = (
     <header className="topbar">
@@ -61,6 +63,17 @@ export function App() {
       <div className="topbar__right">
         <span className="topbar__credits"><Icon name="wallet" size={15} /> {formatCr(me.credits)}</span>
         <ThemeSwitcher />
+        <div className="topbar__user">
+          {user.avatar ? (
+            <img className="topbar__avatar" src={user.avatar} alt="" />
+          ) : (
+            <span className="topbar__avatar topbar__avatar--initial">{user.username.charAt(0).toUpperCase()}</span>
+          )}
+          <span className="topbar__username">{user.username}</span>
+          <button type="button" className="topbar__logout" title="Sign out" onClick={logout}>
+            <Icon name="logout" size={15} />
+          </button>
+        </div>
       </div>
     </header>
   );

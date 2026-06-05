@@ -477,6 +477,38 @@ input, select { font-family: inherit; }
 .drawer-fab { display: none; }
 .drawer-scrim { display: none; }
 
+/* ============================ auth ============================ */
+.auth { position: relative; z-index: 1; min-height: 100vh; display: grid; place-items: center; padding: 1.2rem; overflow: hidden; }
+.auth__field { position: absolute; inset: 0; pointer-events: none; background: var(--grain); }
+.auth__panel { position: relative; width: min(410px, 94vw); padding: 2rem 1.9rem; text-align: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow), var(--glow); backdrop-filter: blur(8px); }
+.auth__eyebrow { margin: 0; font-size: 0.6rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent-2); font-family: var(--font-display); }
+.auth__title { margin: 0.6rem 0 0.3rem; font-size: clamp(1.5rem, 6vw, 2.1rem); letter-spacing: var(--display-spacing); text-transform: var(--display-transform); color: var(--accent); text-shadow: var(--glow); }
+.auth__sub { margin: 0 0 1.4rem; font-size: 0.78rem; color: var(--ink-dim); }
+.auth__tabs { display: flex; gap: 2px; padding: 3px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-sm); margin-bottom: 1.2rem; }
+.auth__tabs button { flex: 1; border: none; background: transparent; color: var(--ink-dim); padding: 0.5rem; border-radius: calc(var(--radius-sm) - 1px); font-size: 0.8rem; font-family: var(--font-display); }
+.auth__tabs button.is-active { background: var(--accent); color: var(--on-accent); }
+.auth__form { display: flex; flex-direction: column; gap: 0.8rem; text-align: left; }
+.auth__form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); }
+.auth__form input { padding: 0.65rem 0.7rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); font-size: 0.9rem; }
+.auth__form input:focus { outline: none; border-color: var(--accent); }
+.auth__error { margin: 0; font-size: 0.74rem; color: var(--negative); }
+.auth__submit { margin-top: 0.4rem; padding: 0.7rem; border: none; border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-family: var(--font-display); font-size: 0.86rem; letter-spacing: 0.04em; box-shadow: var(--glow); }
+.auth__submit:disabled { opacity: 0.5; }
+.auth__or { display: flex; align-items: center; gap: 0.7rem; margin: 1.1rem 0; color: var(--ink-faint); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.18em; }
+.auth__or::before, .auth__or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.auth__discord { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.7rem; border-radius: var(--radius-sm); background: #5865f2; color: #fff; font-size: 0.84rem; font-weight: 600; text-decoration: none; }
+.auth__discord:hover { filter: brightness(1.08); }
+.auth__spinner { width: 46px; height: 46px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+
+/* topbar user chip */
+.topbar__user { display: flex; align-items: center; gap: 0.45rem; padding-left: 0.6rem; border-left: 1px solid var(--line); }
+.topbar__avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+.topbar__avatar--initial { display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font-family: var(--font-display); font-size: 0.78rem; }
+.topbar__username { font-size: 0.8rem; color: var(--ink-dim); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar__logout { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); color: var(--ink-dim); }
+.topbar__logout:hover { color: var(--negative); border-color: var(--negative); }
+
 /* ============================ responsive ============================ */
 @media (max-width: 1180px) {
   .shell__body { grid-template-columns: 80px minmax(0, 1fr); }
@@ -506,4 +538,5 @@ input, select { font-family: inherit; }
   .auction__grid { grid-template-columns: 1fr; }
   .auction__slip { position: static; }
   .topbar { flex-wrap: wrap; }
+  .topbar__username { display: none; }
 }

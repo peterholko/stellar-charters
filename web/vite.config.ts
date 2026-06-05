@@ -52,6 +52,8 @@ export default defineConfig({
     port: 5173,
     // The engine and scenario JSON live outside web/ (the Vite root); allow reading them.
     fs: { allow: [repoRoot] },
+    // In dev, forward the auth API to the Worker running under `wrangler dev`.
+    proxy: { "/api": "http://localhost:8787" },
   },
   build: {
     outDir: "dist",

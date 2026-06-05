@@ -28,7 +28,8 @@ export type IconName =
   | "bolt"
   | "info"
   | "skull"
-  | "palette";
+  | "palette"
+  | "logout";
 
 const paths: Record<IconName, string> = {
   dashboard: "M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z",
@@ -59,6 +60,7 @@ const paths: Record<IconName, string> = {
   info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5M12 8h.01",
   skull: "M12 2a8 8 0 0 0-5 14v3h10v-3a8 8 0 0 0-5-14zM9 12h.01M15 12h.01",
   palette: "M12 3a9 9 0 0 0 0 18c1.5 0 2-1 2-2s-1-1-1-2 1-1 2-1h2a4 4 0 0 0 4-4c0-4.5-4-9-9-9zM7 12h.01M10 8h.01M15 8h.01",
+  logout: "M9 21H4V3h5M16 17l5-5-5-5M21 12H9",
 };
 
 export function Icon({
