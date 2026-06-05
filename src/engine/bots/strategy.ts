@@ -96,7 +96,7 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
 
 /** Build a Trade Depot on the corp's best export hub once established (Section 12). */
 export function maybeBuildDepot(view: PlayerView): Order[] {
-  if (view.turn < 8 || view.me.ownedSystemIds.length < 2) return [];
+  if (view.turn < 14 || view.me.ownedSystemIds.length < 2) return [];
   if (view.me.credits < view.config.tuning.depotCost * 1.1) return [];
   // Pick the owned system with the richest output and no depot yet.
   const candidates = view.me.ownedSystemIds
@@ -159,7 +159,7 @@ export function financierOrders(
   if (!view.me.hasCharter || view.me.valuation <= 0) return [];
   const target = lockTarget(view, state);
   if (!target) return [];
-  const maxStrength = opts.maxTargetStrength ?? 0.5;
+  const maxStrength = opts.maxTargetStrength ?? 0.4;
   if (target.valuation > view.me.valuation * maxStrength) {
     state.acqTarget = undefined;
     return [];
@@ -212,7 +212,7 @@ export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
 }
 
 /** Earliest turn a corp will reach for each range tier (keeps fleets advancing). */
-const RANGE_MIN_TURN: Record<number, number> = { 2: 4, 3: 9, 4: 15 };
+const RANGE_MIN_TURN: Record<number, number> = { 2: 7, 3: 16, 4: 26 };
 
 /**
  * Climb the range-tech ladder one tier at a time (Section 04). Reaching Range 2 opens
@@ -342,7 +342,7 @@ export function planRaid(
  * they cheaply harden a system's tunnel mouths, especially on exposed frontier lanes.
  */
 export function maybeBuildPlatforms(view: PlayerView): Order[] {
-  if (view.turn < 4 || view.me.credits < view.config.tuning.platformCost * 2) return [];
+  if (view.turn < 7 || view.me.credits < view.config.tuning.platformCost * 2) return [];
   const ranked = view.me.ownedSystemIds
     .map((id) => view.galaxy.system(id))
     // Baseline guard: one platform per system, two on exposed frontier worlds.
@@ -362,7 +362,7 @@ export function maybeBuildPlatforms(view: PlayerView): Order[] {
  * controlling the frontier translates directly into stronger fleets.
  */
 export function maybeBuildWarships(view: PlayerView): Order[] {
-  if (view.turn < 5 || view.me.ownedSystemIds.length === 0) return [];
+  if (view.turn < 9 || view.me.ownedSystemIds.length === 0) return [];
 
   // Field the best hull we can AFFORD up to our tech tier — falling back to a cheaper
   // tier rather than stalling. Rare-isotope cost is covered by our own frontier output

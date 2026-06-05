@@ -2,7 +2,7 @@
   "name": "Inner Ring — 4 players",
   "hubId": "hub",
   "players": 4,
-  "turns": 24,
+  "turns": 42,
   "systems": [
     {
       "id": "hub",

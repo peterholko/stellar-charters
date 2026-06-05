@@ -5,7 +5,8 @@ for the full design (v2.2).
 
 This repo contains a **headless balance simulator** with **4–8 all-bot corporations**,
 used to test whether the design is fun and the economy is viable *before* building a UI.
-It now covers a **full ~24-turn match** spanning the early, mid, and late game:
+It now covers a **full 42-turn match** spanning the early, mid, and late game (42 turns ≈
+a 3-week session at 2 turns/day):
 
 - **Early/mid (Sections 04–16):** opening auction, local production, the Galactic
   Exchange, warp-route convoys, one-turn interdiction, privateer raiding, Range-2 and
@@ -28,7 +29,7 @@ It now covers a **full ~24-turn match** spanning the early, mid, and late game:
 npm install
 
 # Batch: run many seeds, write CSVs + a balance summary to out/
-npm run sim -- --games 200 --players 8 --turns 24
+npm run sim -- --games 200 --players 8 --turns 42
 
 # Single game, full turn-by-turn text log (the human "is it fun?" read)
 npm run sim -- --games 1 --players 8 --seed 0 --verbose
@@ -82,20 +83,28 @@ and Free Operators. `out/per-turn-*.csv` and `out/per-game-*.csv` hold the raw s
 
 ## Status / known findings
 
-The simulator runs a full 24-turn match with simple heuristic bots, and all layers fire:
+The simulator runs a full 42-turn match with simple heuristic bots, and all layers fire:
 populations grow to metropolis where they are **locally fed** (importing food keeps a
 colony alive but only local food/hydroponics fuels growth — the doc's Section 08 intent),
-Trade Depots get built, corps climb to Range 2 (and some to Range 3) and **build escort
-fleets and defense platforms** (~25 ships + ~13 platforms/game) that station at systems
-and defend convoys — raids now split roughly 20% delay/damage/loot vs 15% repelled/ambushed
-(heavy fleets turn raiders back; light defense still lets raids through), with only ~0.3%
-of cargo value lost. The frontier is reached and rare isotopes flow into **advanced hulls**,
-and the endgame **consolidates via hostile takeovers** into a charter hegemon, turning
-ousted players into Free Operators.
+Trade Depots get built, corps **climb the full range-tech ladder** (Range 2 by ~turn 7,
+Range 3/4 in the late game) and **build escort fleets and defense platforms** that station
+at systems and defend convoys — across a typical batch the fleet mix runs ~60% Range-1 /
+~30% Range-2 / ~9% Range-3 / ~2% Range-4, and raids split roughly 20% delay/damage/loot vs
+15% repelled/ambushed (heavy fleets turn raiders back; light defense still lets raids
+through), with only ~0.3% of cargo value lost. The frontier is reached and rare isotopes
+flow into those **advanced hulls**, and the endgame **consolidates via hostile takeovers**
+into a charter hegemon, turning ousted players into Free Operators.
+
+Turn-indexed pacing constants (range-research earliest turns, build gates, takeover start)
+are scaled to the 42-turn arc, so the phases breathe roughly as the doc describes
+(logistics/raiding mid-game, consolidation from ~turn 25).
 
 Two flags fire under the current tuning and are worth noting as *findings*, not bugs:
 **metals fully crashes to its floor** (the designed overproduction resource — population
 ice/food demand supports the other staples, but nothing sinks metals), and the
-**run-away-leader** spread is high because the game's win condition *is* consolidation, so
-a 24-turn match is meant to produce a dominant winner. All balance numbers live in
+**run-away-leader** spread is high *at 8 players* (leader ≈ 25× median) because the longer
+endgame lets the consolidation win-condition snowball — one corp absorbs ~5 of 8 rivals
+into a hegemon (the others continue as Free Operators). At 4 players it is far milder
+(≈6× median), so this is a genuine player-count/horizon balance lever, not a bug. All
+balance numbers live in
 `src/engine/config.ts` and `scenarios/*.json` and are starting points for tuning.

@@ -127,7 +127,7 @@ function buildScenario(
     });
   }
 
-  return { name, hubId: "hub", players, turns: 24, systems, routes, bots };
+  return { name, hubId: "hub", players, turns: 42, systems, routes, bots };
 }
 
 const eightP = buildScenario(

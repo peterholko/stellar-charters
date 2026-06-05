@@ -45,12 +45,12 @@ export class BalancedBot implements Bot {
 
     // Once established, opportunistically harass a busy lane (later and more
     // cautiously than a dedicated raider).
-    if (view.turn >= 8 && view.me.credits > view.config.tuning.privateerCost * 4) {
+    if (view.turn >= 14 && view.me.credits > view.config.tuning.privateerCost * 4) {
       orders.push(...planRaid(view, { minTraffic: 2, fundFactor: 4 }));
     }
 
     // Late game: pursue a hostile takeover of the weakest charter (Section 17).
-    orders.push(...financierOrders(view, this.state, { sinceTurn: 14 }));
+    orders.push(...financierOrders(view, this.state, { sinceTurn: 24 }));
 
     return orders;
   }
