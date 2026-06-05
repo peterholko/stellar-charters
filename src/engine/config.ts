@@ -76,9 +76,12 @@ export interface Tuning {
   raiderCombatBonus: number;
   /** Rare isotopes consumed to build a ship of each tier (higher tiers need them). */
   shipIsotopeCost: Record<RangeTier, number>;
+  /** Antimatter consumed to build a ship of each tier (only capital Range-4 hulls). */
+  shipAntimatterCost: Record<RangeTier, number>;
   privateerCost: number;
   privateerStrength: number;
   privateerTurns: number;
+  plunderFenceRate: number;
   rangeResearchCost: Record<RangeTier, number>;
   /** Debt interest applied per turn. */
   debtInterest: number;
@@ -131,7 +134,7 @@ export interface Tuning {
 
 export const DEFAULT_TUNING: Tuning = {
   startingCredits: 6500,
-  basePrices: { ice: 8, metals: 12, helium3: 22, rareIsotopes: 120, food: 16 },
+  basePrices: { ice: 8, metals: 12, helium3: 22, rareIsotopes: 120, food: 16, antimatter: 420 },
   priceFloorFrac: 0.4,
   priceCeilFrac: 2.5,
   priceElasticity: 0.06,
@@ -144,9 +147,12 @@ export const DEFAULT_TUNING: Tuning = {
   shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11 },
   raiderCombatBonus: 1,
   shipIsotopeCost: { 1: 0, 2: 2, 3: 6, 4: 14 },
+  shipAntimatterCost: { 1: 0, 2: 0, 3: 0, 4: 3 },
   privateerCost: 500,
   privateerStrength: 5,
   privateerTurns: 3,
+  /** Fraction of plundered cargo value a raider realises when fencing it (Section 13). */
+  plunderFenceRate: 0.85,
   rangeResearchCost: { 1: 0, 2: 1100, 3: 2200, 4: 3800 },
   debtInterest: 0.05,
   foodNeed: { outpost: 0, settlement: 2, colony: 6, city: 14, metropolis: 30 },
@@ -196,7 +202,7 @@ export interface GameConfig {
 }
 
 function fullStockpile(partial: Partial<Stockpile> | undefined): Stockpile {
-  const out = { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0 };
+  const out = { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
   if (partial) {
     for (const r of RESOURCES) {
       if (partial[r] !== undefined) out[r] = partial[r]!;

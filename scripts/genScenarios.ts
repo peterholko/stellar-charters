@@ -40,6 +40,7 @@ function buildScenario(
   players: number,
   innerCount: number,
   frontierCount: number,
+  deepCount: number,
   bots: string[],
 ): Scenario {
   const systems: ScenarioSystem[] = [];
@@ -127,6 +128,34 @@ function buildScenario(
     });
   }
 
+  // Deep-frontier systems: antimatter — the premium monopoly resource and fattest raid
+  // target. Reachable only via Range-3 uncharted tunnels hanging off a rare-isotope
+  // frontier, on the most exposed, least-policed lanes in the galaxy.
+  for (let d = 0; d < deepCount; d++) {
+    const id = `d${d}`;
+    const anchor = `f${d % Math.max(1, frontierCount)}`;
+    systems.push({
+      id,
+      name: `${NAMES[(innerCount + frontierCount + d) % NAMES.length]!} Abyss`,
+      yields: { antimatter: 3, rareIsotopes: 2 },
+      claimCost: 2600,
+      upkeep: 110,
+      defense: 1,
+      innerRing: false,
+    });
+    routes.push({
+      a: anchor,
+      b: id,
+      transitTime: 3,
+      stability: 0.4,
+      capacity: 12,
+      exposure: 0.95,
+      authorityPresence: 0.05,
+      requiredRange: 3,
+      charted: false,
+    });
+  }
+
   return { name, hubId: "hub", players, turns: 42, systems, routes, bots };
 }
 
@@ -135,6 +164,7 @@ const eightP = buildScenario(
   8,
   16,
   5,
+  3,
   ["miner", "raider", "balanced", "miner", "balanced", "raider", "miner", "balanced"],
 );
 const fourP = buildScenario(
@@ -142,6 +172,7 @@ const fourP = buildScenario(
   4,
   9,
   3,
+  2,
   ["miner", "raider", "balanced", "miner"],
 );
 

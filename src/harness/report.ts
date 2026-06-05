@@ -313,7 +313,7 @@ function fmtTurn(t: number): string {
 }
 
 function zeroRes(): Record<Resource, number> {
-  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0 };
+  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
 }
 
 function round2(x: number): number {

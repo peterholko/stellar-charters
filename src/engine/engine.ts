@@ -284,19 +284,16 @@ export class Engine {
             if (order.rangeTier > corp.rangeTier) break;
             const cost =
               t.shipCost[order.rangeTier] + (order.raider ? t.raiderShipExtraCost : 0);
-            // Higher-tier hulls require rare isotopes: drawn from the corp's own
-            // stockpiles first, and any shortfall purchased from the exchange. Owning a
-            // frontier makes advanced fleets cheaper; everyone else pays market price.
-            const isotopeNeed = t.shipIsotopeCost[order.rangeTier];
-            const localIsotopes = corp.ownedSystemIds.reduce(
-              (s, id) => s + this.galaxy.system(id).stockpile.rareIsotopes,
-              0,
-            );
-            const boughtIsotopes = Math.max(0, isotopeNeed - localIsotopes);
-            const isotopeBill = boughtIsotopes * this.market.prices.rareIsotopes;
-            if (corp.credits < cost + isotopeBill) break;
-            this.consumeFromStockpiles(corp, "rareIsotopes", Math.min(isotopeNeed, localIsotopes));
-            corp.credits -= cost + isotopeBill;
+            // Higher-tier hulls require strategic resources — rare isotopes (Range 2+) and
+            // antimatter (capital Range-4 hulls) — drawn from the corp's own stockpiles
+            // first, with any shortfall bought from the exchange. Controlling the frontier
+            // makes advanced fleets cheaper; everyone else pays market price.
+            const isoBill = this.strategicBill(corp, "rareIsotopes", t.shipIsotopeCost[order.rangeTier]);
+            const amBill = this.strategicBill(corp, "antimatter", t.shipAntimatterCost[order.rangeTier]);
+            if (corp.credits < cost + isoBill + amBill) break;
+            this.consumeStrategic(corp, "rareIsotopes", t.shipIsotopeCost[order.rangeTier]);
+            this.consumeStrategic(corp, "antimatter", t.shipAntimatterCost[order.rangeTier]);
+            corp.credits -= cost + isoBill + amBill;
             corp.ships.push({
               rangeTier: order.rangeTier,
               combat: t.shipCombat[order.rangeTier] + (order.raider ? t.raiderCombatBonus : 0),
@@ -563,8 +560,8 @@ export class Engine {
         convoy.quantity -= result.cargoPlundered;
         convoy.payout *= convoy.quantity / Math.max(1, convoy.quantity + result.cargoPlundered);
         cargoValueLost += result.cargoPlundered * unitValue;
-        // Fence stolen goods at a discount.
-        attacker.credits += result.cargoPlundered * unitValue * 0.5;
+        // Fence stolen goods (Section 13): the raider realises a fraction of their value.
+        attacker.credits += result.cargoPlundered * unitValue * this.config.tuning.plunderFenceRate;
       }
       if (result.raiderLosses > 0) this.applyRaiderLosses(attacker, result.raiderLosses);
     };
@@ -971,6 +968,22 @@ export class Engine {
       }
     }
     return def;
+  }
+
+  /** Credits a corp must pay to buy any shortfall of a build resource from the exchange. */
+  private strategicBill(corp: Corporation, resource: Resource, need: number): number {
+    if (need <= 0) return 0;
+    let local = 0;
+    for (const id of corp.ownedSystemIds) local += this.galaxy.system(id).stockpile[resource];
+    return Math.max(0, need - local) * this.market.prices[resource];
+  }
+
+  /** Consume up to `need` of a build resource from local stockpiles (shortfall is bought). */
+  private consumeStrategic(corp: Corporation, resource: Resource, need: number): void {
+    if (need <= 0) return;
+    let local = 0;
+    for (const id of corp.ownedSystemIds) local += this.galaxy.system(id).stockpile[resource];
+    this.consumeFromStockpiles(corp, resource, Math.min(need, local));
   }
 
   /** Consume `need` of a resource from a corp's owned-system stockpiles; true if covered. */

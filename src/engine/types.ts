@@ -5,8 +5,12 @@
  * and portable: the same types will be imported by the future web app.
  */
 
-/** Six-resource economy (Section 07). Credits is tracked on the corporation, not in stockpiles. */
-export type Resource = "ice" | "metals" | "helium3" | "rareIsotopes" | "food";
+/**
+ * Resource economy (Section 07). Credits is tracked on the corporation, not in stockpiles.
+ * Antimatter is the premium deep-frontier resource: ultra-high value, very low volume — the
+ * monopoly prize and the fattest raid target, and the input to capital (Range-4) hulls.
+ */
+export type Resource = "ice" | "metals" | "helium3" | "rareIsotopes" | "food" | "antimatter";
 
 export const RESOURCES: readonly Resource[] = [
   "ice",
@@ -14,13 +18,14 @@ export const RESOURCES: readonly Resource[] = [
   "helium3",
   "rareIsotopes",
   "food",
+  "antimatter",
 ];
 
 /** A per-resource quantity map. */
 export type Stockpile = Record<Resource, number>;
 
 export function emptyStockpile(): Stockpile {
-  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0 };
+  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
 }
 
 /** Population stages (Section 08). The 12-turn slice mostly lives at Outpost/Settlement. */

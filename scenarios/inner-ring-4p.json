@@ -157,6 +157,30 @@
       "upkeep": 70,
       "defense": 1,
       "innerRing": false
+    },
+    {
+      "id": "d0",
+      "name": "Onyx Spur Abyss",
+      "yields": {
+        "antimatter": 3,
+        "rareIsotopes": 2
+      },
+      "claimCost": 2600,
+      "upkeep": 110,
+      "defense": 1,
+      "innerRing": false
+    },
+    {
+      "id": "d1",
+      "name": "Saltmarsh Abyss",
+      "yields": {
+        "antimatter": 3,
+        "rareIsotopes": 2
+      },
+      "claimCost": 2600,
+      "upkeep": 110,
+      "defense": 1,
+      "innerRing": false
     }
   ],
   "routes": [
@@ -389,6 +413,28 @@
       "exposure": 0.85,
       "authorityPresence": 0.1,
       "requiredRange": 2,
+      "charted": false
+    },
+    {
+      "a": "f0",
+      "b": "d0",
+      "transitTime": 3,
+      "stability": 0.4,
+      "capacity": 12,
+      "exposure": 0.95,
+      "authorityPresence": 0.05,
+      "requiredRange": 3,
+      "charted": false
+    },
+    {
+      "a": "f1",
+      "b": "d1",
+      "transitTime": 3,
+      "stability": 0.4,
+      "capacity": 12,
+      "exposure": 0.95,
+      "authorityPresence": 0.05,
+      "requiredRange": 3,
       "charted": false
     }
   ],

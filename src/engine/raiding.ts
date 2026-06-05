@@ -130,20 +130,21 @@ export function resolveRaid(
     return { ...base, outcome: "shadowed" };
   }
 
-  // Outcome bands scale with raider advantage. Total loss only when the convoy is
-  // valuable, exposed, and weakly defended (high ratio).
-  if (roll < 0.2 - ratio * 0.15) {
+  // Outcome bands scale with raider advantage. Plunder (the raider keeps the cargo) is
+  // the most common successful result, so raiding is a viable living, not just sabotage.
+  // Total loss still only happens to a valuable, exposed, weakly defended convoy.
+  if (roll < 0.15 - ratio * 0.1) {
     return { ...base, outcome: "shadowed" };
   }
-  if (roll < 0.55 - ratio * 0.25) {
+  if (roll < 0.4 - ratio * 0.2) {
     return { ...base, outcome: "harassed", delayAdded: 1 };
   }
-  if (roll < 0.85 - ratio * 0.15) {
+  if (roll < 0.6 - ratio * 0.1) {
     const destroyed = Math.max(1, Math.round(convoy.quantity * (0.2 + ratio * 0.3)));
     return { ...base, outcome: "damaged", cargoDestroyed: Math.min(convoy.quantity, destroyed) };
   }
   // Plundered: steal a portion, delivered to the raider.
-  const plundered = Math.max(1, Math.round(convoy.quantity * (0.3 + ratio * 0.5)));
+  const plundered = Math.max(1, Math.round(convoy.quantity * (0.4 + ratio * 0.5)));
   return {
     ...base,
     outcome: "plundered",

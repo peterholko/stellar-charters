@@ -85,7 +85,7 @@ export class Market {
 }
 
 function zero(): Record<Resource, number> {
-  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0 };
+  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
 }
 
 function clamp(x: number, lo: number, hi: number): number {

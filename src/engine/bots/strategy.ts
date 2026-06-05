@@ -9,7 +9,7 @@ import type { PlayerView } from "./bot.js";
 
 /** Resources a corporation exports. Outpost-stage systems consume no food, so a
  *  garden world's food is sold to the exchange like any other commodity. */
-const EXPORT_RESOURCES: readonly Resource[] = ["ice", "metals", "helium3", "rareIsotopes", "food"];
+const EXPORT_RESOURCES: readonly Resource[] = ["ice", "metals", "helium3", "rareIsotopes", "food", "antimatter"];
 
 /** Rough commercial value of a system: per-turn yield priced at base, minus claim cost. */
 export function valueSystem(view: PlayerView, sys: System): number {
@@ -262,12 +262,12 @@ export function maybeFrontier(view: PlayerView): Order[] {
   if (view.me.rangeTier < 2) return [];
   const orders: Order[] = [];
 
-  // 1) Claim a reachable, already-charted frontier system we can afford.
+  // 1) Claim a reachable, already-charted frontier system we can traverse and afford.
   for (const sys of view.galaxy.allSystems()) {
     if (sys.owner !== null || sys.innerRing || sys.id === view.galaxy.hubId) continue;
     const reachable = sys.routeIds.some((rid) => {
       const r = view.galaxy.routes.get(rid);
-      if (!r || !r.charted) return false;
+      if (!r || !r.charted || r.requiredRange > view.me.rangeTier) return false;
       const anchor = r.a === sys.id ? r.b : r.a;
       return view.me.ownedSystemIds.includes(anchor);
     });
@@ -277,12 +277,17 @@ export function maybeFrontier(view: PlayerView): Order[] {
     }
   }
 
-  // 2) Otherwise chart a deep tunnel hanging off one of our systems.
+  // 2) Otherwise chart a deep tunnel we can actually use, hanging off one of our systems.
   for (const sysId of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(sysId);
     for (const rid of sys.routeIds) {
       const r = view.galaxy.routes.get(rid);
-      if (r && !r.charted && view.me.credits > view.config.tuning.surveyCost + 500) {
+      if (
+        r &&
+        !r.charted &&
+        r.requiredRange <= view.me.rangeTier &&
+        view.me.credits > view.config.tuning.surveyCost + 500
+      ) {
         orders.push({ kind: "survey", routeId: r.id });
         return orders;
       }
@@ -308,16 +313,26 @@ export function planRaid(
   const fundFactor = opts.fundFactor ?? 1.5;
   const maxLanes = opts.lanes ?? 3;
 
-  // Rank every reachable, trafficked lane by recent traffic.
-  const lanes: { routeId: string; mouth: string; traffic: number }[] = [];
+  // Estimate each lane's prize from the value of rivals' convoys currently on or
+  // approaching it — raiders hunt the fat isotope/antimatter lanes, not bulk ice.
+  const prize = new Map<string, number>();
+  for (const c of view.convoys) {
+    if (c.owner === view.me.id) continue;
+    for (const rid of [c.routeIds[c.position], c.routeIds[c.position + 1]]) {
+      if (rid) prize.set(rid, Math.max(prize.get(rid) ?? 0, c.value));
+    }
+  }
+
+  const lanes: { routeId: string; mouth: string; traffic: number; value: number }[] = [];
   for (const route of view.galaxy.routes.values()) {
     const mouth = route.a === view.galaxy.hubId ? route.b : route.a;
     if (mouth === view.galaxy.hubId) continue; // wholly inside protected space
     const traffic = view.galaxy.recentTraffic(route.id, view.turn - 1);
     if (traffic < minTraffic) continue;
-    lanes.push({ routeId: route.id, mouth, traffic });
+    lanes.push({ routeId: route.id, mouth, traffic, value: prize.get(route.id) ?? 0 });
   }
-  lanes.sort((a, b) => b.traffic - a.traffic);
+  // Prioritise by expected loot value, then by traffic as a tiebreaker.
+  lanes.sort((a, b) => b.value - a.value || b.traffic - a.traffic);
 
   const orders: Order[] = [];
   let budget = view.me.credits;
@@ -329,7 +344,9 @@ export function planRaid(
           (o) => o === lane.mouth || view.galaxy.routeBetween(o, lane.mouth) !== undefined,
         ));
     if (!covered) {
-      if (budget <= view.config.tuning.privateerCost * fundFactor) continue; // can't reach this lane
+      // Only rent a privateer when the lane's expected plunder can pay for it.
+      const worthIt = lane.value * view.config.tuning.plunderFenceRate * 0.4 > view.config.tuning.privateerCost;
+      if (!worthIt || budget <= view.config.tuning.privateerCost * fundFactor) continue;
       orders.push({ kind: "hirePrivateer", basedAt: lane.mouth });
       budget -= view.config.tuning.privateerCost;
     }
