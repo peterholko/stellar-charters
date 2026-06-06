@@ -59,7 +59,9 @@ export interface ClientSite {
 export interface ClientSystem {
   id: string;
   name: string;
-  yields: Stockpile;
+  /** Legacy flat-yield shortcut — only present for authored maps; body-driven systems omit it
+   *  (their economy is in `sites`), which keeps the per-poll payload compact. */
+  yields?: Stockpile;
   /** The system's star (Section 21), for rendering + stellar forecasts. */
   starType?: StarType;
   /** Fogged extraction sites — the system's resource economy (Section 21). */
@@ -194,10 +196,13 @@ export function buildClientState(
       richness: site.prospected ? site.richness : null,
       reservesRemaining: mine && site.prospected ? site.reservesRemaining : null,
     }));
+    // Only ship the flat yields for legacy/authored systems; body-driven systems render from
+    // `sites` and would otherwise waste an all-zero 11-key object per system, every poll.
+    const hasFlatYields = RESOURCES.some((r) => s.yields[r] !== 0);
     return {
       id: s.id,
       name: s.name,
-      yields: { ...s.yields },
+      yields: hasFlatYields ? { ...s.yields } : undefined,
       starType: s.bodies?.starType,
       sites,
       claimCost: s.claimCost,

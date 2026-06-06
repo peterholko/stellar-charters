@@ -76,6 +76,12 @@ export function buildDigest(report: TurnReport, view: PlayerView, me: string): D
         if (e.corpId === me)
           lines.push({ tone: "warn", scope: "me", title: `${sysName(e.systemId)} is starving`, body: `Unmet food/ice — unrest is rising. Ship supply or build hydroponics.` });
         break;
+      case "sabotage":
+        if (e.defenderId === me)
+          lines.push({ tone: e.success ? "bad" : "good", scope: "me", art: "event-raid", title: e.success ? `Extractor sabotaged` : `Sabotage repelled`, body: `${corpName(e.attackerId)} struck your ${resourceLabels[e.resource]} extractor at ${sysName(e.systemId)}${e.success ? " — offline for several turns" : " — defenses held"}.` });
+        else if (e.attackerId === me)
+          lines.push({ tone: e.success ? "good" : "info", scope: "me", art: "event-raid", title: e.success ? `Sabotage landed` : `Sabotage repelled`, body: `${e.success ? "Knocked out" : "Failed to reach"} ${corpName(e.defenderId)}'s ${resourceLabels[e.resource]} extractor at ${sysName(e.systemId)}.` });
+        break;
       case "acquisition":
         if (e.acquirerId === me) lines.push({ tone: "good", scope: "me", art: "event-acquisition", title: `Acquisition`, body: `You absorbed ${corpName(e.targetId)}'s charter.` });
         else if (e.targetId === me) lines.push({ tone: "bad", scope: "me", art: "event-acquisition", title: `You were acquired`, body: `${corpName(e.acquirerId)} took control of your charter.` });

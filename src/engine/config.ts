@@ -331,9 +331,9 @@ export const DEFAULT_TUNING: Tuning = {
     populationValue: {
       outpost: 200,
       settlement: 600,
-      colony: 1600,
-      city: 4000,
-      metropolis: 10000,
+      colony: 1500,
+      city: 3200,
+      metropolis: 6500,
     },
     shipValue: 500,
     depotValue: 2000,

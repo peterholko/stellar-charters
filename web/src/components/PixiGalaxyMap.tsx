@@ -16,6 +16,7 @@ import {
   corpColor,
   resourceColors,
   routeRisk,
+  starTypeColor,
   systemArchetype,
   systemDominant,
 } from "../match/format";
@@ -578,6 +579,15 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       glyph.circle(0, 0, r * 1.35).fill({ color: fill, alpha: 0.1 });
       glyph.blendMode = "normal";
       cont.addChild(glyph);
+      // Star-type aura (Section 21): a faint additive ring in the star's colour so a red giant,
+      // white dwarf, neutron star, etc. read distinctly at a glance without changing the
+      // resource/owner-coloured core.
+      if (!isHub && s.bodies?.starType) {
+        const starGlow = new Graphics();
+        starGlow.circle(0, 0, r * 1.55).stroke({ width: unit * 0.45, color: cssNum(starTypeColor[s.bodies.starType]), alpha: 0.5 });
+        starGlow.blendMode = "add";
+        cont.addChild(starGlow);
+      }
       drawGlyph(cont, region, arch, r, fill, open, pal);
 
       if (mine && !isHub) {

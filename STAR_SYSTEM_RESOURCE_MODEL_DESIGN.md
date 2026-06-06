@@ -449,4 +449,16 @@ the richer/larger procedural map — they are demand-/consolidation-side tuning,
 
 Tuning already applied: trimmed metals deposit prevalence/richness; `extractorValue` 120→70;
 habitability made naturally scarce (ocean spawn 0.4 in-zone) with a guaranteed **home** habitat
-dome for fairness.
+dome for fairness; top-end population valuation compressed (city 4000→3200, metropolis
+10000→6500), which cut the *legacy* runaway from ~20× to ~16×.
+
+**Sweep the real model:** `npm run sim -- --games 30 --players 8 --procedural` now generates a
+fresh body-driven galaxy per game (vs. the committed flat-yield maps), so balance regressions in
+the extractor/depletion economy are measurable directly.
+
+**On the runaway flag:** investigation shows it is largely a *metric artifact* of the
+consolidation design — with ~4.7 acquisitions/game across 8 corps, most rivals end as absorbed
+Free Operators near zero valuation, so the **median** is a hollowed-out corp and leader/median
+inflates. The valuation Gini (~0.68) is high but expected for a winner-take-all acquisition game.
+Meaningfully lowering it means re-pacing the Section 17–18 takeover layer — a separate initiative,
+deliberately not done here so the intended end-game consolidation drama is preserved.

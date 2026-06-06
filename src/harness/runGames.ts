@@ -7,12 +7,18 @@
 import { readFileSync } from "node:fs";
 import { Engine, type EngineOptions } from "../engine/engine.js";
 import { loadScenario, type GameConfig, type Scenario } from "../engine/config.js";
+import { generateProceduralScenario } from "../engine/procedural.js";
 import { defaultRegistry } from "../engine/bots/registry.js";
 import type { GameMetrics } from "../engine/metrics.js";
 
 export function loadScenarioFile(path: string): GameConfig {
   const scenario = JSON.parse(readFileSync(path, "utf8")) as Scenario;
   return loadScenario(scenario);
+}
+
+/** A freshly-generated procedural galaxy (the live-game format / body-driven model). */
+export function proceduralConfig(seed: number, players: number, turns: number): GameConfig {
+  return loadScenario(generateProceduralScenario({ seed, players, turns }));
 }
 
 export interface RunOptions {
@@ -50,6 +56,23 @@ export function runGames(config: GameConfig, options: RunOptions): GameMetrics[]
   const results: GameMetrics[] = [];
   for (let i = 0; i < options.games; i++) {
     results.push(runOneGame(cfg, startSeed + i));
+  }
+  return results;
+}
+
+/**
+ * Run a batch where each game generates its OWN procedural galaxy from its seed (the live-game
+ * format), so the sweep exercises the full body-driven extractor/depletion economy rather than
+ * a committed flat-yield map.
+ */
+export function runProceduralGames(options: RunOptions): GameMetrics[] {
+  const startSeed = options.startSeed ?? 1;
+  const players = options.players ?? 8;
+  const turns = options.turns ?? 42;
+  const results: GameMetrics[] = [];
+  for (let i = 0; i < options.games; i++) {
+    const seed = startSeed + i;
+    results.push(runOneGame(proceduralConfig(seed, players, turns), seed));
   }
   return results;
 }

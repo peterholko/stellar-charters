@@ -11,7 +11,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadScenarioFile, runGames, runOneGame } from "../harness/runGames.js";
+import {
+  loadScenarioFile,
+  proceduralConfig,
+  runGames,
+  runOneGame,
+  runProceduralGames,
+} from "../harness/runGames.js";
 import { writePerGameCsv, writePerTurnCsv } from "../harness/csv.js";
 import { aggregate, renderMarkdown, type Aggregate } from "../harness/report.js";
 import type { GameConfig } from "../engine/config.js";
@@ -22,12 +28,14 @@ interface Args {
   turns?: number;
   seed?: number | "random";
   scenario?: string;
+  /** Generate a fresh procedural galaxy per game (the body-driven live-game model). */
+  procedural: boolean;
   verbose: boolean;
   outDir: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { games: 200, verbose: false, outDir: "out" };
+  const args: Args = { games: 200, verbose: false, procedural: false, outDir: "out" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -41,6 +49,7 @@ function parseArgs(argv: string[]): Args {
         break;
       }
       case "--scenario": args.scenario = next(); break;
+      case "--procedural": args.procedural = true; break;
       case "--out": args.outDir = next()!; break;
       case "--verbose": args.verbose = true; break;
       default:
@@ -65,17 +74,23 @@ function runSingleVerbose(config: GameConfig, args: Args): void {
   if (typeof args.seed === "number") seed = args.seed;
   else seed = (Date.now() & 0x7fffffff) >>> 0; // random/auto
   console.log(`Single game — seed ${seed} (replay with --seed ${seed})`);
-  runOneGame(config, seed, { log: (line) => console.log(line) });
+  // Procedural games generate their galaxy from the gameplay seed, so rebuild from it here.
+  const cfg = args.procedural
+    ? proceduralConfig(seed, args.players ?? config.players, args.turns ?? config.turns)
+    : config;
+  runOneGame(cfg, seed, { log: (line) => console.log(line) });
 }
 
 function runBatch(config: GameConfig, args: Args): void {
   const startSeed = typeof args.seed === "number" ? args.seed : 1;
-  const games = runGames(config, {
-    games: args.games,
-    startSeed,
-    players: args.players,
-    turns: args.turns,
-  });
+  const games = args.procedural
+    ? runProceduralGames({ games: args.games, startSeed, players: args.players, turns: args.turns })
+    : runGames(config, {
+        games: args.games,
+        startSeed,
+        players: args.players,
+        turns: args.turns,
+      });
   const outDir = join(repoRoot, args.outDir);
   mkdirSync(outDir, { recursive: true });
   const tag = `${games[0]?.players ?? config.players}p`;
@@ -99,7 +114,13 @@ function printSummaryToConsole(agg: Aggregate, outDir: string, tag: string): voi
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
-  const config = loadScenarioFile(scenarioPathFor(args));
+  // Procedural sweeps generate a galaxy per game; the committed flat-yield maps load from disk.
+  // For aggregate metadata (player count / turns) a representative config is enough.
+  const players = args.players ?? 8;
+  const turns = args.turns ?? 42;
+  const config = args.procedural
+    ? proceduralConfig(typeof args.seed === "number" ? args.seed : 1, players, turns)
+    : loadScenarioFile(scenarioPathFor(args));
   if (args.verbose && args.games <= 1) {
     runSingleVerbose(config, args);
   } else {

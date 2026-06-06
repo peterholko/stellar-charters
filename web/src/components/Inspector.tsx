@@ -1,4 +1,4 @@
-import { EXTRACTOR_CAP, canRaidRoute, raidStrength, type PlayerView, type System } from "@engine";
+import { EXTRACTOR_CAP, canRaidRoute, raidStrength, stellarOutputMult, systemSeed, type PlayerView, type System } from "@engine";
 import { store, type Selection } from "../match/store";
 import {
   archetypeLabel,
@@ -17,7 +17,7 @@ import {
 } from "../match/format";
 import { RESOURCES } from "@engine";
 import { Badge, Bar, Panel, PanelTitle, ActionButton } from "../ui/primitives";
-import { PlanetArt, ArtSlot } from "../theme/ArtSlot";
+import { PlanetArt, ArtSlot, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 
 export function Inspector({
@@ -190,7 +190,7 @@ export function Inspector({
             {open && <div><dt>Claim cost</dt><dd>{formatCr(sys.claimCost)}</dd></div>}
           </dl>
 
-          <SystemComposition sys={sys} canBuild={mine && !view.me.isFreeOperator} turn={view.turn} assayCost={t.assayCost} />
+          <SystemComposition sys={sys} canBuild={mine && !view.me.isFreeOperator} turn={view.turn} totalTurns={view.config.turns} assayCost={t.assayCost} />
           {!mine && (
             <RivalSabotage view={view} humanCorpId={humanCorpId} sys={sys} />
           )}
@@ -259,23 +259,44 @@ export function Inspector({
 
 /** Per-body deposit list (Section 21): what the system carries, what's worked, and the
  *  extractor/assay actions to develop it. */
-function SystemComposition({ sys, canBuild, turn, assayCost }: { sys: System; canBuild: boolean; turn: number; assayCost: number }) {
+function SystemComposition({ sys, canBuild, turn, totalTurns, assayCost }: { sys: System; canBuild: boolean; turn: number; totalTurns: number; assayCost: number }) {
   if (sys.sites.length === 0) return null;
   const sites = [...sys.sites].sort((a, b) => a.orbit - b.orbit || a.resource.localeCompare(b.resource));
+  const star = sys.bodies?.starType;
+  // Is a stellar event acting on output THIS turn? (a flare brownout or a pulse surge)
+  const stellar = star
+    ? sys.sites.reduce(
+        (acc, s) => {
+          const m = stellarOutputMult(star, s, systemSeed(sys), turn, totalTurns);
+          return { min: Math.min(acc.min, m), max: Math.max(acc.max, m) };
+        },
+        { min: 1, max: 1 },
+      )
+    : { min: 1, max: 1 };
+  const stellarBadge =
+    stellar.min <= 0 ? { tone: "negative" as const, label: "Flare — extractors offline" }
+    : stellar.max > 1.05 ? { tone: "accent" as const, label: "Output surge this turn" }
+    : stellar.min < 0.95 ? { tone: "warn" as const, label: "Output dampened" }
+    : null;
   return (
     <div className="composition">
-      <h4 className="composition__title">System composition</h4>
+      <div className="composition__head">
+        {star && <StarArt starType={star} className="composition__star" />}
+        <h4 className="composition__title">System composition</h4>
+        {stellarBadge && <Badge tone={stellarBadge.tone}>{stellarBadge.label}</Badge>}
+      </div>
       <div className="composition__list">
         {sites.map((site) => {
           const offline = site.disabledUntil > turn;
           const dry = site.reservesRemaining !== null && site.reservesRemaining <= 0;
           const worked = site.extractorLevel > 0;
-          const reserveStr =
-            site.reservesRemaining === null
-              ? "renewable"
-              : site.prospected
-              ? `${Math.round(site.reservesRemaining)} left`
-              : "reserves ?";
+          // Reserves are fogged to null until surveyed, so only call a deposit "renewable" once
+          // it's actually been prospected — otherwise its reserves are simply unknown.
+          const reserveStr = !site.prospected
+            ? "reserves ?"
+            : site.reservesRemaining === null
+            ? "renewable"
+            : `${Math.round(site.reservesRemaining)} left`;
           return (
             <div key={site.key} className={`site-row${offline ? " site-row--offline" : ""}`}>
               <div className="site-row__body">

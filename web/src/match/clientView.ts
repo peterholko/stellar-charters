@@ -29,7 +29,7 @@ function scenarioFromState(state: ClientState): Scenario {
   const systems: ScenarioSystem[] = state.systems.map((s) => ({
     id: s.id,
     name: s.name,
-    yields: s.yields,
+    yields: s.yields ?? {},
     claimCost: s.claimCost,
     upkeep: s.upkeep,
     populationStage: s.populationStage,

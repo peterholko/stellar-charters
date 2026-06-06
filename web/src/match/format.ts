@@ -191,10 +191,6 @@ export function stockpileValue(stockpile: Stockpile, prices: Record<Resource, nu
   return RESOURCES.reduce((sum, r) => sum + stockpile[r] * prices[r], 0);
 }
 
-export function sumYields(yields: Stockpile): number {
-  return RESOURCES.reduce((sum, r) => sum + yields[r], 0);
-}
-
 /** A system's full-development yield potential (sum of all deposit richness, Section 21). */
 export function sumPotential(sys: System): number {
   const p = potentialYields(sys);

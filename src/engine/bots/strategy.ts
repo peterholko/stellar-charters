@@ -218,9 +218,38 @@ export function maybeBuildReactor(view: PlayerView): Order[] {
 }
 
 /**
+ * A forward-looking quality multiplier for investing in a deposit (Section 21):
+ *  - renewable deposits (bio/gas/ice) earn a premium — they never run dry, so the capital keeps
+ *    paying; finite deposits are discounted as their reserves shrink toward exhaustion;
+ *  - star type matters: a neutron star's rare-isotope/antimatter sites pulse high, while an aging
+ *    red giant's ocean (food) worlds are scorched late in the match, so don't over-invest there.
+ */
+function depositInvestmentFactor(view: PlayerView, sys: System, site: System["sites"][number]): number {
+  let f = 1;
+  if (site.reservesRemaining === null) {
+    f *= 1.2; // renewable: sustained income
+  } else {
+    // Discount toward 0 as a finite deposit nears exhaustion (relative to its richness).
+    const turnsLeft = site.reservesRemaining / Math.max(0.01, site.richness);
+    f *= Math.max(0.2, Math.min(1, turnsLeft / 12));
+  }
+  const star = sys.bodies?.starType;
+  if (star === "neutronStar" && (site.resource === "rareIsotopes" || site.resource === "antimatter")) {
+    f *= 1.25; // periodic output pulses
+  }
+  if (star === "redGiant" && site.resource === "food") {
+    const turnsLeft = view.config.turns - view.turn;
+    if (turnsLeft < view.config.turns * 0.45) f *= 0.4; // ocean worlds scorch late
+  }
+  return f;
+}
+
+/**
  * Develop the corp's deposits (Section 21): build extractors on the highest-value workable
  * sites across owned systems, climbing toward the cap. This is the core mid-game build loop —
  * a claimed system only pays out once its deposits are worked, so this runs early and often.
+ * Bots see true geology (the fog is only for human clients), so they don't assay — they weigh
+ * richness, accessibility, depletion, and stellar dynamics directly.
  */
 export function maybeBuildExtractor(view: PlayerView): Order[] {
   const t = view.config.tuning;
@@ -234,7 +263,7 @@ export function maybeBuildExtractor(view: PlayerView): Order[] {
       // Skip a finite deposit that is nearly exhausted — not worth fresh capital.
       if (site.reservesRemaining !== null && site.reservesRemaining < site.richness * 3) continue;
       const price = t.basePrices[site.resource];
-      const score = site.richness * price * site.accessibility;
+      const score = site.richness * price * site.accessibility * depositInvestmentFactor(view, sys, site);
       const factor =
         (site.extractorLevel + 1) * (1 + (1 - site.accessibility) * t.extractor.accessibilityMult);
       const cost = Math.round(t.extractor.buildCost * factor);

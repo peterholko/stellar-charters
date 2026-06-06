@@ -838,6 +838,72 @@ Population should add strategic value, not routine chores. Keep food light early
 
 Post-charter players need comeback tools, but not unlimited nuisance power. Port access, reputation, Authority enforcement, and operating costs should constrain them.
 
+`SECTION 21`
+
+
+## Star System Resource Model
+
+A star system is not a single number. Each system is a **star** orbited by **planets** and
+**asteroid belts**, and the resources a charter can pull come from the **deposits** on those
+bodies. Owning a system grants *potential*; the per-turn output is the sum of the deposits the
+owner has actually **worked** by building extractors. This replaces the earlier flat per-system
+yield: that flat vector is now just the degenerate case of a fully-developed system.
+
+### Bodies & deposits
+
+- **Star type** sets the system's character and habitable-zone geometry: *main-sequence*
+  (standard, life-friendly), *red dwarf* (tight zone, flare-prone), *red giant* (expanded zone
+  pushed outward, scorches its inner worlds), *blue giant* (hot, harsh, few habitables),
+  *white dwarf* (dead remnant, no habitable zone), *neutron star* (exotic remnant — the
+  antimatter / rare-isotope prize, no habitable zone). Exotic stars cluster toward the frontier
+  and abyss.
+- **Planet type** sets which deposits a world carries: *lava* (metals + volcanic rare isotopes),
+  *rocky* (metals + silicates), *desert* (silicates), *ocean* (**habitable** — food + ice),
+  *gas giant* (helium-3), *ice giant* (ice + helium-3), *barren* (sparse metals, dead rock).
+- **Asteroid belts** sit between the inner rocky zone and the outer giants and are rich mining
+  grounds (metals, silicates, sometimes rare isotopes).
+- Each **deposit** has a *richness* (units/turn when fully worked), *reserves* (finite for
+  ore/exotic, **renewable** for bio/gas/ice), and an *accessibility* (how costly it is to work).
+- Resource geography is preserved: rare isotopes are a frontier-and-deeper prize, antimatter is
+  abyss-only, the core carries only basics.
+
+### Extractors & depletion
+
+A deposit produces nothing until its owner builds an **extractor** on it; deepening the extractor
+raises output toward the deposit's richness. A fresh charter is granted a free starter extractor
+on its best deposit so a claimed system produces immediately. **Finite deposits deplete** as they
+are mined and eventually run dry, so the richest worlds are boom-and-bust and the frontier keeps
+pulling expansion outward; renewable deposits (ocean food, gas skimming, ice) sustain indefinitely.
+
+### Habitability
+
+A population can only take root where there is a **habitable world** (an ocean/garden world) or an
+artificial habitat (hydroponics). Dead stars and giant-only systems are pure **industrial**
+outposts — they extract and pay no population tax unless terraformed. Garden worlds are therefore
+a scarce, contested prize. Each charter's **home** system is guaranteed a habitat dome at founding
+so no one starts stranded; later expansion claims get no such guarantee.
+
+### Prospecting (fog of war)
+
+A deposit's true richness is hidden until it is **assayed** (surveyed) or worked; rivals never see
+a system's remaining reserves. Claiming a promising-looking system is therefore a speculation, and
+scouting/assay is an information-warfare lever.
+
+### Stellar dynamics & sabotage
+
+Star type drives deterministic, forecastable per-turn effects: neutron-star **pulses** spike
+rare-isotope/antimatter output, an aging **red giant** slowly scorches its ocean worlds (food
+declines late in a match), and **red-dwarf flares** brown out extractors on occasional turns.
+Economic warfare reaches the surface: a raider in range of a rival system can **sabotage** an
+extractor, knocking it offline for several turns.
+
+### Resolution placement
+
+Extractor and assay builds resolve in the administrative step; extraction (with depletion and
+stellar modifiers) is the Production step (2); sabotage resolves with raids (6); the habitability
+gate applies during population/upkeep (8) — all within the Section 20 order, with no same-turn
+chaining.
+
 ### Prototype priority
 
 Prototype the first 12 turns as a text or spreadsheet simulation with 4–8 players. Validate the opening auction, first exports, order fill UX, convoy visibility, warp-route traffic history, one-turn route interdiction, privateer economics, and Range 2 expansion before adding the full finance/takeover and Free Operator layers.
