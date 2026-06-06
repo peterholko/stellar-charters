@@ -65,8 +65,21 @@
       "id": "s4",
       "name": "Greywake",
       "yields": {
+        "silicates": 12,
+        "metals": 2
+      },
+      "claimCost": 1250,
+      "upkeep": 42,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s5",
+      "name": "Deepwell",
+      "yields": {
         "ice": 4,
-        "metals": 4,
+        "metals": 3,
+        "silicates": 3,
         "helium3": 2
       },
       "claimCost": 1400,
@@ -75,25 +88,13 @@
       "innerRing": true
     },
     {
-      "id": "s5",
-      "name": "Deepwell",
+      "id": "s6",
+      "name": "Tycho Reach",
       "yields": {
         "ice": 12,
         "metals": 2
       },
       "claimCost": 1200,
-      "upkeep": 40,
-      "defense": 2,
-      "innerRing": true
-    },
-    {
-      "id": "s6",
-      "name": "Tycho Reach",
-      "yields": {
-        "metals": 14,
-        "ice": 2
-      },
-      "claimCost": 1100,
       "upkeep": 40,
       "defense": 2,
       "innerRing": true
@@ -102,6 +103,18 @@
       "id": "s7",
       "name": "Cinder",
       "yields": {
+        "metals": 14,
+        "ice": 2
+      },
+      "claimCost": 1100,
+      "upkeep": 40,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s8",
+      "name": "Halcyon",
+      "yields": {
         "helium3": 8,
         "ice": 2
       },
@@ -111,8 +124,8 @@
       "innerRing": true
     },
     {
-      "id": "s8",
-      "name": "Halcyon",
+      "id": "s9",
+      "name": "Brightfall",
       "yields": {
         "food": 10,
         "ice": 3
@@ -123,11 +136,24 @@
       "innerRing": true
     },
     {
-      "id": "s9",
-      "name": "Brightfall",
+      "id": "s10",
+      "name": "Karst",
+      "yields": {
+        "silicates": 12,
+        "metals": 2
+      },
+      "claimCost": 1250,
+      "upkeep": 42,
+      "defense": 2,
+      "innerRing": true
+    },
+    {
+      "id": "s11",
+      "name": "Meridian",
       "yields": {
         "ice": 4,
-        "metals": 4,
+        "metals": 3,
+        "silicates": 3,
         "helium3": 2
       },
       "claimCost": 1400,
@@ -136,8 +162,8 @@
       "innerRing": true
     },
     {
-      "id": "s10",
-      "name": "Karst",
+      "id": "s12",
+      "name": "Onyx Spur",
       "yields": {
         "ice": 12,
         "metals": 2
@@ -148,8 +174,8 @@
       "innerRing": true
     },
     {
-      "id": "s11",
-      "name": "Meridian",
+      "id": "s13",
+      "name": "Saltmarsh",
       "yields": {
         "metals": 14,
         "ice": 2
@@ -160,8 +186,8 @@
       "innerRing": true
     },
     {
-      "id": "s12",
-      "name": "Onyx Spur",
+      "id": "s14",
+      "name": "Verge",
       "yields": {
         "helium3": 8,
         "ice": 2
@@ -172,39 +198,14 @@
       "innerRing": true
     },
     {
-      "id": "s13",
-      "name": "Saltmarsh",
+      "id": "s15",
+      "name": "Lowtide",
       "yields": {
         "food": 10,
         "ice": 3
       },
       "claimCost": 1500,
       "upkeep": 50,
-      "defense": 2,
-      "innerRing": true
-    },
-    {
-      "id": "s14",
-      "name": "Verge",
-      "yields": {
-        "ice": 4,
-        "metals": 4,
-        "helium3": 2
-      },
-      "claimCost": 1400,
-      "upkeep": 45,
-      "defense": 2,
-      "innerRing": true
-    },
-    {
-      "id": "s15",
-      "name": "Lowtide",
-      "yields": {
-        "ice": 12,
-        "metals": 2
-      },
-      "claimCost": 1200,
-      "upkeep": 40,
       "defense": 2,
       "innerRing": true
     },

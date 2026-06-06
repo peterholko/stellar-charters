@@ -14,10 +14,10 @@ import type { PlayerView } from "@engine";
 import { computeLayout } from "../match/layout";
 import {
   corpColor,
-  dominantResource,
   resourceColors,
   routeRisk,
   systemArchetype,
+  systemDominant,
 } from "../match/format";
 import type { Selection } from "../match/store";
 
@@ -453,7 +453,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       signature = sig;
       points = layoutPoints(galaxy);
       bounds = computeBounds(points);
-      unit = Math.max(1, Math.hypot(bounds.w, bounds.h) / 100);
+      unit = Math.max(1, Math.hypot(bounds.w, bounds.h) / 125);
       resizeBg();
       rebuildBackground(pal);
       fitCamera();
@@ -557,7 +557,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
         ? mine
           ? pal.accent
           : cssNum(corpColor(s.owner))
-        : cssNum(resourceColors[dominantResource(s.yields)]);
+        : cssNum(resourceColors[systemDominant(s)]);
 
       const cont = new Container();
       cont.position.set(p.x, p.y);
@@ -575,7 +575,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       const r = nodeRadius(region, unit);
       // Soft halo + luminous core, with a region-specific accent so worlds aren't identical dots.
       const glyph = new Graphics();
-      glyph.circle(0, 0, r * 2).fill({ color: fill, alpha: 0.12 });
+      glyph.circle(0, 0, r * 1.35).fill({ color: fill, alpha: 0.1 });
       glyph.blendMode = "normal";
       cont.addChild(glyph);
       drawGlyph(cont, region, arch, r, fill, open, pal);

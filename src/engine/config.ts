@@ -10,9 +10,29 @@ import type {
   RangeTier,
   Resource,
   Stockpile,
+  SystemBodies,
   SystemPosition,
 } from "./types.js";
-import { RESOURCES } from "./types.js";
+import { emptyStockpile, RESOURCES } from "./types.js";
+
+/**
+ * A production-chain recipe run by a Processor module (Section 07b). Each turn a processor
+ * consumes `inputs` from its system's local stockpile and produces `outputs` into it,
+ * pro-rated by the limiting input (and throttled by power/unrest). `recipes` is iterated in
+ * array order, which MUST be dependency order so a tier-1 output (e.g. alloys) is available
+ * to a tier-2 recipe (e.g. components) in the same turn.
+ */
+export interface Recipe {
+  id: string;
+  /** Tier (1 = from raws, 2 = consumes a manufactured good). Documentation/ordering aid. */
+  tier: number;
+  inputs: Partial<Stockpile>;
+  outputs: Partial<Stockpile>;
+  /** Credits to build one processor for this recipe. */
+  buildCost: number;
+  /** Power drawn per processor module each turn (Section 07b power balance). */
+  powerDraw: number;
+}
 
 /** Raw system entry as authored in a scenario JSON. */
 export interface ScenarioSystem {
@@ -26,6 +46,9 @@ export interface ScenarioSystem {
   innerRing?: boolean;
   /** Atlas coordinates (procedural scenarios). Absent for legacy authored maps. */
   position?: SystemPosition;
+  /** Generated astrophysical contents + deposits (Section 21). Absent on legacy authored maps,
+   *  which instead author the flat `yields` shortcut. */
+  bodies?: SystemBodies;
 }
 
 /** Raw route entry as authored in a scenario JSON. */
@@ -110,10 +133,68 @@ export interface Tuning {
   hydroponicsCost: number;
   hydroponicsIceUse: number;
   hydroponicsFoodOutput: number;
+  /** Production-chain recipes run by Processor modules (Section 07b). Dependency-ordered. */
+  recipes: Recipe[];
+  /** Alloys a ship hull of each tier consumes when built (the "steel bottleneck"). */
+  shipAlloyCost: Record<RangeTier, number>;
+  /** Components (electronics) a ship of each tier consumes when built. */
+  shipComponentCost: Record<RangeTier, number>;
+  /** Flat alloy cost to construct any building (depot, platform, processor, reactor). */
+  buildAlloyCost: number;
+  /** Extra components a Trade Depot consumes when built (advanced infrastructure). */
+  depotComponentCost: number;
+  /** Fuel each ship burns per turn to stay operational (Section 07b fleet sink). */
+  fuelPerShipPerTurn: number;
+  /** Reactor (Section 07b power): build cost, power capacity added, helium3 burned per turn. */
+  reactorCost: number;
+  reactorPowerOutput: number;
+  reactorHelium3Use: number;
+  /** Free baseline power every owned system has before any reactor. */
+  basePowerPerSystem: number;
+  /**
+   * System infrastructure upgrades (Section 07c): raw-fed "upgrade the building" tracks that
+   * give the overproduced raws (metals/silicates/helium3) a scaling demand sink. Each level's
+   * cost scales with the level reached (level L→L+1 costs the base × (L+1)).
+   */
+  infrastructure: {
+    /** Max level per track. */
+    cap: number;
+    /** Mining Rigs (metals): fortification — each level hardens raid defense and cuts upkeep.
+     *  A pure sink: it consumes metals without adding raw supply or compounding wealth. */
+    miningCreditCost: number;
+    miningMetalsCost: number;
+    miningDefenseBonusPerLevel: number;
+    miningUpkeepReductionPerLevel: number;
+    /** Habitats (silicates): each level raises population growth and tax. */
+    habitatCreditCost: number;
+    habitatSilicatesCost: number;
+    habitatGrowthBonusPerLevel: number;
+    habitatTaxBonusPerLevel: number;
+    /** Power Grid (helium3): each level adds local power capacity (a soft reactor). */
+    powerCreditCost: number;
+    powerHelium3Cost: number;
+    powerCapacityPerLevel: number;
+  };
   /** Stationary defense platform: build cost and raid-defense added per platform (Section 15). */
   platformCost: number;
   platformDefense: number;
   platformCap: number;
+  /**
+   * Per-body extractor economy (Section 21). Building an extractor on a deposit raises its
+   * level; the credit cost scales with the level reached and the deposit's accessibility (harder
+   * deposits cost more). A free starter extractor is granted on claim so a fresh system produces.
+   */
+  extractor: {
+    buildCost: number;
+    /** Alloys consumed per extractor build. */
+    alloyCost: number;
+    /** Extra credit multiplier for the least-accessible deposits (× (1 + (1-access)*mult)). */
+    accessibilityMult: number;
+  };
+  /** Credits to assay (reveal exact richness/reserves of) one of a system's deposits (Section 21). */
+  assayCost: number;
+  /** Extraction sabotage (Section 21): raid strength needed, and turns a hit site stays offline. */
+  sabotage: { minStrength: number; disableTurns: number };
   /** Trade Depot effects (Section 12). */
   depotCost: number;
   depotShippingDiscount: number; // fraction off shipping on incident routes
@@ -132,6 +213,14 @@ export interface Tuning {
     populationValue: Record<PopulationStage, number>;
     shipValue: number;
     depotValue: number;
+    /** Valuation credited per Processor module built. */
+    processorValue: number;
+    /** Valuation credited per Reactor module built. */
+    reactorValue: number;
+    /** Valuation credited per system-infrastructure upgrade level (any track). */
+    infraLevelValue: number;
+    /** Valuation credited per extractor level built across a system's sites (Section 21). */
+    extractorValue: number;
     stockpileFrac: number;
     earningsMomentumWeight: number;
   };
@@ -139,7 +228,21 @@ export interface Tuning {
 
 export const DEFAULT_TUNING: Tuning = {
   startingCredits: 6500,
-  basePrices: { ice: 8, metals: 12, helium3: 22, rareIsotopes: 120, food: 16, antimatter: 420 },
+  basePrices: {
+    // Raw feedstocks.
+    ice: 8,
+    metals: 12,
+    silicates: 14,
+    helium3: 22,
+    rareIsotopes: 120,
+    antimatter: 420,
+    // Manufactured goods (value-added over their inputs; seed values, tune via sweep).
+    food: 16,
+    fuel: 34,
+    alloys: 40,
+    polymers: 84,
+    components: 300,
+  },
   priceFloorFrac: 0.4,
   priceCeilFrac: 2.5,
   priceElasticity: 0.06,
@@ -172,9 +275,49 @@ export const DEFAULT_TUNING: Tuning = {
   hydroponicsCost: 600,
   hydroponicsIceUse: 2,
   hydroponicsFoodOutput: 6,
+  // Production chains (Section 07b). Array order is dependency order: fuel/alloys (tier 1,
+  // from raws) precede polymers/components (tier 2) so same-turn chaining works.
+  recipes: [
+    { id: "fuel", tier: 1, inputs: { ice: 2, helium3: 1 }, outputs: { fuel: 3 }, buildCost: 650, powerDraw: 1 },
+    { id: "alloys", tier: 1, inputs: { metals: 2, helium3: 1 }, outputs: { alloys: 2 }, buildCost: 650, powerDraw: 2 },
+    { id: "polymers", tier: 2, inputs: { silicates: 2, fuel: 1 }, outputs: { polymers: 2 }, buildCost: 800, powerDraw: 2 },
+    { id: "components", tier: 3, inputs: { alloys: 1, polymers: 1, rareIsotopes: 1 }, outputs: { components: 1 }, buildCost: 950, powerDraw: 3 },
+  ],
+  shipAlloyCost: { 1: 2, 2: 3, 3: 5, 4: 8, 5: 12, 6: 16, 7: 21, 8: 27 },
+  shipComponentCost: { 1: 0, 2: 1, 3: 2, 4: 4, 5: 6, 6: 9, 7: 12, 8: 16 },
+  buildAlloyCost: 4,
+  depotComponentCost: 3,
+  fuelPerShipPerTurn: 0.5,
+  reactorCost: 700,
+  reactorPowerOutput: 6,
+  reactorHelium3Use: 2,
+  basePowerPerSystem: 2,
+  // Raw-fed system upgrades (Section 07c). Raw costs are deliberately steep and scale with
+  // level so the metals/silicates/helium3 spent dominates the extra yield — a net sink. Seeds.
+  infrastructure: {
+    cap: 4,
+    miningCreditCost: 350,
+    miningMetalsCost: 18,
+    miningDefenseBonusPerLevel: 1,
+    miningUpkeepReductionPerLevel: 0.1,
+    habitatCreditCost: 450,
+    habitatSilicatesCost: 16,
+    habitatGrowthBonusPerLevel: 0.25,
+    habitatTaxBonusPerLevel: 0.15,
+    powerCreditCost: 400,
+    powerHelium3Cost: 10,
+    powerCapacityPerLevel: 4,
+  },
   platformCost: 350,
   platformDefense: 1,
   platformCap: 2,
+  extractor: {
+    buildCost: 300,
+    alloyCost: 2,
+    accessibilityMult: 0.8,
+  },
+  assayCost: 120,
+  sabotage: { minStrength: 4, disableTurns: 3 },
   depotCost: 2000,
   depotShippingDiscount: 0.35,
   depotTransitBonus: 1,
@@ -194,6 +337,10 @@ export const DEFAULT_TUNING: Tuning = {
     },
     shipValue: 500,
     depotValue: 2000,
+    processorValue: 300,
+    reactorValue: 250,
+    infraLevelValue: 90,
+    extractorValue: 70,
     stockpileFrac: 0.5,
     earningsMomentumWeight: 4,
   },
@@ -207,7 +354,7 @@ export interface GameConfig {
 }
 
 function fullStockpile(partial: Partial<Stockpile> | undefined): Stockpile {
-  const out = { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
+  const out = emptyStockpile();
   if (partial) {
     for (const r of RESOURCES) {
       if (partial[r] !== undefined) out[r] = partial[r]!;

@@ -5,16 +5,37 @@
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
 import { MAX_RANGE_TIER, RESOURCES, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
+import { EXTRACTOR_CAP, effectiveYields, potentialYields } from "../bodies.js";
 import type { PlayerView } from "./bot.js";
 
-/** Resources a corporation exports. Outpost-stage systems consume no food, so a
- *  garden world's food is sold to the exchange like any other commodity. */
-const EXPORT_RESOURCES: readonly Resource[] = ["ice", "metals", "helium3", "rareIsotopes", "food", "antimatter"];
+/** Current per-turn output of a system (worked sites, net of depletion/stellar). */
+function liveYields(view: PlayerView, sys: System) {
+  return effectiveYields(sys, view.turn, view.config.turns);
+}
 
-/** Rough commercial value of a system: per-turn yield priced at base, minus claim cost. */
+/** Resources a corporation exports. Outpost-stage systems consume no food, so a
+ *  garden world's food is sold to the exchange like any other commodity. Manufactured
+ *  goods (fuel/alloys/polymers/components) are sold too, with reserves kept below. */
+const EXPORT_RESOURCES: readonly Resource[] = [
+  "ice", "metals", "silicates", "helium3", "rareIsotopes", "food",
+  "fuel", "alloys", "polymers", "components", "antimatter",
+];
+
+/** Raw (extractable) commodities — the rest are manufactured by Processor modules. */
+const RAW_RESOURCES: ReadonlySet<Resource> = new Set<Resource>([
+  "ice", "metals", "silicates", "helium3", "rareIsotopes", "antimatter",
+]);
+
+/** Cap on Processor modules of a given recipe per system (bot self-restraint). */
+const PROCESSOR_CAP_PER_RECIPE = 3;
+
+/** Rough commercial value of a system: full-development yield priced at base, minus claim cost.
+ *  Uses *potential* output so an unclaimed system (whose deposits aren't worked yet) is valued
+ *  by what it could produce, not its current zero. */
 export function valueSystem(view: PlayerView, sys: System): number {
+  const pot = potentialYields(sys);
   const yieldValue = RESOURCES.reduce(
-    (s, r) => s + sys.yields[r] * view.config.tuning.basePrices[r],
+    (s, r) => s + pot[r] * view.config.tuning.basePrices[r],
     0,
   );
   return yieldValue * 6 - sys.claimCost;
@@ -65,6 +86,14 @@ export function bidList(
 /** Sell extractable surplus, reserving food/ice a populated system needs for upkeep. */
 export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
   const t = view.config.tuning;
+  const inf = t.infrastructure;
+  // Hold a little of each upgrade feedstock back (while the corp can still upgrade somewhere) so
+  // the raws are carried into next turn's upgrade phase instead of dumped on the market. This is
+  // what lets the upgrade sink actually fire — and selling less also lifts the raw's price.
+  const owned = view.me.ownedSystemIds.map((id) => view.galaxy.system(id));
+  const miningHeadroom = owned.some((s) => s.miningRigs < inf.cap);
+  const habitatHeadroom = owned.some((s) => s.populationStage !== "outpost" && s.habitats < inf.cap);
+  const powerHeadroom = owned.some((s) => Object.values(s.processors).some((n) => n > 0) && s.powerGrid < inf.cap);
   const orders: MarketOrder[] = [];
   for (const sysId of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(sysId);
@@ -78,6 +107,15 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
       // Keep a few rare isotopes back to build higher-tier warships once Range 2+,
       // but still sell the surplus (frontier income funds those hulls).
       if (r === "rareIsotopes" && view.me.rangeTier >= 2) reserve = Math.max(buffer, 4);
+      // Keep manufactured goods the corp consumes itself (Section 07b): fuel for the fleet,
+      // alloys for construction, components for hulls. Surplus above the reserve is exported.
+      if (r === "fuel") reserve = Math.max(buffer, view.me.ships.length * t.fuelPerShipPerTurn * 3);
+      if (r === "alloys") reserve = Math.max(buffer, t.buildAlloyCost * 4);
+      if (r === "components") reserve = Math.max(buffer, 6);
+      // Reserve upgrade feedstocks (Section 07c) so they fund system upgrades, not the exchange.
+      if (r === "metals" && miningHeadroom) reserve = Math.max(reserve, inf.miningMetalsCost * 2);
+      if (r === "silicates" && habitatHeadroom) reserve = Math.max(reserve, inf.habitatSilicatesCost * 2);
+      if (r === "helium3" && powerHeadroom) reserve = Math.max(reserve, inf.powerHelium3Cost * 2);
       const qty = sys.stockpile[r] - reserve;
       if (qty <= 0) continue;
       orders.push({
@@ -115,13 +153,191 @@ export function maybeBuildHydroponics(view: PlayerView): Order[] {
     const sys = view.galaxy.system(id);
     if (sys.hydroponics >= 4) continue; // cap modules per system
     const need = view.config.tuning.foodNeed[sys.populationStage];
-    const localFood = sys.yields.food + sys.hydroponics * view.config.tuning.hydroponicsFoodOutput;
+    const localFood = liveYields(view, sys).food + sys.hydroponics * view.config.tuning.hydroponicsFoodOutput;
     // A colony that can't feed itself locally — local food is what unlocks growth now.
     if (need > 0 && localFood < need) {
       return [{ kind: "buildHydroponics", systemId: id }];
     }
   }
   return [];
+}
+
+/** The recipe (if any) whose output is `res` — used to find a manufactured good's producer. */
+function recipeProducing(view: PlayerView, res: Resource) {
+  return view.config.tuning.recipes.find((r) => (r.outputs[res] ?? 0) > 0);
+}
+
+/**
+ * Can this system locally feed `recipe`? Processors consume from the LOCAL stockpile, so raw
+ * inputs must be extracted here and manufactured inputs must be produced by a processor on this
+ * same system. This keeps the bot building chains bottom-up on integrated "factory worlds"
+ * (e.g. fuel → polymers on a silicate-bearing mixed world) rather than starving a processor.
+ */
+function systemCanFeed(view: PlayerView, sys: System, recipe: { inputs: Partial<Record<Resource, number>> }): boolean {
+  const live = liveYields(view, sys);
+  for (const res of Object.keys(recipe.inputs) as Resource[]) {
+    if (RAW_RESOURCES.has(res)) {
+      if ((live[res] ?? 0) <= 0) return false;
+    } else {
+      const producer = recipeProducing(view, res);
+      if (!producer || (sys.processors[producer.id] ?? 0) <= 0) return false;
+    }
+  }
+  return true;
+}
+
+/** Build a Processor where its chain can be fed locally, climbing tiers as upstream comes online. */
+export function maybeBuildProcessor(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.turn < 4) return []; // let the opening economy settle first
+  for (const recipe of t.recipes) {
+    if (view.me.credits < recipe.buildCost * 1.4) continue;
+    for (const id of view.me.ownedSystemIds) {
+      const sys = view.galaxy.system(id);
+      if ((sys.processors[recipe.id] ?? 0) >= PROCESSOR_CAP_PER_RECIPE) continue;
+      if (!systemCanFeed(view, sys, recipe)) continue;
+      return [{ kind: "buildProcessor", systemId: id, recipeId: recipe.id }];
+    }
+  }
+  return [];
+}
+
+/** Add reactor capacity to any owned system whose processors out-draw its current power. */
+export function maybeBuildReactor(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.me.credits < t.reactorCost * 1.4) return [];
+  for (const id of view.me.ownedSystemIds) {
+    const sys = view.galaxy.system(id);
+    let draw = 0;
+    for (const recipe of t.recipes) draw += (sys.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    if (draw <= 0) continue;
+    const capacity = t.basePowerPerSystem + sys.reactors * t.reactorPowerOutput;
+    if (capacity < draw) return [{ kind: "buildReactor", systemId: id }];
+  }
+  return [];
+}
+
+/**
+ * Develop the corp's deposits (Section 21): build extractors on the highest-value workable
+ * sites across owned systems, climbing toward the cap. This is the core mid-game build loop —
+ * a claimed system only pays out once its deposits are worked, so this runs early and often.
+ */
+export function maybeBuildExtractor(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.me.ownedSystemIds.length === 0) return [];
+  let budget = view.me.credits * 0.5;
+  const cands: { sysId: string; siteKey: string; score: number; cost: number }[] = [];
+  for (const id of view.me.ownedSystemIds) {
+    const sys = view.galaxy.system(id);
+    for (const site of sys.sites) {
+      if (site.extractorLevel >= EXTRACTOR_CAP) continue;
+      // Skip a finite deposit that is nearly exhausted — not worth fresh capital.
+      if (site.reservesRemaining !== null && site.reservesRemaining < site.richness * 3) continue;
+      const price = t.basePrices[site.resource];
+      const score = site.richness * price * site.accessibility;
+      const factor =
+        (site.extractorLevel + 1) * (1 + (1 - site.accessibility) * t.extractor.accessibilityMult);
+      const cost = Math.round(t.extractor.buildCost * factor);
+      cands.push({ sysId: id, siteKey: site.key, score, cost });
+    }
+  }
+  cands.sort((a, b) => b.score - a.score);
+  const orders: Order[] = [];
+  for (const c of cands) {
+    if (orders.length >= 3) break; // a few extractors per turn keeps cash for everything else
+    if (budget < c.cost * 1.2) continue;
+    budget -= c.cost;
+    orders.push({ kind: "buildExtractor", systemId: c.sysId, siteKey: c.siteKey });
+  }
+  return orders;
+}
+
+/**
+ * Knock a reachable rival's best extractor offline (Section 21). Raiders/Free Operators with a
+ * raider hull or privateer near a rival system can sabotage its production, not just its convoys.
+ */
+export function maybeSabotage(view: PlayerView): Order[] {
+  if (!view.me.ships.some((s) => s.raider) && view.me.privateers.length === 0) return [];
+  for (const sys of view.galaxy.allSystems()) {
+    if (sys.owner === null || sys.owner === view.me.id) continue;
+    const reachable =
+      view.me.privateers.some(
+        (p) => p.basedAt === sys.id || view.galaxy.routeBetween(p.basedAt, sys.id) !== undefined,
+      ) ||
+      (view.me.ships.some((s) => s.raider) &&
+        view.me.ownedSystemIds.some(
+          (o) => o === sys.id || view.galaxy.routeBetween(o, sys.id) !== undefined,
+        ));
+    if (!reachable) continue;
+    const worked = sys.sites
+      .filter((s) => s.extractorLevel > 0 && s.disabledUntil <= view.turn)
+      .sort((a, b) => b.richness - a.richness)[0];
+    if (!worked) continue;
+    return [{ kind: "sabotage", systemId: sys.id, siteKey: worked.key }];
+  }
+  return [];
+}
+
+/** Total of a resource across all of a corp's owned-system stockpiles. */
+function corpStock(view: PlayerView, res: Resource): number {
+  let n = 0;
+  for (const id of view.me.ownedSystemIds) n += view.galaxy.system(id).stockpile[res];
+  return n;
+}
+
+/**
+ * Spend the corp's overproduced raws on system upgrades (Section 07c): Mining Rigs (metals) on
+ * the richest worlds, Habitats (silicates) on populated worlds, Power Grids (helium3) on worlds
+ * running processors. Each upgrade is only taken when the raw is already in the corp's
+ * stockpiles — so it drains owned overproduction rather than buying from the market — and at
+ * most half of cash is committed per turn. This is the main sink that keeps raw prices off the floor.
+ */
+export function maybeUpgradeInfrastructure(view: PlayerView): Order[] {
+  const inf = view.config.tuning.infrastructure;
+  if (view.turn < 5) return [];
+  const stock: Record<"metals" | "silicates" | "helium3", number> = {
+    metals: corpStock(view, "metals"),
+    silicates: corpStock(view, "silicates"),
+    helium3: corpStock(view, "helium3"),
+  };
+  let budget = view.me.credits * 0.5;
+  const orders: Order[] = [];
+
+  const systems = view.me.ownedSystemIds
+    .map((id) => view.galaxy.system(id))
+    .sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a));
+
+  const tryUpgrade = (
+    sys: System,
+    track: "mining" | "habitat" | "power",
+    level: number,
+    raw: "metals" | "silicates" | "helium3",
+    creditBase: number,
+    rawBase: number,
+  ): void => {
+    if (level >= inf.cap) return;
+    const factor = level + 1; // cost scales with the level being reached
+    const cost = creditBase * factor;
+    const need = rawBase * factor;
+    if (budget < cost || stock[raw] < need) return;
+    budget -= cost;
+    stock[raw] -= need;
+    orders.push({ kind: "upgradeInfrastructure", systemId: sys.id, track });
+  };
+
+  for (const sys of systems) {
+    if (orders.length >= 5) break; // a handful of upgrades per turn is plenty
+    if (grossYieldValue(view, sys) > 0) {
+      tryUpgrade(sys, "mining", sys.miningRigs, "metals", inf.miningCreditCost, inf.miningMetalsCost);
+    }
+    if (sys.populationStage !== "outpost") {
+      tryUpgrade(sys, "habitat", sys.habitats, "silicates", inf.habitatCreditCost, inf.habitatSilicatesCost);
+    }
+    if (Object.values(sys.processors).some((n) => n > 0)) {
+      tryUpgrade(sys, "power", sys.powerGrid, "helium3", inf.powerCreditCost, inf.powerHelium3Cost);
+    }
+  }
+  return orders;
 }
 
 /** Mutable per-bot memory so a financier locks onto one acquisition target. */
@@ -195,8 +411,9 @@ function weakestRival(view: PlayerView): PlayerView["corporations"][number] | un
  */
 export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
   const orders: Order[] = [];
-  // Merchant/privateer income: haunt the busiest lane.
+  // Merchant/privateer income: haunt the busiest lane, and sabotage rival production.
   orders.push(...planRaid(view, { fundFactor: 1.1 }));
+  orders.push(...maybeSabotage(view));
   // Comeback: buy toward control of a locked target charter when flush.
   const target = lockTarget(view, state);
   if (target && view.me.credits > target.sharePrice * 5) {
@@ -235,9 +452,10 @@ export function maybeResearchRange(view: PlayerView): Order[] {
   return [];
 }
 
-/** Gross per-turn export value of a system priced at base. */
+/** Gross full-development export value of a system priced at base (potential, not current). */
 function grossYieldValue(view: PlayerView, sys: System): number {
-  return RESOURCES.reduce((s, r) => s + sys.yields[r] * view.config.tuning.basePrices[r], 0);
+  const pot = potentialYields(sys);
+  return RESOURCES.reduce((s, r) => s + pot[r] * view.config.tuning.basePrices[r], 0);
 }
 
 /** Claim the best unclaimed inner-ring system if affordable (second/third claim). */
@@ -379,7 +597,7 @@ export function maybeBuildPlatforms(view: PlayerView): Order[] {
   const ranked = view.me.ownedSystemIds
     .map((id) => view.galaxy.system(id))
     // Baseline guard: one platform per system, two on exposed frontier worlds.
-    .map((s) => ({ sys: s, want: s.yields.rareIsotopes > 0 ? 2 : 1 }))
+    .map((s) => ({ sys: s, want: potentialYields(s).rareIsotopes > 0 ? 2 : 1 }))
     .filter((e) => e.sys.platforms < Math.min(e.want, view.config.tuning.platformCap))
     .map((e) => ({ sys: e.sys, score: routeExposureScore(view, e.sys) + grossYieldValue(view, e.sys) / 50 }))
     .sort((a, b) => b.score - a.score);
@@ -429,7 +647,7 @@ export function maybeBuildWarships(view: PlayerView): Order[] {
         value: grossYieldValue(view, s),
         count: escorts.length,
         bestTier,
-        desired: s.yields.rareIsotopes > 0 ? 3 : 2,
+        desired: potentialYields(s).rareIsotopes > 0 ? 3 : 2,
       };
     })
     .filter((e) => e.value > 0 && (e.count < e.desired || e.bestTier < tier))

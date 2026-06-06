@@ -18,6 +18,23 @@ export {
 } from "./config.js";
 export { Galaxy } from "./galaxy.js";
 export {
+  effectiveYields,
+  potentialYields,
+  siteOutput,
+  siteIsProducing,
+  extractorEfficiency,
+  EXTRACTOR_CAP,
+  systemHasHabitableBody,
+  stellarOutputMult,
+  systemSeed,
+  sitesFromBodies,
+  sitesFromYields,
+  generateSystemBodies,
+  starLabel,
+  planetLabel,
+  type BodyGenOptions,
+} from "./bodies.js";
+export {
   generateProceduralScenario,
   PROCEDURAL_SCENARIO_ID,
   type ProceduralOptions,
@@ -39,6 +56,7 @@ export {
   gamePhase,
   type ClientState,
   type ClientSystem,
+  type ClientSite,
   type ClientRoute,
   type ClientCorp,
   type ClientConvoy,

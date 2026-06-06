@@ -229,6 +229,20 @@ input, select { font-family: inherit; }
 .yield-row { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.7rem 0; }
 .yield-pill { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.68rem; padding: 0.15rem 0.45rem; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line-soft); }
 .yield-pill i, .stock-cell i, .sys-card__stock i, .board__dot, .report-market__cell i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+/* System composition (Section 21 body-driven economy) */
+.composition { margin: 0.7rem 0; }
+.composition__title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-dim); margin: 0 0 0.4rem; }
+.composition__list { display: flex; flex-direction: column; gap: 0.35rem; }
+.site-row { padding: 0.4rem 0.5rem; border-radius: 0.5rem; background: var(--panel-2); border: 1px solid var(--line-soft); }
+.site-row--offline { opacity: 0.55; }
+.site-row__body { display: flex; align-items: center; gap: 0.45rem; }
+.site-row__text { display: flex; flex-direction: column; line-height: 1.2; }
+.site-row__text strong { font-size: 0.78rem; }
+.site-row__sub { font-size: 0.62rem; color: var(--ink-dim); }
+.site-row__ext { margin-left: auto; }
+.site-row__actions { display: flex; gap: 0.35rem; margin-top: 0.4rem; }
+.sys-card__star { font-size: 0.62rem; color: var(--ink-dim); margin-top: 0.15rem; }
+
 .pop-meter { margin: 0.7rem 0; }
 .pop-meter__head { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; margin-bottom: 0.3rem; }
 .stock-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.35rem; margin: 0.6rem 0; }

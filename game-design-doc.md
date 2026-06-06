@@ -242,18 +242,75 @@ Claims become part of a corporation's valuation. If a corporation is acquired, i
 
 ## Resources & Production
 
-Keep the resource model small. The depth comes from scarcity, location, transit time, and price movement, not a giant crafting tree.
+Keep the chains **short but tightly coupled**, not a sprawling crafting tree. The depth comes from scarcity, location, transit time, price movement, and the fact that a few raw feedstocks each feed several manufactured goods — so a squeeze on one raw ripples across many markets.
 
-| Resource | Role | Strategic Notes |
+Commodities sit in three tiers. **Raw** commodities are extracted from a system's yields; **manufactured** commodities are produced by Processor buildings (see Section 07b). Antimatter remains the apex deep-frontier raw.
+
+| Resource | Tier | Role | Strategic Notes |
+| --- | --- | --- | --- |
+| ICE / WATER | raw | Life support; feedstock for food and fuel. | Common but constantly consumed; the broadly-coupled "water" of the economy. |
+| METALS | raw | Structural feedstock for alloys. | Often overproduced early, making price crashes likely. |
+| SILICATES | raw | Semiconductor/optical feedstock for polymers and components. | The newest raw; gates the advanced manufacturing tier. |
+| HELIUM-3 | raw | Energy feedstock: fuels reactors (power) and feeds fuel + alloys. | Double-duty energy backbone; energy producers can squeeze many markets at once. |
+| RARE ISOTOPES | raw | High-tech catalyst for components and advanced hulls. | Low-volume, high-value. Ideal raid target and monopoly resource. |
+| ANTIMATTER | raw | Premium input to capital (Range 4+) hulls. | Ultra-high value, abyss-only — the fattest raid target and monopoly prize. |
+| FOOD | mfg | Feeds growing colonies (`ice → food`, hydroponics). | Garden worlds and hydroponics make local food strategically important. |
+| FUEL | mfg | Burned by the fleet each turn; feeds polymers (`ice + helium3 → fuel`). | Recurring fleet demand keeps a live market. |
+| ALLOYS | mfg | Required to construct every building and ship hull (`metals + helium3 → alloys`). | The "steel bottleneck": construction stalls without alloys (or the credits to buy them). |
+| POLYMERS | mfg | Intermediate feeding components (`silicates + fuel → polymers`). | Couples the silicate and fuel chains into the advanced tier. |
+| COMPONENTS | mfg | Required for ships and advanced infrastructure (`alloys + polymers + rareIsotopes → components`). | The top of the tree; the deepest, most logistically demanding chain. |
+| CREDITS | — | Universal currency for claims, ships, debt, market buys, privateers. | Cash timing matters because exports pay only after arrival. |
+
+**Production location.** Resources are stored locally in the system that produced them. The player does not own one global pile of Ice; they own local stockpiles distributed across systems.
+
+`SECTION 07b`
+
+
+## Processing & Production Chains
+
+Extraction fills a system's stockpile with raws; **Processor** modules convert them into manufactured goods on the same system. A processor runs one **recipe** each turn — consuming inputs from the local stockpile and producing outputs into it — pro-rated by its limiting input (a half-fed processor makes half its output).
+
+```
+ice ──────┬──► food
+          └──► fuel ──────────► polymers ──┐
+helium3 ──┬──► fuel                        │
+          └──► alloys ─────────────────────┼──► components
+metals ───────► alloys                     │        ▲
+silicates ────► polymers ──────────────────┘        │
+rareIsotopes ───────────────────────────────────────┘
+```
+
+Recipes run in dependency order within a turn, so a tier-1 output (e.g. alloys) is available to a tier-2/3 recipe (e.g. components) the **same** turn — the same way hydroponics consumes ice extracted that turn. Because production resolves before market clearing (Section 20), processors always get first claim on a system's raws; only the leftover is sold.
+
+**Power (a non-tradable utility).** Power is never stored, shipped, or traded. Each turn a system's power is recomputed as capacity vs. draw: every processor draws power, **Reactor** modules supply it (burning helium3 as fuel) on top of a small free baseline. If draw exceeds capacity the whole system **browns out** — every processor throttles by the same `capacity / draw` factor until more reactors are built. So materials and credits gate *building* a factory; power gates *running* it.
+
+**Required inputs (demand sinks).** Manufactured goods are not optional exports — core actions consume them, drawn from the corp's stockpiles first with any shortfall **bought from the exchange at market price** (so production is never a hard wall, only a cost that rises with scarcity):
+
+- **Construction** (every building and ship hull) consumes **alloys**.
+- **Ships** consume **components** (and still rareIsotopes/antimatter for higher hulls).
+- **Trade Depots** additionally consume **components**.
+- **Fleet operation** burns **fuel** every turn.
+
+*Balance status:* recipe ratios, prices, power, and bill sizes are tuned via the headless simulator and treated as seeds. A known follow-up is routing required-input purchases through the order book so manufactured-good prices respond to that demand directly (today the bills buy at the current price without moving it), and giving bots the logistics to build the tier-3 components chain rather than market-sourcing it.
+
+`SECTION 07c`
+
+
+## System Infrastructure Upgrades
+
+The raw feedstocks — metals, silicates, helium3 — are extracted in bulk and tend to overproduce. Beyond feeding processors, each owned system can sink them into **upgrade tracks** (raw drawn from the corp's stockpiles first, market shortfall bought). Each track caps at a few levels; the cost scales with the level reached (level L→L+1 costs the base × (L+1)).
+
+| Track | Raw consumed | Effect per level |
 | --- | --- | --- |
-| ICE / WATER | Life support, fuel feedstock, basic frontier supply. | Common but constantly consumed. Close ice systems are safe income; distant ice systems support frontier clusters. |
-| METALS | Construction, hulls, depots, claims, basic infrastructure. | Often overproduced early, making price crashes likely. |
-| HELIUM-3 | Power, reactors, advanced industry, ship operation. | Strategic chokepoint. Energy producers can squeeze the market. |
-| RARE ISOTOPES | High-end technology, advanced ships, components, late-game leverage. | Low-volume, high-value exports. Ideal raid target and monopoly resource. |
-| FOOD | Feeds growing colonies and keeps populated systems stable. | Early food can be imported from humanity; midgame food production makes garden worlds and hydroponics strategically important. |
-| CREDITS | Universal currency for claims, ships, debt, licenses, market buys, and privateers. | Cash timing matters because exports pay only after arrival. |
+| **Mining Rigs** | metals | fortification: +raid defense and lower system upkeep |
+| **Habitats** | silicates | faster population growth + higher tax |
+| **Power Grid** | helium3 | +power capacity (a cheaper, permanent alternative to reactors) |
 
-**Production location**Resources are stored locally in the system that produced them. The player does not own one global pile of Ice; they own local stockpiles distributed across systems.
+All three are **pure sinks**: they consume a raw without adding raw supply. (An earlier design boosted extraction yields with Mining Rigs, but the sim showed that *increased* supply — working against the very raw-overproduction it was meant to absorb — and amplified the run-away leader, so the metals track was switched to fortification.)
+
+This gives the overproduced raws a use and a per-system progression layer.
+
+*Balance status:* upgrade costs/effects are seeds tuned via the headless simulator. The upgrades are a strong mid-game sink while systems have headroom; durably lifting the raw *market floor* across the whole game is a separate extraction-rate question.
 
 
 `SECTION 08`

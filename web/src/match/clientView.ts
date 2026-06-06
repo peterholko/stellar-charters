@@ -76,6 +76,24 @@ export function reconstructView(state: ClientState): PlayerView {
     sys.populationProgress = cs.populationProgress ?? 0;
     sys.unrest = cs.unrest ?? 0;
     if (cs.stockpile) sys.stockpile = cs.stockpile;
+    // Overlay the server's (fogged) extraction sites + star (Section 21). The rebuilt galaxy
+    // has no deposits of its own (bodies aren't shipped), so these are the source of truth.
+    if (cs.starType) sys.bodies = { starType: cs.starType, planets: [], asteroidBelts: [] };
+    sys.sites = cs.sites.map((cse) => ({
+      key: cse.key,
+      bodyKind: cse.bodyKind,
+      bodyType: cse.bodyType,
+      bodyLabel: cse.bodyLabel,
+      orbit: cse.orbit,
+      habitable: cse.habitable,
+      resource: cse.resource,
+      richness: cse.richness ?? 0,
+      reservesRemaining: cse.reservesRemaining,
+      accessibility: cse.accessibility,
+      extractorLevel: cse.extractorLevel,
+      prospected: cse.prospected,
+      disabledUntil: cse.disabledUntil,
+    }));
   }
 
   for (const cr of state.routes) {

@@ -13,9 +13,10 @@
  * from the gameplay Rng (which is seeded from the same number), so spatial layout and in-game
  * randomness never alias each other.
  */
+import { generateSystemBodies, type BodyGenOptions } from "./bodies.js";
 import type { Scenario, ScenarioRoute, ScenarioSystem } from "./config.js";
 import { Rng } from "./rng.js";
-import type { RangeTier, Stockpile, SystemRegion } from "./types.js";
+import type { RangeTier, Resource, SystemRegion } from "./types.js";
 
 export const PROCEDURAL_SCENARIO_ID = "procedural-atlas-v1";
 
@@ -40,13 +41,20 @@ const SYSTEM_NAMES = [
 const FRONTIER_SUFFIXES = ["Deep", "Reach", "Expanse", "Drift", "Verge", "Shoals"];
 const ABYSS_SUFFIXES = ["Abyss", "Void", "Maw", "Rift", "Hollow", "Gyre"];
 
-/** Core resource archetypes (basics only — no rare isotopes or antimatter in the core). */
-const CORE_PROFILES: { yields: Partial<Stockpile>; claimCost: number; upkeep: number }[] = [
-  { yields: { ice: 12, metals: 2 }, claimCost: 1200, upkeep: 40 },
-  { yields: { metals: 14, ice: 2 }, claimCost: 1100, upkeep: 40 },
-  { yields: { helium3: 8, ice: 2 }, claimCost: 1800, upkeep: 55 },
-  { yields: { food: 10, ice: 3 }, claimCost: 1500, upkeep: 50 },
-  { yields: { ice: 4, metals: 4, helium3: 2 }, claimCost: 1400, upkeep: 45 },
+/**
+ * Core archetypes (basics only — no rare isotopes or antimatter in the core). Under the
+ * body-driven model (Section 21) the `primary` raw is *guaranteed* to appear among the system's
+ * generated deposits, which keeps every basic resource (incl. silicates) reachable somewhere in
+ * the core; the rest of the system's deposits emerge from its star + planets. `primary`
+ * undefined = a varied "mixed" world with no guaranteed raw.
+ */
+const CORE_PROFILES: { primary?: Resource; claimCost: number; upkeep: number }[] = [
+  { primary: "ice", claimCost: 1200, upkeep: 40 },
+  { primary: "metals", claimCost: 1100, upkeep: 40 },
+  { primary: "helium3", claimCost: 1800, upkeep: 55 },
+  { primary: "food", claimCost: 1500, upkeep: 50 },
+  { primary: "silicates", claimCost: 1250, upkeep: 42 },
+  { primary: undefined, claimCost: 1400, upkeep: 45 },
 ];
 
 /**
@@ -55,19 +63,21 @@ const CORE_PROFILES: { yields: Partial<Stockpile>; claimCost: number; upkeep: nu
  * the band, the longer (and higher-range) the tunnels that reach into it.
  */
 const BANDS: Record<Exclude<SystemRegion, "hub">, [number, number]> = {
-  core: [220, 600],
-  frontier: [680, 1100],
-  abyss: [1180, 1700],
+  core: [240, 820],
+  frontier: [920, 1340],
+  abyss: [1460, 2000],
 };
 
 const SPIRAL_K = 0.0042; // radians of arm twist per world unit of radius
-const MIN_SEPARATION = 72; // relaxation target spacing between systems
+const MIN_SEPARATION = 104; // relaxation target spacing between systems
 const RELAX_ITERS = 48;
-const DIST_PER_TURN = 520; // world units that map to one turn of transit (scaled to the wider map)
+const DIST_PER_TURN = 600; // world units that map to one turn of transit (scaled to the wider map)
 
 interface Placed {
   sys: ScenarioSystem;
   region: SystemRegion;
+  /** How to generate this system's bodies + deposits (Section 21); set during placement. */
+  gen?: BodyGenOptions;
 }
 
 /** Build the full deterministic procedural scenario for a seed + player count. */
@@ -105,9 +115,10 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
     },
   });
 
-  // Core profiles: a shuffled order so every map varies, but all five archetypes appear
-  // (coreCount >= 8 > 5) which keeps every basic resource available somewhere in the core.
-  const profileOrder = rng.shuffle([0, 1, 2, 3, 4]);
+  // Core profiles: a shuffled order so every map varies, but all six archetypes appear
+  // (coreCount >= 24 > 6) which keeps every basic resource (incl. silicates) available
+  // somewhere in the core.
+  const profileOrder = rng.shuffle([0, 1, 2, 3, 4, 5]);
 
   for (let i = 0; i < coreCount; i++) {
     const profile = CORE_PROFILES[profileOrder[i % profileOrder.length]!]!;
@@ -115,10 +126,14 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
     const id = `s${i}`;
     placed.push({
       region: "core",
+      // Habitability is naturally scarce (only some worlds are gardens) — this keeps
+      // population/tax concentrated rather than universal. Each corp's *home* system is made
+      // habitable for fairness by the engine at assignment time (Section 21).
+      gen: { region: "core", primaryResource: profile.primary },
       sys: {
         id,
         name: names.next("core"),
-        yields: profile.yields,
+        yields: {},
         claimCost: jitterInt(rng, profile.claimCost, 0.08),
         upkeep: jitterInt(rng, profile.upkeep, 0.1),
         defense: 2,
@@ -132,10 +147,11 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
     const { x, y } = spiralPoint(rng, "frontier", f, frontierCount, armBase, armCount);
     placed.push({
       region: "frontier",
+      gen: { region: "frontier", primaryResource: "rareIsotopes" },
       sys: {
         id: `f${f}`,
         name: names.next("frontier"),
-        yields: { rareIsotopes: rng.int(4, 6), metals: rng.int(2, 3) },
+        yields: {},
         claimCost: jitterInt(rng, 1550, 0.1),
         upkeep: jitterInt(rng, 70, 0.12),
         defense: 1,
@@ -149,10 +165,11 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
     const { x, y } = spiralPoint(rng, "abyss", d, abyssCount, armBase, armCount);
     placed.push({
       region: "abyss",
+      gen: { region: "abyss" },
       sys: {
         id: `d${d}`,
         name: names.next("abyss"),
-        yields: { antimatter: rng.int(2, 4), rareIsotopes: rng.int(1, 2) },
+        yields: {},
         claimCost: jitterInt(rng, 2600, 0.1),
         upkeep: jitterInt(rng, 110, 0.12),
         defense: 1,
@@ -165,6 +182,15 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
   relax(placed);
 
   const routes = buildRoutes(rng, placed);
+
+  // Bodies pass (Section 21): generate each system's star + planets + belts + deposits on a
+  // decorrelated stream, after the layout is final, so positions/routes are unaffected by the
+  // (variable) number of body draws.
+  const bodyRng = new Rng((seed ^ 0x5bd1e995) >>> 0);
+  for (const p of placed) {
+    if (!p.gen) continue;
+    p.sys.bodies = generateSystemBodies(bodyRng, p.gen);
+  }
 
   const bots = Array.from({ length: Math.max(players, 1) }, () =>
     rng.pick(["miner", "raider", "balanced"]),

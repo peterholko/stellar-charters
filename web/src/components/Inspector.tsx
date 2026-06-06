@@ -1,4 +1,4 @@
-import { canRaidRoute, raidStrength, type PlayerView } from "@engine";
+import { EXTRACTOR_CAP, canRaidRoute, raidStrength, type PlayerView, type System } from "@engine";
 import { store, type Selection } from "../match/store";
 import {
   archetypeLabel,
@@ -8,8 +8,11 @@ import {
   resourceLabels,
   routeRisk,
   sizeBucket,
+  starTypeColor,
+  starTypeLabel,
+  stellarNote,
   stockpileValue,
-  sumYields,
+  sumPotential,
   systemArchetype,
 } from "../match/format";
 import { RESOURCES } from "@engine";
@@ -165,22 +168,32 @@ export function Inspector({
         <p className="hint">The Wormhole Hub hosts the Galactic Exchange. It is Authority-protected — it cannot be claimed or raided.</p>
       ) : (
         <>
-          <p className="inspector__arch">{archetypeLabel[arch]}</p>
+          <p className="inspector__arch">
+            {archetypeLabel[arch]}
+            {sys.bodies?.starType && (
+              <>
+                {" · "}
+                <span style={{ color: starTypeColor[sys.bodies.starType] }}>
+                  {starTypeLabel[sys.bodies.starType]}
+                </span>
+              </>
+            )}
+          </p>
+          {sys.bodies?.starType && stellarNote(sys.bodies.starType) && (
+            <p className="hint">{stellarNote(sys.bodies.starType)}</p>
+          )}
           <dl className="kv">
-            <div><dt>Yield</dt><dd>{sumYields(sys.yields).toFixed(0)}/t</dd></div>
+            <div><dt>Potential</dt><dd>{sumPotential(sys).toFixed(0)}/t</dd></div>
             <div><dt>Upkeep</dt><dd>{formatCr(sys.upkeep)}/t</dd></div>
             {!open && <div><dt>Population</dt><dd>{populationLabel[sys.populationStage]}</dd></div>}
             <div><dt>Defense</dt><dd>{(sys.defense + sys.platforms * t.platformDefense + (sys.hasDepot ? t.depotDefenseBonus : 0)).toFixed(0)}</dd></div>
             {open && <div><dt>Claim cost</dt><dd>{formatCr(sys.claimCost)}</dd></div>}
           </dl>
 
-          <div className="yield-row">
-            {RESOURCES.filter((r) => sys.yields[r] > 0).map((r) => (
-              <span key={r} className="yield-pill">
-                <ResourceIcon resource={r} size={16} /> {resourceLabels[r]} +{sys.yields[r]}
-              </span>
-            ))}
-          </div>
+          <SystemComposition sys={sys} canBuild={mine && !view.me.isFreeOperator} turn={view.turn} assayCost={t.assayCost} />
+          {!mine && (
+            <RivalSabotage view={view} humanCorpId={humanCorpId} sys={sys} />
+          )}
 
           {mine && (
             <>
@@ -241,5 +254,92 @@ export function Inspector({
         </>
       )}
     </Panel>
+  );
+}
+
+/** Per-body deposit list (Section 21): what the system carries, what's worked, and the
+ *  extractor/assay actions to develop it. */
+function SystemComposition({ sys, canBuild, turn, assayCost }: { sys: System; canBuild: boolean; turn: number; assayCost: number }) {
+  if (sys.sites.length === 0) return null;
+  const sites = [...sys.sites].sort((a, b) => a.orbit - b.orbit || a.resource.localeCompare(b.resource));
+  return (
+    <div className="composition">
+      <h4 className="composition__title">System composition</h4>
+      <div className="composition__list">
+        {sites.map((site) => {
+          const offline = site.disabledUntil > turn;
+          const dry = site.reservesRemaining !== null && site.reservesRemaining <= 0;
+          const worked = site.extractorLevel > 0;
+          const reserveStr =
+            site.reservesRemaining === null
+              ? "renewable"
+              : site.prospected
+              ? `${Math.round(site.reservesRemaining)} left`
+              : "reserves ?";
+          return (
+            <div key={site.key} className={`site-row${offline ? " site-row--offline" : ""}`}>
+              <div className="site-row__body">
+                <ResourceIcon resource={site.resource} size={16} />
+                <div className="site-row__text">
+                  <strong>{resourceLabels[site.resource]}</strong>
+                  <span className="site-row__sub">
+                    {site.bodyLabel} · {site.prospected ? `rich ${site.richness}` : "unsurveyed"} · {reserveStr}
+                  </span>
+                </div>
+                <span className="site-row__ext">
+                  {offline ? <Badge tone="negative">Offline</Badge>
+                    : dry ? <Badge tone="neutral">Depleted</Badge>
+                    : worked ? <Badge tone="accent">Lv {site.extractorLevel}/{EXTRACTOR_CAP}</Badge>
+                    : <Badge tone="neutral">Unworked</Badge>}
+                </span>
+              </div>
+              {canBuild && (
+                <div className="site-row__actions">
+                  {site.extractorLevel < EXTRACTOR_CAP && !dry && (
+                    <ActionButton
+                      icon="systems"
+                      onClick={() => store.stage({ kind: "buildExtractor", systemId: sys.id, siteKey: site.key })}
+                    >
+                      {worked ? "Deepen" : "Work"}
+                    </ActionButton>
+                  )}
+                  {!site.prospected && (
+                    <ActionButton
+                      icon="radar"
+                      title={`Assay · ${formatCr(assayCost)}`}
+                      onClick={() => store.stage({ kind: "assay", systemId: sys.id, siteKey: site.key })}
+                    >
+                      Assay
+                    </ActionButton>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Sabotage controls shown on a rival-held system (Section 21 economic warfare). */
+function RivalSabotage({ view, humanCorpId, sys }: { view: PlayerView; humanCorpId: string; sys: System }) {
+  if (sys.owner === null || sys.owner === humanCorpId) return null;
+  const worked = sys.sites.filter((s) => s.extractorLevel > 0 && s.disabledUntil <= view.turn);
+  if (worked.length === 0) return null;
+  const hasForce = view.me.ships.some((s) => s.raider) || view.me.privateers.length > 0;
+  const target = [...worked].sort((a, b) => b.richness - a.richness)[0]!;
+  return (
+    <div className="action-row">
+      <ActionButton
+        icon="crosshair"
+        variant="danger"
+        disabled={!hasForce}
+        title={hasForce ? "Knock this system's top extractor offline" : "Need a raider or privateer in range"}
+        onClick={() => store.stage({ kind: "sabotage", systemId: sys.id, siteKey: target.key })}
+      >
+        Sabotage {resourceLabels[target.resource]}
+      </ActionButton>
+    </div>
   );
 }

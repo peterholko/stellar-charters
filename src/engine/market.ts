@@ -7,7 +7,7 @@
  * liquidity, so routine market orders fill unless the player set a strict price cap.
  */
 import type { Tuning } from "./config.js";
-import { RESOURCES, type Resource } from "./types.js";
+import { emptyStockpile, RESOURCES, type Resource } from "./types.js";
 
 export interface MarketFill {
   order: ClearableOrder;
@@ -85,7 +85,7 @@ export class Market {
 }
 
 function zero(): Record<Resource, number> {
-  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
+  return emptyStockpile();
 }
 
 function clamp(x: number, lo: number, hi: number): number {

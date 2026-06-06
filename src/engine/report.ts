@@ -62,6 +62,14 @@ export type TurnEvent =
       systemId: string;
     }
   | {
+      type: "sabotage";
+      attackerId: string;
+      defenderId: string;
+      systemId: string;
+      resource: Resource;
+      success: boolean;
+    }
+  | {
       type: "acquisition";
       acquirerId: string;
       targetId: string;

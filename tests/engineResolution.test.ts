@@ -20,8 +20,10 @@ class SellerBot implements Bot {
 describe("engine resolution order", () => {
   it("defers convoy settlement to a later turn (no same-turn chaining)", () => {
     // Single seller-only player (zero upkeep): credit changes come only from deferred
-    // sale payouts. Systems are seeded at start, so production begins on turn 1.
-    const config = { ...tinyScenario(1, 1), turns: 6 };
+    // sale payouts. Systems are seeded at start, so production begins on turn 1. Fleet fuel
+    // upkeep (Section 07b) is zeroed so the only per-turn credit movement is sale settlement.
+    const base = tinyScenario(1, 1);
+    const config = { ...base, turns: 6, tuning: { ...base.tuning, fuelPerShipPerTurn: 0 } };
     const registry = new Map<string, BotFactory>([["miner", () => new SellerBot()]]);
     const engine = new Engine(config, 0, registry);
     const metrics = engine.run();

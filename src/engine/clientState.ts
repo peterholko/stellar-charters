@@ -10,11 +10,14 @@ import type { Engine } from "./engine.js";
 import type { TurnReport } from "./report.js";
 import {
   RESOURCES,
+  type BodyKind,
+  type PlanetType,
   type PopulationStage,
   type Privateer,
   type RangeTier,
   type Resource,
   type Ship,
+  type StarType,
   type Stockpile,
   type SystemPosition,
 } from "./types.js";
@@ -30,10 +33,37 @@ export interface ClientPlayer {
   submitted: boolean;
 }
 
+/**
+ * One extraction site as seen by a client (Section 21 fog of war). Operational state (what is
+ * being worked, what's offline) is public; `richness` is hidden until the deposit is surveyed
+ * (prospected), and `reservesRemaining` (depletion intel) is owner-only.
+ */
+export interface ClientSite {
+  key: string;
+  bodyKind: BodyKind;
+  bodyType: PlanetType | "belt" | "star";
+  bodyLabel: string;
+  orbit: number;
+  habitable: boolean;
+  resource: Resource;
+  accessibility: number;
+  extractorLevel: number;
+  disabledUntil: number;
+  prospected: boolean;
+  /** Revealed only once surveyed; null = unsurveyed (richness unknown). */
+  richness: number | null;
+  /** Owner-only remaining reserves; null for rivals / renewable / unsurveyed. */
+  reservesRemaining: number | null;
+}
+
 export interface ClientSystem {
   id: string;
   name: string;
   yields: Stockpile;
+  /** The system's star (Section 21), for rendering + stellar forecasts. */
+  starType?: StarType;
+  /** Fogged extraction sites — the system's resource economy (Section 21). */
+  sites: ClientSite[];
   claimCost: number;
   upkeep: number;
   defense: number;
@@ -148,10 +178,28 @@ export function buildClientState(
 
   const systems: ClientSystem[] = g.allSystems().map((s) => {
     const mine = s.owner === humanCorpId || owned.has(s.id);
+    const sites: ClientSite[] = s.sites.map((site) => ({
+      key: site.key,
+      bodyKind: site.bodyKind,
+      bodyType: site.bodyType,
+      bodyLabel: site.bodyLabel,
+      orbit: site.orbit,
+      habitable: site.habitable,
+      resource: site.resource,
+      accessibility: site.accessibility,
+      extractorLevel: site.extractorLevel,
+      disabledUntil: site.disabledUntil,
+      prospected: site.prospected,
+      // Fog of war: richness known once surveyed; depletion intel is owner-only.
+      richness: site.prospected ? site.richness : null,
+      reservesRemaining: mine && site.prospected ? site.reservesRemaining : null,
+    }));
     return {
       id: s.id,
       name: s.name,
       yields: { ...s.yields },
+      starType: s.bodies?.starType,
+      sites,
       claimCost: s.claimCost,
       upkeep: s.upkeep,
       defense: s.defense,

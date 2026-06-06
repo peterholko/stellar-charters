@@ -1,4 +1,12 @@
-import { RESOURCES, type Resource, type Stockpile, type System } from "@engine";
+import {
+  RESOURCES,
+  potentialYields,
+  type PlanetType,
+  type Resource,
+  type StarType,
+  type Stockpile,
+  type System,
+} from "@engine";
 
 export const resourceLabels: Record<Resource, string> = {
   ice: "Ice",
@@ -83,14 +91,64 @@ export function dominantResource(yields: Stockpile): Resource {
   return RESOURCES.reduce((best, r) => (yields[r] > yields[best] ? r : best));
 }
 
-export function systemArchetype(sys: { id: string; yields: Stockpile }): SystemArchetype {
+/** A system's dominant resource derived from its deposits' full potential (Section 21). */
+export function systemDominant(sys: System): Resource {
+  return dominantResource(potentialYields(sys));
+}
+
+export function systemArchetype(sys: System): SystemArchetype {
   if (sys.id === "hub") return "hub";
-  const d = dominantResource(sys.yields);
-  if (d === "rareIsotopes") return "isotopes";
+  const d = systemDominant(sys);
+  if (d === "rareIsotopes" || d === "antimatter") return "isotopes";
   if (d === "metals") return "metals";
   if (d === "helium3") return "helium3";
   if (d === "food") return "garden";
   return "ice";
+}
+
+// ----- Star & planet taxonomy (Section 21) -----
+
+export const starTypeLabel: Record<StarType, string> = {
+  mainSequence: "Main-sequence star",
+  redDwarf: "Red dwarf",
+  redGiant: "Red giant",
+  blueGiant: "Blue giant",
+  whiteDwarf: "White dwarf",
+  neutronStar: "Neutron star",
+};
+
+/** Theme-neutral accent per star type (reads on any background). */
+export const starTypeColor: Record<StarType, string> = {
+  mainSequence: "#ffd66b",
+  redDwarf: "#ff9d6c",
+  redGiant: "#ff7a4d",
+  blueGiant: "#8fd0ff",
+  whiteDwarf: "#eef3ff",
+  neutronStar: "#c7d8ff",
+};
+
+export const planetTypeLabel: Record<PlanetType, string> = {
+  lava: "Lava world",
+  rocky: "Rocky world",
+  desert: "Desert world",
+  ocean: "Ocean world",
+  gasGiant: "Gas giant",
+  iceGiant: "Ice giant",
+  barren: "Barren world",
+};
+
+/** A short, forecastable description of a star's effect on output (Section 21 stellar dynamics). */
+export function stellarNote(star: StarType): string | null {
+  switch (star) {
+    case "neutronStar":
+      return "Pulses periodically spike rare-isotope / antimatter yield.";
+    case "redGiant":
+      return "Expanding star slowly scorches its ocean worlds (food declines late).";
+    case "redDwarf":
+      return "Flare star — extractors brown out on occasional turns.";
+    default:
+      return null;
+  }
 }
 
 export const archetypeLabel: Record<SystemArchetype, string> = {
@@ -135,6 +193,12 @@ export function stockpileValue(stockpile: Stockpile, prices: Record<Resource, nu
 
 export function sumYields(yields: Stockpile): number {
   return RESOURCES.reduce((sum, r) => sum + yields[r], 0);
+}
+
+/** A system's full-development yield potential (sum of all deposit richness, Section 21). */
+export function sumPotential(sys: System): number {
+  const p = potentialYields(sys);
+  return RESOURCES.reduce((sum, r) => sum + p[r], 0);
 }
 
 /** Approximate-size bucket for redacting rival convoy quantities (Section 11 fog of war). */

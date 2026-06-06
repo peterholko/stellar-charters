@@ -10,12 +10,16 @@ import {
   bidList,
   freeOperatorOrders,
   maybeBuildDepot,
+  maybeBuildExtractor,
   maybeBuildHydroponics,
   maybeBuildPlatforms,
+  maybeBuildProcessor,
+  maybeBuildReactor,
   maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
   maybeResearchRange,
+  maybeUpgradeInfrastructure,
   sellSurplus,
   valueSystem,
   type BotState,
@@ -33,6 +37,8 @@ export class MinerBot implements Bot {
     if (view.me.isFreeOperator) return freeOperatorOrders(view, this.state);
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
+    // Develop deposits first (Section 21): an undeveloped claim produces nothing.
+    orders.push(...maybeBuildExtractor(view));
     // Grow the local economy, then keep climbing the range-tech ladder.
     orders.push(...maybeExpand(view));
     orders.push(...maybeResearchRange(view));
@@ -40,6 +46,11 @@ export class MinerBot implements Bot {
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeBuildHydroponics(view));
+    // Refine raw output into manufactured goods (Section 07b): power first, then a processor.
+    orders.push(...maybeBuildReactor(view));
+    orders.push(...maybeBuildProcessor(view));
+    // Sink overproduced raws into system upgrades (Section 07c).
+    orders.push(...maybeUpgradeInfrastructure(view));
     // Cheap stationary platforms first, then mobile escort fleets.
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));

@@ -7,17 +7,39 @@
 
 /**
  * Resource economy (Section 07). Credits is tracked on the corporation, not in stockpiles.
- * Antimatter is the premium deep-frontier resource: ultra-high value, very low volume — the
- * monopoly prize and the fattest raid target, and the input to capital (Range 4+) hulls.
+ *
+ * Commodities sit in three tiers (Section 07b — Processing & Production Chains):
+ *  - Raw, extracted from system yields: ice, metals, silicates, helium3, rareIsotopes, antimatter.
+ *  - Manufactured by Processor buildings: food, fuel, alloys, polymers, components.
+ * The chains are short but tightly coupled (ice and helium3 each feed several products), so a
+ * squeeze on one feedstock ripples across many markets. Antimatter is the premium deep-frontier
+ * raw: ultra-high value, very low volume — the monopoly prize and the input to capital hulls.
+ * Power is NOT a resource: it is a non-tradable per-system utility (see System.reactors).
  */
-export type Resource = "ice" | "metals" | "helium3" | "rareIsotopes" | "food" | "antimatter";
+export type Resource =
+  | "ice"
+  | "metals"
+  | "silicates"
+  | "helium3"
+  | "rareIsotopes"
+  | "food"
+  | "fuel"
+  | "alloys"
+  | "polymers"
+  | "components"
+  | "antimatter";
 
 export const RESOURCES: readonly Resource[] = [
   "ice",
   "metals",
+  "silicates",
   "helium3",
   "rareIsotopes",
   "food",
+  "fuel",
+  "alloys",
+  "polymers",
+  "components",
   "antimatter",
 ];
 
@@ -25,7 +47,19 @@ export const RESOURCES: readonly Resource[] = [
 export type Stockpile = Record<Resource, number>;
 
 export function emptyStockpile(): Stockpile {
-  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
+  return {
+    ice: 0,
+    metals: 0,
+    silicates: 0,
+    helium3: 0,
+    rareIsotopes: 0,
+    food: 0,
+    fuel: 0,
+    alloys: 0,
+    polymers: 0,
+    components: 0,
+    antimatter: 0,
+  };
 }
 
 /** Population stages (Section 08). The 12-turn slice mostly lives at Outpost/Settlement. */
@@ -62,11 +96,133 @@ export interface SystemPosition {
   visualSeed: number;
 }
 
+/**
+ * Stellar classification (Section 21 — Star System Resource Model). The star a system orbits
+ * sets the habitable-zone geometry, biases which planets/deposits generate, and drives the
+ * time-varying stellar dynamics in production (red giants scorch inner worlds, neutron stars
+ * pulse, flare stars knock extractors offline).
+ */
+export type StarType =
+  | "mainSequence"
+  | "redDwarf"
+  | "redGiant"
+  | "blueGiant"
+  | "whiteDwarf"
+  | "neutronStar";
+
+export const STAR_TYPES: readonly StarType[] = [
+  "mainSequence",
+  "redDwarf",
+  "redGiant",
+  "blueGiant",
+  "whiteDwarf",
+  "neutronStar",
+];
+
+/** Planet taxonomy (Section 21). Drives which deposits a body carries and whether it can host life. */
+export type PlanetType =
+  | "lava"
+  | "rocky"
+  | "desert"
+  | "ocean"
+  | "gasGiant"
+  | "iceGiant"
+  | "barren";
+
+export const PLANET_TYPES: readonly PlanetType[] = [
+  "lava",
+  "rocky",
+  "desert",
+  "ocean",
+  "gasGiant",
+  "iceGiant",
+  "barren",
+];
+
+/**
+ * A single extractable resource concentration on one body (Section 21). The static, generated
+ * shape: `richness` is units/turn a maxed extractor pulls, `reserves` is the finite total
+ * (null = renewable and never depletes), `accessibility` (0..1) is how hard it is to work
+ * (gates the extractor investment / value).
+ */
+export interface Deposit {
+  resource: Resource;
+  richness: number;
+  reserves: number | null;
+  accessibility: number;
+}
+
+/** A planet orbiting the star, in orbital order (0 = innermost). */
+export interface Planet {
+  type: PlanetType;
+  /** Orbital slot, 0 = innermost; strictly increasing across a system's bodies + belts. */
+  orbit: number;
+  /** Sits within the star's habitable zone (gates native population growth, Section 21). */
+  habitable: boolean;
+  /** Deterministic per-body cosmetic variation for the renderer. */
+  visualSeed: number;
+  deposits: Deposit[];
+}
+
+/** A debris/ore belt; always placed between the inner rocky zone and the first gas giant. */
+export interface AsteroidBelt {
+  orbit: number;
+  deposits: Deposit[];
+}
+
+/** The astrophysical contents of a system (Section 21). Generated deterministically per seed. */
+export interface SystemBodies {
+  starType: StarType;
+  planets: Planet[];
+  asteroidBelts: AsteroidBelt[];
+  /** Exotic harvest from the star itself (neutron stars / white dwarfs only). */
+  starDeposits?: Deposit[];
+}
+
+/** Which kind of body a site sits on (for labels, habitability, and extractor rules). */
+export type BodyKind = "planet" | "belt" | "star";
+
+/**
+ * The mutable runtime form of a {@link Deposit}: a workable extraction site on a body
+ * (Section 21). The Galaxy expands each generated deposit (or legacy yield shortcut) into a
+ * site. `extractorLevel` 0 means unworked (no output); building extractors raises it.
+ * `reservesRemaining` depletes as the site is mined (null = renewable). `disabledUntil` is the
+ * first turn the site is online again after sabotage / a stellar outage. `prospected` is true
+ * once the owner has assayed it (knows exact richness/reserves; otherwise only a coarse hint).
+ */
+export interface ExtractionSite {
+  /** Stable key, e.g. "planet:2:metals", "belt:0:silicates", "star:antimatter". */
+  key: string;
+  bodyKind: BodyKind;
+  bodyType: PlanetType | "belt" | "star";
+  bodyLabel: string;
+  orbit: number;
+  /** True if this site sits on a habitable body. */
+  habitable: boolean;
+  resource: Resource;
+  richness: number;
+  reservesRemaining: number | null;
+  accessibility: number;
+  extractorLevel: number;
+  prospected: boolean;
+  /** Site is offline until this turn (sabotage / stellar event); 0 = online. */
+  disabledUntil: number;
+}
+
 export interface System {
   id: string;
   name: string;
-  /** Per-turn extraction yields by resource. */
+  /**
+   * Legacy/authoring shortcut: a flat per-turn extraction vector. When a scenario authors this
+   * (tests, hand-made maps), the Galaxy lowers it into always-on, infinite, fully-accessible
+   * extraction sites — so the flat model is the degenerate case of the body-driven economy
+   * (Section 21). Procedural maps leave this empty and author `bodies` instead.
+   */
   yields: Stockpile;
+  /** Generated astrophysical contents (Section 21); absent on legacy authored maps. */
+  bodies?: SystemBodies;
+  /** Runtime extraction sites — the live, mutable resource economy of this system (Section 21). */
+  sites: ExtractionSite[];
   claimCost: number;
   upkeep: number;
   populationStage: PopulationStage;
@@ -76,6 +232,16 @@ export interface System {
   unrest: number;
   /** Number of hydroponic modules built (each adds food production). */
   hydroponics: number;
+  /** Processor modules by recipe id (each runs one chain recipe per turn, Section 07b). */
+  processors: Record<string, number>;
+  /** Number of reactor modules built here (each adds power capacity, burns helium3). */
+  reactors: number;
+  /** Mining-rig upgrade level (metals-fed): raises this system's extraction yields (Section 07c). */
+  miningRigs: number;
+  /** Habitat upgrade level (silicates-fed): raises population growth and tax here (Section 07c). */
+  habitats: number;
+  /** Power-grid upgrade level (helium3-fed): adds local power capacity (Section 07c). */
+  powerGrid: number;
   /** Number of stationary defense platforms built here (each adds raid defense). */
   platforms: number;
   /** True if a Trade Depot has been built here (Section 12). */
@@ -275,9 +441,50 @@ export interface BuildHydroponicsOrder {
   systemId: string;
 }
 
+export interface BuildProcessorOrder {
+  kind: "buildProcessor";
+  systemId: string;
+  /** Id of the recipe (Tuning.recipes) this processor runs. */
+  recipeId: string;
+}
+
+export interface BuildReactorOrder {
+  kind: "buildReactor";
+  systemId: string;
+}
+
+export interface UpgradeInfrastructureOrder {
+  kind: "upgradeInfrastructure";
+  systemId: string;
+  /** Which raw-fed upgrade track to advance one level (Section 07c). */
+  track: "mining" | "habitat" | "power";
+}
+
 export interface BuildPlatformOrder {
   kind: "buildPlatform";
   systemId: string;
+}
+
+/** Build (or upgrade) the extractor working one of a system's deposits (Section 21). */
+export interface BuildExtractorOrder {
+  kind: "buildExtractor";
+  systemId: string;
+  /** ExtractionSite.key identifying the deposit to work. */
+  siteKey: string;
+}
+
+/** Survey one of an owned system's deposits to reveal its true richness/reserves (Section 21). */
+export interface AssayOrder {
+  kind: "assay";
+  systemId: string;
+  siteKey: string;
+}
+
+/** Knock a rival system's extractor offline for several turns (Section 21 economic warfare). */
+export interface SabotageOrder {
+  kind: "sabotage";
+  systemId: string;
+  siteKey: string;
 }
 
 export interface BuySharesOrder {
@@ -305,6 +512,12 @@ export type Order =
   | EscortOrder
   | BuildDepotOrder
   | BuildHydroponicsOrder
+  | BuildProcessorOrder
+  | BuildReactorOrder
+  | UpgradeInfrastructureOrder
   | BuildPlatformOrder
+  | BuildExtractorOrder
+  | AssayOrder
+  | SabotageOrder
   | BuySharesOrder
   | BorrowOrder;

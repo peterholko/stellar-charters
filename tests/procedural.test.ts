@@ -12,6 +12,17 @@ import { RESOURCES, type Resource } from "../src/engine/types.js";
 
 const PLAYER_COUNTS = [2, 4, 6, 8];
 
+/** The set of resources a generated system carries as deposits (across all its bodies). */
+function depositResources(sys: { bodies?: import("../src/engine/types.js").SystemBodies }): Set<Resource> {
+  const out = new Set<Resource>();
+  const b = sys.bodies;
+  if (!b) return out;
+  for (const p of b.planets) for (const d of p.deposits) out.add(d.resource);
+  for (const belt of b.asteroidBelts) for (const d of belt.deposits) out.add(d.resource);
+  for (const d of b.starDeposits ?? []) out.add(d.resource);
+  return out;
+}
+
 function reachableFromHub(scenario: ReturnType<typeof generateProceduralScenario>): Set<string> {
   const adj = new Map<string, string[]>();
   for (const s of scenario.systems) adj.set(s.id, []);
@@ -106,15 +117,19 @@ describe("procedural generator — spacing", () => {
 });
 
 describe("procedural generator — resources by region", () => {
-  it("makes every resource available somewhere", () => {
+  it("makes every extractable resource available somewhere", () => {
+    // Manufactured goods (fuel/alloys/polymers/components) are produced by Processor modules,
+    // not extracted, so they intentionally never appear as system yields (Section 07b). Only
+    // the raw/extractable commodities must be reachable somewhere on the map.
+    const EXTRACTABLE: Resource[] = [
+      "ice", "metals", "silicates", "helium3", "rareIsotopes", "food", "antimatter",
+    ];
     const s = generateProceduralScenario({ seed: 314, players: 8 });
     const present = new Set<Resource>();
     for (const sys of s.systems) {
-      for (const r of RESOURCES) {
-        if ((sys.yields[r] ?? 0) > 0) present.add(r);
-      }
+      for (const r of depositResources(sys)) present.add(r);
     }
-    for (const r of RESOURCES) expect(present.has(r)).toBe(true);
+    for (const r of EXTRACTABLE) expect(present.has(r)).toBe(true);
   });
 
   it("gates deep tunnels by range, scaling beyond the old Range-3 ceiling", () => {
@@ -139,12 +154,13 @@ describe("procedural generator — resources by region", () => {
       const s = generateProceduralScenario({ seed: players * 29, players });
       for (const sys of s.systems) {
         const region = sys.position!.region;
+        const res = depositResources(sys);
         if (region === "core") {
-          expect(sys.yields.rareIsotopes ?? 0).toBe(0);
-          expect(sys.yields.antimatter ?? 0).toBe(0);
+          expect(res.has("rareIsotopes")).toBe(false);
+          expect(res.has("antimatter")).toBe(false);
         }
-        if (region === "frontier") expect(sys.yields.rareIsotopes ?? 0).toBeGreaterThan(0);
-        if (region === "abyss") expect(sys.yields.antimatter ?? 0).toBeGreaterThan(0);
+        if (region === "frontier") expect(res.has("rareIsotopes")).toBe(true);
+        if (region === "abyss") expect(res.has("antimatter")).toBe(true);
       }
     }
   });

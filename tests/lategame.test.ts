@@ -46,13 +46,14 @@ describe("population & food (Section 08)", () => {
     expect(["colony", "city", "metropolis"]).toContain(gardenStage);
   });
 
-  it("stalls at settlement when the colony can only import food", () => {
-    // No local food: emergency imports keep it alive (no starvation) but it cannot grow on.
+  it("a home world without natural food still grows via its charter habitat dome (Section 21)", () => {
+    // Even a pure ice/metals home world is made habitable at assignment (the charter establishes
+    // a habitat dome + local food), so a native population can take root and grow.
     const dry = new Engine(loadScenario(oneSystem({ ice: 12, metals: 4 })), 1, noopRegistry());
     dry.run();
     const sys = dry.galaxy.system("s0");
-    expect(sys.populationStage).toBe("settlement");
-    expect(sys.unrest).toBeLessThan(0.5); // imports prevent runaway starvation
+    expect(["settlement", "colony", "city", "metropolis"]).toContain(sys.populationStage);
+    expect(sys.sites.some((s) => s.resource === "food")).toBe(true); // the dome's food source
   });
 });
 

@@ -11,12 +11,16 @@ import {
   financierOrders,
   freeOperatorOrders,
   maybeBuildDepot,
+  maybeBuildExtractor,
   maybeBuildHydroponics,
   maybeBuildPlatforms,
+  maybeBuildProcessor,
+  maybeBuildReactor,
   maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
   maybeResearchRange,
+  maybeUpgradeInfrastructure,
   planRaid,
   sellSurplus,
   valueSystem,
@@ -35,11 +39,17 @@ export class BalancedBot implements Bot {
     if (view.me.isFreeOperator) return freeOperatorOrders(view, this.state);
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
+    orders.push(...maybeBuildExtractor(view));
     orders.push(...maybeExpand(view));
     orders.push(...maybeResearchRange(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildHydroponics(view));
+    // Production chains (Section 07b): add power, then a processor that can be fed locally.
+    orders.push(...maybeBuildReactor(view));
+    orders.push(...maybeBuildProcessor(view));
+    // Sink overproduced raws into system upgrades (Section 07c).
+    orders.push(...maybeUpgradeInfrastructure(view));
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
 

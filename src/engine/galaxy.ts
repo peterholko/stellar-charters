@@ -6,6 +6,7 @@
  * must be charted. The Wormhole Hub is a special protected node.
  */
 import { normaliseYields, type GameConfig } from "./config.js";
+import { sitesFromBodies, sitesFromYields } from "./bodies.js";
 import { emptyStockpile, type RangeTier, type System, type WarpRoute } from "./types.js";
 
 export class Galaxy {
@@ -19,16 +20,27 @@ export class Galaxy {
     this.hubId = config.scenario.hubId;
 
     for (const s of config.scenario.systems) {
+      const yields = normaliseYields(s.yields);
+      // Body-driven systems (Section 21) carry generated deposits; legacy/authored maps lower
+      // their flat `yields` vector into always-on sites so the old model is the degenerate case.
+      const sites = s.bodies ? sitesFromBodies(s.bodies) : sitesFromYields(yields);
       this.systems.set(s.id, {
         id: s.id,
         name: s.name,
-        yields: normaliseYields(s.yields),
+        yields,
+        bodies: s.bodies,
+        sites,
         claimCost: s.claimCost,
         upkeep: s.upkeep,
         populationStage: s.populationStage ?? "outpost",
         populationProgress: 0,
         unrest: 0,
         hydroponics: 0,
+        processors: {},
+        reactors: 0,
+        miningRigs: 0,
+        habitats: 0,
+        powerGrid: 0,
         platforms: 0,
         hasDepot: false,
         defense: s.defense ?? 1,
