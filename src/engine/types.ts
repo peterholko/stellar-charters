@@ -8,7 +8,7 @@
 /**
  * Resource economy (Section 07). Credits is tracked on the corporation, not in stockpiles.
  * Antimatter is the premium deep-frontier resource: ultra-high value, very low volume — the
- * monopoly prize and the fattest raid target, and the input to capital (Range-4) hulls.
+ * monopoly prize and the fattest raid target, and the input to capital (Range 4+) hulls.
  */
 export type Resource = "ice" | "metals" | "helium3" | "rareIsotopes" | "food" | "antimatter";
 
@@ -36,8 +36,15 @@ export type PopulationStage =
   | "city"
   | "metropolis";
 
-/** Ship range tiers (Section 04). The slice uses Range 1 and Range 2. */
-export type RangeTier = 1 | 2 | 3 | 4;
+/**
+ * Ship range tiers (Section 04). The ladder climbs from inner-ring skiffs (Range 1) to
+ * deep-galaxy capital hulls (Range 8): higher tiers reach the longest, most exposed warp
+ * tunnels and field progressively stronger ships.
+ */
+export type RangeTier = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+/** The deepest range tier a corporation can research/field. */
+export const MAX_RANGE_TIER: RangeTier = 8;
 
 /** Spatial region a system belongs to, from the protected core out to the deep abyss. */
 export type SystemRegion = "hub" | "core" | "frontier" | "abyss";

@@ -49,17 +49,21 @@ const CORE_PROFILES: { yields: Partial<Stockpile>; claimCost: number; upkeep: nu
   { yields: { ice: 4, metals: 4, helium3: 2 }, claimCost: 1400, upkeep: 45 },
 ];
 
-/** Radial bands (world units, hub at the origin) for each region. */
+/**
+ * Radial bands (world units, hub at the origin) for each region. The shells are pushed well out
+ * so the larger galaxy spreads across deep space rather than clumping near the hub — the wider
+ * the band, the longer (and higher-range) the tunnels that reach into it.
+ */
 const BANDS: Record<Exclude<SystemRegion, "hub">, [number, number]> = {
-  core: [180, 320],
-  frontier: [370, 520],
-  abyss: [560, 720],
+  core: [220, 600],
+  frontier: [680, 1100],
+  abyss: [1180, 1700],
 };
 
 const SPIRAL_K = 0.0042; // radians of arm twist per world unit of radius
 const MIN_SEPARATION = 72; // relaxation target spacing between systems
-const RELAX_ITERS = 36;
-const DIST_PER_TURN = 200; // world units that map to one turn of transit
+const RELAX_ITERS = 48;
+const DIST_PER_TURN = 520; // world units that map to one turn of transit (scaled to the wider map)
 
 interface Placed {
   sys: ScenarioSystem;
@@ -73,11 +77,12 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
   // Decorrelate the layout stream from the gameplay Rng (which uses `seed` directly).
   const rng = new Rng((seed ^ 0x9e3779b1) >>> 0);
 
-  const coreCount = Math.max(players * 2, 8);
-  const frontierCount = Math.max(Math.round(players * 0.7), 3) + 1;
-  const abyssCount = Math.max(Math.round(players * 0.35), 2);
+  // ~3x the original counts: a big, sprawling galaxy with deep frontier/abyss to explore.
+  const coreCount = Math.max(players * 6, 24);
+  const frontierCount = Math.max(Math.round(players * 2), 8) + 1;
+  const abyssCount = Math.max(Math.round(players * 1.1), 6);
 
-  const armCount = rng.pick([2, 2, 3, 3, 3, 4]);
+  const armCount = rng.pick([3, 3, 4, 4, 4, 5]);
   const armBase = Array.from({ length: armCount }, (_, i) =>
     (Math.PI * 2 * i) / armCount + rng.float(-0.35, 0.35),
   );
@@ -266,19 +271,21 @@ function buildRoutes(rng: Rng, placed: Placed[]): ScenarioRoute[] {
     if (neighbours[1] && rng.chance(0.55)) add(ringRoute(rng, c, neighbours[1]!));
   }
 
-  // Uncharted frontier tunnels (Range 2): each rare-isotope world hangs off its nearest core
-  // world on an exposed, lightly-policed lane that must be surveyed before it can be used.
+  // Uncharted frontier tunnels (Range 2–4): each rare-isotope world hangs off its nearest core
+  // world on an exposed, lightly-policed lane that must be surveyed before it can be used. The
+  // deeper into the band the world sits, the higher the range needed to reach it.
   for (const f of frontier) {
     const anchor = nearest(f, core, 1)[0]!;
-    add(deepRoute(rng, anchor, f, "frontier", 2));
+    add(deepRoute(rng, anchor, f, "frontier"));
   }
 
-  // Uncharted abyss tunnels (Range 3): each antimatter world hangs off its nearest frontier
-  // world (or nearest core if no frontier exists) on the wildest lane in the galaxy.
+  // Uncharted abyss tunnels (Range 3–6): each antimatter world hangs off its nearest frontier
+  // world (or nearest core if no frontier exists) on the wildest lanes in the galaxy — the
+  // deepest demand capital-grade range to traverse. (Range 7–8 hulls stay a combat/escort flex.)
   const abyssAnchors = frontier.length > 0 ? frontier : core;
   for (const a of abyss) {
     const anchor = nearest(a, abyssAnchors, 1)[0]!;
-    add(deepRoute(rng, anchor, a, "abyss", 3));
+    add(deepRoute(rng, anchor, a, "abyss"));
   }
 
   return routes;
@@ -312,25 +319,56 @@ function ringRoute(rng: Rng, a: Placed, b: Placed): ScenarioRoute {
   };
 }
 
+/** Range windows per deep band — how high a ship's range must climb to reach into the band. */
+const DEEP_RANGE: Record<"frontier" | "abyss", [RangeTier, RangeTier]> = {
+  frontier: [2, 4],
+  abyss: [3, 6],
+};
+
+/** Transit-turn clamps per deep band (independent of the range tier — deeper bands cost more). */
+const DEEP_TRANSIT: Record<"frontier" | "abyss", [number, number]> = {
+  frontier: [1, 3],
+  abyss: [2, 5],
+};
+
 function deepRoute(
   rng: Rng,
   anchor: Placed,
   outer: Placed,
   band: "frontier" | "abyss",
-  range: RangeTier,
 ): ScenarioRoute {
   const f = band === "frontier";
+  const [minRange, maxRange] = DEEP_RANGE[band];
+  const [minT, maxT] = DEEP_TRANSIT[band];
   return {
     a: anchor.sys.id,
     b: outer.sys.id,
-    transitTime: transitFor(dist(anchor, outer), range, range + 1),
+    transitTime: transitFor(dist(anchor, outer), minT, maxT),
     stability: jitter(rng, f ? 0.5 : 0.4, 0.06),
     capacity: jitterInt(rng, f ? 20 : 12, 0.18),
     exposure: jitter(rng, f ? 0.85 : 0.94, f ? 0.06 : 0.04),
     authorityPresence: jitter(rng, f ? 0.12 : 0.06, 0.04),
-    requiredRange: range,
+    requiredRange: requiredRangeForDepth(outer, band, minRange, maxRange),
     charted: false,
   };
+}
+
+/**
+ * The range tier a deep tunnel demands, scaled by how far into its band the outer world sits:
+ * worlds at the inner edge need the band's minimum range, the deepest need its maximum. Uses the
+ * world's radius from the hub (positions are final by the time routes are built).
+ */
+function requiredRangeForDepth(
+  outer: Placed,
+  band: "frontier" | "abyss",
+  minRange: RangeTier,
+  maxRange: RangeTier,
+): RangeTier {
+  const [rMin, rMax] = BANDS[band];
+  const radius = Math.hypot(outer.sys.position!.x, outer.sys.position!.y);
+  const t = clamp01((radius - rMin) / (rMax - rMin));
+  const tier = Math.round(minRange + t * (maxRange - minRange));
+  return clampInt(tier, minRange, maxRange) as RangeTier;
 }
 
 // ----- small helpers -----

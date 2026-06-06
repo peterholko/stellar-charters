@@ -342,7 +342,7 @@ export class Engine {
             const cost =
               t.shipCost[order.rangeTier] + (order.raider ? t.raiderShipExtraCost : 0);
             // Higher-tier hulls require strategic resources — rare isotopes (Range 2+) and
-            // antimatter (capital Range-4 hulls) — drawn from the corp's own stockpiles
+            // antimatter (capital Range 4+ hulls) — drawn from the corp's own stockpiles
             // first, with any shortfall bought from the exchange. Controlling the frontier
             // makes advanced fleets cheaper; everyone else pays market price.
             const isoBill = this.strategicBill(corp, "rareIsotopes", t.shipIsotopeCost[order.rangeTier]);

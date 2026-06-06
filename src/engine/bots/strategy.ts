@@ -4,7 +4,7 @@
  * These are greedy, expected-value style helpers — enough varied behaviour to
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
-import { RESOURCES, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
+import { MAX_RANGE_TIER, RESOURCES, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
 import type { PlayerView } from "./bot.js";
 
 /** Resources a corporation exports. Outpost-stage systems consume no food, so a
@@ -211,16 +211,22 @@ export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
   return orders;
 }
 
-/** Earliest turn a corp will reach for each range tier (keeps fleets advancing). */
-const RANGE_MIN_TURN: Record<number, number> = { 2: 7, 3: 16, 4: 26 };
+/**
+ * Earliest turn a corp will reach for each range tier (keeps fleets advancing). The eight-tier
+ * ladder is paced to fit the 42-turn arc, so aggressive corps can climb to capital hulls late.
+ */
+const RANGE_MIN_TURN: Record<number, number> = {
+  2: 6, 3: 11, 4: 16, 5: 21, 6: 26, 7: 30, 8: 34,
+};
 
 /**
  * Climb the range-tech ladder one tier at a time (Section 04). Reaching Range 2 opens
- * the frontier; Range 3/4 unlock progressively stronger hulls so fleets don't stall.
+ * the frontier; Range 3–8 unlock progressively stronger hulls and the longest, deepest
+ * warp tunnels so fleets don't stall.
  */
 export function maybeResearchRange(view: PlayerView): Order[] {
   const next = (view.me.rangeTier + 1) as RangeTier;
-  if (next > 4) return [];
+  if (next > MAX_RANGE_TIER) return [];
   const cost = view.config.tuning.rangeResearchCost[next];
   const minTurn = RANGE_MIN_TURN[next] ?? 99;
   if (view.turn >= minTurn && view.me.credits > cost * 1.3) {
