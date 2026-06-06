@@ -3,28 +3,45 @@ import { RESOURCES, type Resource, type Stockpile, type System } from "@engine";
 export const resourceLabels: Record<Resource, string> = {
   ice: "Ice",
   metals: "Metals",
+  silicates: "Silicates",
   helium3: "Helium-3",
   rareIsotopes: "Rare Isotopes",
   food: "Food",
+  fuel: "Fuel",
+  alloys: "Alloys",
+  polymers: "Polymers",
+  components: "Components",
   antimatter: "Antimatter",
 };
 
 export const resourceShort: Record<Resource, string> = {
   ice: "Ice",
   metals: "Met",
+  silicates: "Sil",
   helium3: "He-3",
   rareIsotopes: "Iso",
   food: "Food",
+  fuel: "Fuel",
+  alloys: "Aly",
+  polymers: "Ply",
+  components: "Cmp",
   antimatter: "AM",
 };
 
 /** Per-resource accent colors (kept theme-neutral so they read on any background). */
 export const resourceColors: Record<Resource, string> = {
+  // raws
   ice: "#7fd4f5",
   metals: "#c3bcae",
+  silicates: "#d8b27a",
   helium3: "#f0c468",
   rareIsotopes: "#c79bff",
   food: "#86e0a0",
+  // manufactured (Section 07b production chain)
+  fuel: "#f0884a",
+  alloys: "#9aa7b5",
+  polymers: "#5fb0a0",
+  components: "#5b8def",
   antimatter: "#ff4fd8",
 };
 
