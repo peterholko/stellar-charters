@@ -1,6 +1,7 @@
 import {
   RESOURCES,
   potentialYields,
+  type MegastructureKind,
   type PlanetType,
   type Resource,
   type StarType,
@@ -125,6 +126,19 @@ export const starTypeColor: Record<StarType, string> = {
   blueGiant: "#8fd0ff",
   whiteDwarf: "#eef3ff",
   neutronStar: "#c7d8ff",
+};
+
+export const megastructureLabel: Record<MegastructureKind, string> = {
+  orbitalStation: "Orbital Station",
+  spaceElevator: "Space Elevator",
+  ringworld: "Ringworld",
+};
+
+/** Compact label for badges. */
+export const megastructureShort: Record<MegastructureKind, string> = {
+  orbitalStation: "Station",
+  spaceElevator: "Elevator",
+  ringworld: "Ringworld",
 };
 
 export const planetTypeLabel: Record<PlanetType, string> = {

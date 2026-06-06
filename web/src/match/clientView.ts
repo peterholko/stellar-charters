@@ -72,6 +72,7 @@ export function reconstructView(state: ClientState): PlayerView {
     sys.populationStage = cs.populationStage;
     sys.hydroponics = cs.hydroponics;
     sys.platforms = cs.platforms;
+    sys.megastructures = [...cs.megastructures];
     sys.hasDepot = cs.hasDepot;
     sys.populationProgress = cs.populationProgress ?? 0;
     sys.unrest = cs.unrest ?? 0;

@@ -12,6 +12,7 @@ import {
   maybeBuildDepot,
   maybeBuildExtractor,
   maybeBuildHydroponics,
+  maybeBuildMegastructure,
   maybeBuildPlatforms,
   maybeBuildProcessor,
   maybeBuildReactor,
@@ -49,8 +50,9 @@ export class MinerBot implements Bot {
     // Refine raw output into manufactured goods (Section 07b): power first, then a processor.
     orders.push(...maybeBuildReactor(view));
     orders.push(...maybeBuildProcessor(view));
-    // Sink overproduced raws into system upgrades (Section 07c).
+    // Sink overproduced raws into system upgrades (Section 07c) and grand construction (Section 22).
     orders.push(...maybeUpgradeInfrastructure(view));
+    orders.push(...maybeBuildMegastructure(view));
     // Cheap stationary platforms first, then mobile escort fleets.
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));

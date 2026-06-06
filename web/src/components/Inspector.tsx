@@ -1,9 +1,11 @@
-import { EXTRACTOR_CAP, canRaidRoute, raidStrength, stellarOutputMult, systemSeed, type PlayerView, type System } from "@engine";
+import { EXTRACTOR_CAP, MEGASTRUCTURE_KINDS, canRaidRoute, raidStrength, stellarOutputMult, systemSeed, type MegastructureKind, type PlayerView, type System } from "@engine";
 import { store, type Selection } from "../match/store";
 import {
   archetypeLabel,
   corpColor,
   formatCr,
+  megastructureLabel,
+  megastructureShort,
   populationLabel,
   resourceLabels,
   routeRisk,
@@ -228,6 +230,9 @@ export function Inspector({
                 <Badge tone={sys.hasDepot ? "accent" : "neutral"}>Depot {sys.hasDepot ? "✓" : "—"}</Badge>
                 <Badge tone={sys.hydroponics ? "accent" : "neutral"}>Hydro ×{sys.hydroponics}</Badge>
                 <Badge tone={sys.platforms ? "accent" : "neutral"}>Platform ×{sys.platforms}/{t.platformCap}</Badge>
+                {sys.megastructures.map((m) => (
+                  <Badge key={m} tone="accent">{megastructureShort[m]}</Badge>
+                ))}
               </div>
               <div className="action-row">
                 <ActionButton icon="exchange" onClick={() => { store.select({ kind: "system", id: sys.id }); store.setNav("exchange"); }}>Trade</ActionButton>
@@ -235,6 +240,7 @@ export function Inspector({
                 <ActionButton icon="flask" onClick={() => store.stage({ kind: "buildHydroponics", systemId: sys.id })}>Hydro</ActionButton>
                 {sys.platforms < t.platformCap && <ActionButton icon="shield" onClick={() => store.stage({ kind: "buildPlatform", systemId: sys.id })}>Platform</ActionButton>}
               </div>
+              <MegastructureBuilds sys={sys} view={view} />
             </>
           )}
 
@@ -336,6 +342,45 @@ function SystemComposition({ sys, canBuild, turn, totalTurns, assayCost }: { sys
                 </div>
               )}
             </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const STAGE_ORDER = ["outpost", "settlement", "colony", "city", "metropolis"];
+
+/** Megastructure build controls (Section 22) — the metal-hungry grand-construction ladder. */
+function MegastructureBuilds({ sys, view }: { sys: System; view: PlayerView }) {
+  if (view.me.isFreeOperator) return null;
+  const specs = view.config.tuning.megastructures;
+  const buildable = MEGASTRUCTURE_KINDS.filter(
+    (k) =>
+      !sys.megastructures.includes(k) &&
+      STAGE_ORDER.indexOf(sys.populationStage) >= STAGE_ORDER.indexOf(specs[k].requiresStage),
+  );
+  if (buildable.length === 0) return null;
+  // Local stock toward the metals/alloys bill (rough affordability hint).
+  const localMetals = sys.stockpile?.metals ?? 0;
+  return (
+    <div className="mega-builds">
+      <h4 className="composition__title">Grand construction</h4>
+      <div className="action-row">
+        {buildable.map((k) => {
+          const spec = specs[k];
+          const metalShort = Math.max(0, spec.metalsCost - localMetals);
+          const afford = view.me.credits >= spec.creditCost;
+          return (
+            <ActionButton
+              key={k}
+              icon="systems"
+              disabled={!afford}
+              title={`${megastructureLabel[k]} · ${spec.metalsCost} metals${spec.alloyCost ? ` + ${spec.alloyCost} alloys` : ""} + ${formatCr(spec.creditCost)}${metalShort > 0 ? ` (need ${Math.round(metalShort)} more metals here)` : ""}`}
+              onClick={() => store.stage({ kind: "buildMegastructure", systemId: sys.id, structure: k })}
+            >
+              {megastructureLabel[k]}
+            </ActionButton>
           );
         })}
       </div>

@@ -35,6 +35,7 @@ import {
   RESOURCES,
   type Convoy,
   type Corporation,
+  type MegastructureKind,
   type Order,
   type PopulationStage,
   type Resource,
@@ -48,6 +49,13 @@ export interface EngineOptions {
   /** Optional per-turn text logger for `--verbose` single-game runs. */
   log?: (line: string) => void;
 }
+
+/** Display names for megastructures (Section 22). */
+const MEGASTRUCTURE_LABEL: Record<MegastructureKind, string> = {
+  orbitalStation: "Orbital Station",
+  spaceElevator: "Space Elevator",
+  ringworld: "Ringworld",
+};
 
 export class Engine {
   readonly config: GameConfig;
@@ -561,6 +569,29 @@ export class Engine {
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
             break;
           }
+          case "buildMegastructure": {
+            // Pour overproduced metal into a grand construction (Section 22). One of each per
+            // system, gated by population; consumes an enormous metals + alloys bill (drawn from
+            // owned stockpiles first, shortfall bought at market — which lifts the metals price).
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            if (sys.megastructures.includes(order.structure)) break;
+            const spec = t.megastructures[order.structure];
+            const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
+            if (stages.indexOf(sys.populationStage) < stages.indexOf(spec.requiresStage)) break;
+            const metalsBill = this.strategicBill(corp, "metals", spec.metalsCost);
+            const alloyBill = this.strategicBill(corp, "alloys", spec.alloyCost);
+            if (corp.credits < spec.creditCost + metalsBill + alloyBill) break;
+            this.consumeStrategic(corp, "metals", spec.metalsCost);
+            this.consumeStrategic(corp, "alloys", spec.alloyCost);
+            corp.credits -= spec.creditCost + metalsBill + alloyBill;
+            sys.megastructures.push(order.structure);
+            this.events.push({ type: "build", corpId: corp.id, what: MEGASTRUCTURE_LABEL[order.structure], systemId: sys.id });
+            this.log(`  ${corp.name} completes a ${MEGASTRUCTURE_LABEL[order.structure]} at ${sys.name}`);
+            break;
+          }
           case "buildExtractor": {
             // Work (or deepen) a deposit on one of the system's bodies (Section 21).
             if (corp.isFreeOperator) break;
@@ -1002,6 +1033,7 @@ export class Engine {
     let def = sys.defense;
     def += sys.platforms * t.platformDefense;
     def += sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+    for (const m of sys.megastructures) def += t.megastructures[m].defenseBonus;
     if (sys.hasDepot) def += t.depotDefenseBonus;
     if (sys.owner) def += this.stationedDefense(sys.id, sys.owner);
     return def;
@@ -1081,9 +1113,11 @@ export class Engine {
         const habitable = systemHasHabitableBody(sys) || sys.hydroponics > 0;
         const thriving = fed && food.local && habitable;
 
-        // Habitat upgrades raise both tax yield and growth speed (Section 07c).
+        // Habitat upgrades raise both tax yield and growth speed (Section 07c); megastructures
+        // (space elevator / ringworld) accelerate growth further (Section 22).
         const habitatTaxMult = 1 + sys.habitats * t.infrastructure.habitatTaxBonusPerLevel;
-        const habitatGrowthMult = 1 + sys.habitats * t.infrastructure.habitatGrowthBonusPerLevel;
+        const megaGrowth = sys.megastructures.reduce((s, m) => s + t.megastructures[m].growthBonus, 0);
+        const habitatGrowthMult = 1 + sys.habitats * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
 
         // Tax: a fed, content population pays its charter holder (Sections 08/17).
         if (fed) {
@@ -1181,6 +1215,8 @@ export class Engine {
         value += sys.reactors * v.reactorValue;
         value += (sys.miningRigs + sys.habitats + sys.powerGrid) * v.infraLevelValue;
         value += sys.platforms * this.config.tuning.platformCost;
+        // Megastructures are prestige capital (Section 22).
+        for (const m of sys.megastructures) value += this.config.tuning.megastructures[m].valuation;
         for (const r of RESOURCES) {
           value += sys.stockpile[r] * this.config.tuning.basePrices[r] * v.stockpileFrac;
         }
@@ -1373,6 +1409,8 @@ export class Engine {
         def += sys.platforms * this.config.tuning.platformDefense;
         // Mining Rig fortification hardens the system's tunnel mouths (Section 07c).
         def += sys.miningRigs * this.config.tuning.infrastructure.miningDefenseBonusPerLevel;
+        // Megastructures (orbital station, etc.) harden the system's tunnel mouths (Section 22).
+        for (const m of sys.megastructures) def += this.config.tuning.megastructures[m].defenseBonus;
         // Depot patrols harden connected tunnels against raiders (Section 12).
         if (sys.hasDepot) def += this.config.tuning.depotDefenseBonus;
         // Warships stationed here defend the system's tunnel mouths.

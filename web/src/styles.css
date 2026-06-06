@@ -244,6 +244,8 @@ input, select { font-family: inherit; }
 .site-row__ext { margin-left: auto; }
 .site-row__actions { display: flex; gap: 0.35rem; margin-top: 0.4rem; }
 .sys-card__star { font-size: 0.62rem; color: var(--ink-dim); margin-top: 0.15rem; }
+.mega-builds { margin-top: 0.6rem; }
+.mega-builds .composition__title { margin-bottom: 0.35rem; }
 
 .pop-meter { margin: 0.7rem 0; }
 .pop-meter__head { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; margin-bottom: 0.3rem; }

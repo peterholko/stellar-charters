@@ -6,6 +6,7 @@
  * parsed object — file reading is the harness/CLI's job, keeping this module pure.
  */
 import type {
+  MegastructureKind,
   PopulationStage,
   RangeTier,
   Resource,
@@ -32,6 +33,23 @@ export interface Recipe {
   buildCost: number;
   /** Power drawn per processor module each turn (Section 07b power balance). */
   powerDraw: number;
+}
+
+/** A megastructure's cost (the metal sink), gate, and payoff (Section 22). */
+export interface MegastructureSpec {
+  /** Enormous raw-metals cost — the demand sink that lifts the metals market off the floor. */
+  metalsCost: number;
+  /** Refined-alloys cost (pulls more metal through the processing chain). */
+  alloyCost: number;
+  creditCost: number;
+  /** Minimum population stage the host system must have reached. */
+  requiresStage: PopulationStage;
+  /** Added to the system's standing raid defense. */
+  defenseBonus: number;
+  /** Multiplier added to local population growth (e.g. 0.5 = +50%). */
+  growthBonus: number;
+  /** Flat valuation credited for the structure (the prestige payoff). */
+  valuation: number;
 }
 
 /** Raw system entry as authored in a scenario JSON. */
@@ -195,6 +213,12 @@ export interface Tuning {
   assayCost: number;
   /** Extraction sabotage (Section 21): raid strength needed, and turns a hit site stays offline. */
   sabotage: { minStrength: number; disableTurns: number };
+  /**
+   * Megastructures (Section 22): the enormous metals/alloys demand sink. Each is one-per-system,
+   * gated by population stage, and pays back in defense, growth, and a big valuation bump — so
+   * overproduced metal has somewhere to go and an end-game construction race emerges.
+   */
+  megastructures: Record<MegastructureKind, MegastructureSpec>;
   /** Trade Depot effects (Section 12). */
   depotCost: number;
   depotShippingDiscount: number; // fraction off shipping on incident routes
@@ -283,7 +307,9 @@ export const DEFAULT_TUNING: Tuning = {
     { id: "polymers", tier: 2, inputs: { silicates: 2, fuel: 1 }, outputs: { polymers: 2 }, buildCost: 800, powerDraw: 2 },
     { id: "components", tier: 3, inputs: { alloys: 1, polymers: 1, rareIsotopes: 1 }, outputs: { components: 1 }, buildCost: 950, powerDraw: 3 },
   ],
-  shipAlloyCost: { 1: 2, 2: 3, 3: 5, 4: 8, 5: 12, 6: 16, 7: 21, 8: 27 },
+  // Capital hulls are enormous steel sinks (Section 22): tiers 5–8 demand vastly more alloys
+  // than light hulls, so building a capital fleet drains metal through the alloy chain.
+  shipAlloyCost: { 1: 2, 2: 4, 3: 8, 4: 18, 5: 38, 6: 64, 7: 95, 8: 140 },
   shipComponentCost: { 1: 0, 2: 1, 3: 2, 4: 4, 5: 6, 6: 9, 7: 12, 8: 16 },
   buildAlloyCost: 4,
   depotComponentCost: 3,
@@ -318,6 +344,15 @@ export const DEFAULT_TUNING: Tuning = {
   },
   assayCost: 120,
   sabotage: { minStrength: 4, disableTurns: 3 },
+  // Megastructures (Section 22): the metal-hungry demand sink. Costs escalate from a mid-game
+  // station to the apex ringworld; metalsCost dwarfs anything else in the game so a metals-rich
+  // empire finally has somewhere to pour its overproduction (and buys the shortfall at market,
+  // lifting the price). Tune magnitudes against `npm run sim --procedural`.
+  megastructures: {
+    orbitalStation: { metalsCost: 400, alloyCost: 0, creditCost: 150, requiresStage: "settlement", defenseBonus: 8, growthBonus: 0, valuation: 6000 },
+    spaceElevator: { metalsCost: 1100, alloyCost: 30, creditCost: 1500, requiresStage: "colony", defenseBonus: 4, growthBonus: 0.5, valuation: 15000 },
+    ringworld: { metalsCost: 3000, alloyCost: 120, creditCost: 6000, requiresStage: "city", defenseBonus: 10, growthBonus: 1, valuation: 45000 },
+  },
   depotCost: 2000,
   depotShippingDiscount: 0.35,
   depotTransitBonus: 1,

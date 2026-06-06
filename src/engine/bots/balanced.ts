@@ -13,6 +13,7 @@ import {
   maybeBuildDepot,
   maybeBuildExtractor,
   maybeBuildHydroponics,
+  maybeBuildMegastructure,
   maybeBuildPlatforms,
   maybeBuildProcessor,
   maybeBuildReactor,
@@ -48,8 +49,9 @@ export class BalancedBot implements Bot {
     // Production chains (Section 07b): add power, then a processor that can be fed locally.
     orders.push(...maybeBuildReactor(view));
     orders.push(...maybeBuildProcessor(view));
-    // Sink overproduced raws into system upgrades (Section 07c).
+    // Sink overproduced raws into system upgrades (Section 07c) and grand construction (Section 22).
     orders.push(...maybeUpgradeInfrastructure(view));
+    orders.push(...maybeBuildMegastructure(view));
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
 

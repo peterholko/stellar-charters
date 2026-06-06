@@ -209,6 +209,21 @@ export interface ExtractionSite {
   disabledUntil: number;
 }
 
+/**
+ * Megastructures (Section 22 — Grand Construction). Enormous, metal-hungry constructs an
+ * established charter sinks its overproduced metals/alloys into: an orbital station (defense +
+ * prestige), a space elevator (cheaper logistics → faster growth), and the apex ringworld
+ * (a vast artificial habitat). They are the demand floor that keeps the metals market off the
+ * floor, and a late-game valuation race. At most one of each per system, gated by population.
+ */
+export type MegastructureKind = "orbitalStation" | "spaceElevator" | "ringworld";
+
+export const MEGASTRUCTURE_KINDS: readonly MegastructureKind[] = [
+  "orbitalStation",
+  "spaceElevator",
+  "ringworld",
+];
+
 export interface System {
   id: string;
   name: string;
@@ -244,6 +259,8 @@ export interface System {
   powerGrid: number;
   /** Number of stationary defense platforms built here (each adds raid defense). */
   platforms: number;
+  /** Megastructures built here (Section 22) — the metals/alloys demand sink + valuation race. */
+  megastructures: MegastructureKind[];
   /** True if a Trade Depot has been built here (Section 12). */
   hasDepot: boolean;
   /** Defensive strength against raids at this system's tunnel mouths. */
@@ -465,6 +482,13 @@ export interface BuildPlatformOrder {
   systemId: string;
 }
 
+/** Build a megastructure on an owned system (Section 22): a huge metals/alloys sink. */
+export interface BuildMegastructureOrder {
+  kind: "buildMegastructure";
+  systemId: string;
+  structure: MegastructureKind;
+}
+
 /** Build (or upgrade) the extractor working one of a system's deposits (Section 21). */
 export interface BuildExtractorOrder {
   kind: "buildExtractor";
@@ -516,6 +540,7 @@ export type Order =
   | BuildReactorOrder
   | UpgradeInfrastructureOrder
   | BuildPlatformOrder
+  | BuildMegastructureOrder
   | BuildExtractorOrder
   | AssayOrder
   | SabotageOrder

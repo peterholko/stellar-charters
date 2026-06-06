@@ -42,6 +42,7 @@ export class Galaxy {
         habitats: 0,
         powerGrid: 0,
         platforms: 0,
+        megastructures: [],
         hasDepot: false,
         defense: s.defense ?? 1,
         routeIds: [],

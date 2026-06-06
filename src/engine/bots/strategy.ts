@@ -4,7 +4,7 @@
  * These are greedy, expected-value style helpers — enough varied behaviour to
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
-import { MAX_RANGE_TIER, RESOURCES, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
+import { MAX_RANGE_TIER, MEGASTRUCTURE_KINDS, RESOURCES, type MegastructureKind, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
 import { EXTRACTOR_CAP, effectiveYields, potentialYields } from "../bodies.js";
 import type { PlayerView } from "./bot.js";
 
@@ -94,6 +94,11 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
   const miningHeadroom = owned.some((s) => s.miningRigs < inf.cap);
   const habitatHeadroom = owned.some((s) => s.populationStage !== "outpost" && s.habitats < inf.cap);
   const powerHeadroom = owned.some((s) => Object.values(s.processors).some((n) => n > 0) && s.powerGrid < inf.cap);
+  // Megastructures (Section 22) are huge metal sinks: once a system can host one, hold a large
+  // metals reserve back from the exchange to fund construction instead of dumping at the floor.
+  const megaHeadroom =
+    view.turn >= 12 &&
+    owned.some((s) => s.populationStage !== "outpost" && s.megastructures.length < 3);
   const orders: MarketOrder[] = [];
   for (const sysId of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(sysId);
@@ -114,6 +119,7 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
       if (r === "components") reserve = Math.max(buffer, 6);
       // Reserve upgrade feedstocks (Section 07c) so they fund system upgrades, not the exchange.
       if (r === "metals" && miningHeadroom) reserve = Math.max(reserve, inf.miningMetalsCost * 2);
+      if (r === "metals" && megaHeadroom) reserve = Math.max(reserve, 450);
       if (r === "silicates" && habitatHeadroom) reserve = Math.max(reserve, inf.habitatSilicatesCost * 2);
       if (r === "helium3" && powerHeadroom) reserve = Math.max(reserve, inf.powerHelium3Cost * 2);
       const qty = sys.stockpile[r] - reserve;
@@ -303,6 +309,40 @@ export function maybeSabotage(view: PlayerView): Order[] {
       .sort((a, b) => b.richness - a.richness)[0];
     if (!worked) continue;
     return [{ kind: "sabotage", systemId: sys.id, siteKey: worked.key }];
+  }
+  return [];
+}
+
+const STAGE_ORDER = ["outpost", "settlement", "colony", "city", "metropolis"];
+
+/**
+ * Sink overproduced metal into grand construction (Section 22): build the largest megastructure
+ * an owned system qualifies for and the corp can afford, biggest sink first. This is the main
+ * demand floor that keeps metal off the price floor, plus a late-game valuation play.
+ */
+export function maybeBuildMegastructure(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.turn < 12) return [];
+  const metalsStock = corpStock(view, "metals");
+  const alloysStock = corpStock(view, "alloys");
+  // Richest/most-developed systems first.
+  const systems = view.me.ownedSystemIds
+    .map((id) => view.galaxy.system(id))
+    .sort((a, b) => STAGE_ORDER.indexOf(b.populationStage) - STAGE_ORDER.indexOf(a.populationStage));
+  // Prefer the biggest metal sink the system qualifies for.
+  const byCost = [...MEGASTRUCTURE_KINDS].sort((a, b) => t.megastructures[b].metalsCost - t.megastructures[a].metalsCost);
+  for (const sys of systems) {
+    for (const kind of byCost) {
+      if (sys.megastructures.includes(kind)) continue;
+      const spec = t.megastructures[kind];
+      if (STAGE_ORDER.indexOf(sys.populationStage) < STAGE_ORDER.indexOf(spec.requiresStage)) continue;
+      const metalsBill = Math.max(0, spec.metalsCost - metalsStock) * view.market.prices.metals;
+      const alloyBill = Math.max(0, spec.alloyCost - alloysStock) * view.market.prices.alloys;
+      const total = spec.creditCost + metalsBill + alloyBill;
+      if (view.me.credits > total * 1.05) {
+        return [{ kind: "buildMegastructure", systemId: sys.id, structure: kind }];
+      }
+    }
   }
   return [];
 }

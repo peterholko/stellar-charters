@@ -904,6 +904,37 @@ stellar modifiers) is the Production step (2); sabotage resolves with raids (6);
 gate applies during population/upkeep (8) — all within the Section 20 order, with no same-turn
 chaining.
 
+
+`SECTION 22`
+
+
+## Grand Construction (Megastructures)
+
+Metal is the most abundant raw in the galaxy — rocky worlds, belts, and lava worlds all yield it —
+so without an equally enormous demand it collapses to the price floor. **Megastructures** are that
+demand floor: titanic constructs that swallow metal (and the refined alloys and capital hulls that
+metal feeds) on a scale nothing else in the game approaches, while turning a maturing charter into
+an end-game construction race.
+
+### The ladder
+
+Each is one-per-system, gated by the host's population stage, and consumes an enormous **metals**
+bill (drawn from the system's own stockpile first; any shortfall is bought at market, which lifts
+the price). The payoff is defense, faster growth, and a large valuation bump.
+
+- **Orbital Station** (Settlement+) — hardens the system's tunnel mouths and anchors prestige.
+- **Space Elevator** (Colony+) — cheap surface-to-orbit logistics accelerate population growth.
+- **Ringworld** (City+) — the apex artificial habitat: a vast growth and valuation engine, and the
+  single largest metal sink in the game.
+
+### Capital hulls
+
+Capital warships (the deepest range tiers) are themselves enormous steel sinks: their alloy demand
+dwarfs light hulls, so fielding a capital fleet pulls metal through the alloy-processing chain.
+Together with megastructures, this gives a metals-rich empire two huge places to pour its output —
+the market stays healthy, and "what do I build with all this metal?" becomes a real strategic
+question rather than a glut.
+
 ### Prototype priority
 
 Prototype the first 12 turns as a text or spreadsheet simulation with 4–8 players. Validate the opening auction, first exports, order fill UX, convoy visibility, warp-route traffic history, one-turn route interdiction, privateer economics, and Range 2 expansion before adding the full finance/takeover and Free Operator layers.

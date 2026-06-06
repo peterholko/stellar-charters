@@ -11,6 +11,7 @@ import type { TurnReport } from "./report.js";
 import {
   RESOURCES,
   type BodyKind,
+  type MegastructureKind,
   type PlanetType,
   type PopulationStage,
   type Privateer,
@@ -74,6 +75,8 @@ export interface ClientSystem {
   populationStage: PopulationStage;
   hydroponics: number;
   platforms: number;
+  /** Megastructures built here (Section 22). */
+  megastructures: MegastructureKind[];
   hasDepot: boolean;
   routeIds: string[];
   /** Atlas coordinates / region for map rendering (procedural scenarios). */
@@ -213,6 +216,7 @@ export function buildClientState(
       populationStage: s.populationStage,
       hydroponics: s.hydroponics,
       platforms: s.platforms,
+      megastructures: [...s.megastructures],
       hasDepot: s.hasDepot,
       routeIds: [...s.routeIds],
       position: s.position,
