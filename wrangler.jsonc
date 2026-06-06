@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "stellar-charters-claude",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stellar-charters-db",
+      "database_id": "4e6fa702-d516-49e3-8e57-f3530b75ed0e",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // Public Discord OAuth client id. Leave "" to keep Discord sign-in disabled.
+    // Set the matching secret with: npx wrangler secret put DISCORD_CLIENT_SECRET
+    "DISCORD_CLIENT_ID": ""
+  },
+  "routes": [
+    { "pattern": "stellar-charters-claude.peterholko.com", "custom_domain": true }
+  ]
+}

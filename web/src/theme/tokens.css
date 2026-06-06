@@ -1,0 +1,102 @@
+/*
+ * Design tokens for the three art directions. Every component reads only these vars,
+ * so flipping <html data-theme> reskins the whole console (color, type, radius, texture).
+ */
+
+:root,
+:root[data-theme="terminal"] {
+  color-scheme: dark;
+  --bg: #07080c;
+  --bg-2: #0b0d14;
+  --panel: rgba(16, 19, 28, 0.82);
+  --panel-2: rgba(22, 26, 38, 0.9);
+  --panel-solid: #11141d;
+  --line: rgba(255, 176, 0, 0.16);
+  --line-soft: rgba(255, 255, 255, 0.07);
+  --ink: #f4ede0;
+  --ink-dim: rgba(244, 237, 224, 0.66);
+  --ink-faint: rgba(244, 237, 224, 0.4);
+  --accent: #ffb000;
+  --accent-2: #56d4ff;
+  --on-accent: #15100a;
+  --positive: #5fd38a;
+  --negative: #ff6b6b;
+  --warn: #ffc14d;
+  --radius: 12px;
+  --radius-sm: 7px;
+  --font-display: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --font-body: ui-monospace, "SF Mono", Menlo, monospace;
+  --display-spacing: 0.16em;
+  --display-transform: uppercase;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  --glow: 0 0 24px rgba(255, 176, 0, 0.28);
+  --grain: repeating-linear-gradient(
+    0deg,
+    transparent 0 2px,
+    rgba(255, 255, 255, 0.014) 2px 3px
+  );
+  --map-glow: rgba(86, 212, 255, 0.14);
+  --nav-bg: rgba(8, 9, 14, 0.9);
+}
+
+:root[data-theme="used-future"] {
+  color-scheme: dark;
+  --bg: #12100c;
+  --bg-2: #181510;
+  --panel: rgba(34, 29, 22, 0.9);
+  --panel-2: rgba(44, 38, 28, 0.92);
+  --panel-solid: #221d16;
+  --line: rgba(214, 138, 70, 0.22);
+  --line-soft: rgba(255, 240, 220, 0.06);
+  --ink: #ede3d2;
+  --ink-dim: rgba(237, 227, 210, 0.62);
+  --ink-faint: rgba(237, 227, 210, 0.36);
+  --accent: #e07a3a;
+  --accent-2: #c7a86b;
+  --on-accent: #1c1109;
+  --positive: #9bbb59;
+  --negative: #d9603f;
+  --warn: #e0a23a;
+  --radius: 4px;
+  --radius-sm: 3px;
+  --font-display: "Futura", "Helvetica Neue", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "Helvetica Neue", system-ui, sans-serif;
+  --display-spacing: 0.1em;
+  --display-transform: uppercase;
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+  --glow: 0 0 0 rgba(0, 0, 0, 0);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  --map-glow: rgba(224, 122, 58, 0.12);
+  --nav-bg: rgba(20, 17, 12, 0.94);
+}
+
+:root[data-theme="clean"] {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --bg-2: #0f1828;
+  --panel: rgba(255, 255, 255, 0.045);
+  --panel-2: rgba(255, 255, 255, 0.08);
+  --panel-solid: #16203200;
+  --line: rgba(148, 184, 255, 0.18);
+  --line-soft: rgba(255, 255, 255, 0.08);
+  --ink: #eaf1ff;
+  --ink-dim: rgba(234, 241, 255, 0.66);
+  --ink-faint: rgba(234, 241, 255, 0.42);
+  --accent: #4f8dff;
+  --accent-2: #38d3c9;
+  --on-accent: #ffffff;
+  --positive: #4fd6a0;
+  --negative: #ff7a7a;
+  --warn: #ffc24b;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --font-display: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-body: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --display-spacing: 0.01em;
+  --display-transform: none;
+  --shadow: 0 20px 60px rgba(2, 8, 23, 0.55);
+  --glow: 0 0 0 rgba(0, 0, 0, 0);
+  --grain: none;
+  --map-glow: rgba(79, 141, 255, 0.18);
+  --nav-bg: rgba(11, 18, 32, 0.82);
+}

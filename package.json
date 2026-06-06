@@ -1,0 +1,37 @@
+{
+  "name": "stellar-charters-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless balance simulator for the Stellar Charters game design (full 42-turn match, all-bot).",
+  "scripts": {
+    "sim": "tsx src/cli/runSim.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "web:dev": "vite --config web/vite.config.ts",
+    "web:build": "tsc -p web/tsconfig.json && vite build --config web/vite.config.ts",
+    "web:preview": "vite preview --config web/vite.config.ts",
+    "web:deploy": "npm run web:build && npx wrangler deploy",
+    "worker:dev": "wrangler dev",
+    "worker:typecheck": "tsc -p worker/tsconfig.json",
+    "db:migrate:local": "wrangler d1 migrations apply stellar-charters-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply stellar-charters-db --remote"
+  },
+  "dependencies": {
+    "pixi.js": "^8.19.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260605.1",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.98.0"
+  }
+}
