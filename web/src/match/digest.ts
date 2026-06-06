@@ -8,6 +8,8 @@ export interface DigestLine {
   title: string;
   body: string;
   scope: "me" | "world";
+  /** Optional art slot (e.g. "event-raid") shown as a splash thumbnail on the line. */
+  art?: string;
 }
 
 const raidTone: Record<string, DigestTone> = {
@@ -58,9 +60,9 @@ export function buildDigest(report: TurnReport, view: PlayerView, me: string): D
         break;
       case "raid":
         if (e.defenderId === me)
-          lines.push({ tone: raidTone[e.outcome] === "good" ? "good" : "bad", scope: "me", title: `Convoy ${e.outcome}`, body: `${corpName(e.attackerId)} hit your ${resourceLabels[e.resource]} lane${e.cargoLost ? ` · −${e.cargoLost} cargo` : ""}.` });
+          lines.push({ tone: raidTone[e.outcome] === "good" ? "good" : "bad", scope: "me", art: "event-raid", title: `Convoy ${e.outcome}`, body: `${corpName(e.attackerId)} hit your ${resourceLabels[e.resource]} lane${e.cargoLost ? ` · −${e.cargoLost} cargo` : ""}.` });
         else if (e.attackerId === me)
-          lines.push({ tone: e.cargoLost ? "good" : "info", scope: "me", title: `Raid: ${e.outcome}`, body: `Against ${corpName(e.defenderId)}${e.cargoLost ? ` · +${e.cargoLost} ${resourceLabels[e.resource]}` : ""}.` });
+          lines.push({ tone: e.cargoLost ? "good" : "info", scope: "me", art: "event-raid", title: `Raid: ${e.outcome}`, body: `Against ${corpName(e.defenderId)}${e.cargoLost ? ` · +${e.cargoLost} ${resourceLabels[e.resource]}` : ""}.` });
         break;
       case "build":
         if (e.corpId === me)
@@ -75,12 +77,12 @@ export function buildDigest(report: TurnReport, view: PlayerView, me: string): D
           lines.push({ tone: "warn", scope: "me", title: `${sysName(e.systemId)} is starving`, body: `Unmet food/ice — unrest is rising. Ship supply or build hydroponics.` });
         break;
       case "acquisition":
-        if (e.acquirerId === me) lines.push({ tone: "good", scope: "me", title: `Acquisition`, body: `You absorbed ${corpName(e.targetId)}'s charter.` });
-        else if (e.targetId === me) lines.push({ tone: "bad", scope: "me", title: `You were acquired`, body: `${corpName(e.acquirerId)} took control of your charter.` });
-        else lines.push({ tone: "info", scope: "world", title: `Acquisition`, body: `${corpName(e.acquirerId)} absorbed ${corpName(e.targetId)}.` });
+        if (e.acquirerId === me) lines.push({ tone: "good", scope: "me", art: "event-acquisition", title: `Acquisition`, body: `You absorbed ${corpName(e.targetId)}'s charter.` });
+        else if (e.targetId === me) lines.push({ tone: "bad", scope: "me", art: "event-acquisition", title: `You were acquired`, body: `${corpName(e.acquirerId)} took control of your charter.` });
+        else lines.push({ tone: "info", scope: "world", art: "event-acquisition", title: `Acquisition`, body: `${corpName(e.acquirerId)} absorbed ${corpName(e.targetId)}.` });
         break;
       case "distress":
-        lines.push({ tone: e.corpId === me ? "bad" : "info", scope: e.corpId === me ? "me" : "world", title: `${e.corpId === me ? "You" : corpName(e.corpId)} collapsed`, body: `Charter lost to distress — now a Free Operator.` });
+        lines.push({ tone: e.corpId === me ? "bad" : "info", scope: e.corpId === me ? "me" : "world", art: "status-distress", title: `${e.corpId === me ? "You" : corpName(e.corpId)} collapsed`, body: `Charter lost to distress — now a Free Operator.` });
         break;
     }
   }

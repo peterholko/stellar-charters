@@ -204,6 +204,13 @@ export function Inspector({
                   </div>
                 ))}
               </div>
+              {(sys.hasDepot || sys.hydroponics > 0 || sys.platforms > 0) && (
+                <div className="infra-art">
+                  {sys.hasDepot && <ArtSlot slot="infra-depot" className="infra-thumb" />}
+                  {sys.hydroponics > 0 && <ArtSlot slot="infra-hydroponics" className="infra-thumb" />}
+                  {sys.platforms > 0 && <ArtSlot slot="infra-platform" className="infra-thumb" />}
+                </div>
+              )}
               <div className="infra-row">
                 <Badge tone={sys.hasDepot ? "accent" : "neutral"}>Depot {sys.hasDepot ? "✓" : "—"}</Badge>
                 <Badge tone={sys.hydroponics ? "accent" : "neutral"}>Hydro ×{sys.hydroponics}</Badge>

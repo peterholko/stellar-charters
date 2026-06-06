@@ -51,11 +51,11 @@ const archetypeGradient: Record<SystemArchetype, string> = {
 };
 
 /**
- * Archetypes that have a commissioned `/assets/system-<archetype>.png` portrait. Others
- * fall straight through to the procedural gradient disc (no wasted 404 request) — so
- * ice / helium3 / isotopes still read distinctly until art is commissioned for them.
+ * Archetypes that have a commissioned `/assets/system-<archetype>.png` portrait. Any
+ * archetype not listed falls straight through to the procedural gradient disc (no wasted
+ * 404 request). The hub uses the dedicated `hero-wormhole-hub` slot, not PlanetArt.
  */
-const SYSTEM_PORTRAITS = new Set<SystemArchetype>(["metals", "garden"]);
+const SYSTEM_PORTRAITS = new Set<SystemArchetype>(["metals", "garden", "ice", "helium3", "isotopes"]);
 
 /**
  * Star-system portrait. Renders the painted portrait at `/assets/system-<archetype>.png`

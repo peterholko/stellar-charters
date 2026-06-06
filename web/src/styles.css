@@ -22,6 +22,17 @@ body::before {
     var(--grain);
 }
 
+/* Painted starfield backdrop — faint, behind the (opaque) panels on every dark theme. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: url("/assets/bg-starfield.png") center / cover no-repeat;
+  opacity: 0.12;
+}
+
 h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; }
 .eyebrow {
   margin: 0;
@@ -583,3 +594,11 @@ input, select { font-family: inherit; }
 /* Auth screen key-art splash + wordmark. */
 .auth__splash { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.16; pointer-events: none; }
 .auth__logo { width: 92px; height: 92px; object-fit: contain; display: block; margin: 0 auto 0.5rem; }
+
+/* Built-infrastructure art thumbnails in the system inspector. */
+.infra-art { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
+.infra-art .artslot-img, .infra-art .artslot { flex: 1; min-width: 0; height: 52px; border-radius: var(--radius-sm); object-fit: cover; min-height: 52px; }
+
+/* Event splash thumbnail on a dashboard digest line. */
+.digest__art { flex: none; width: 64px; height: 40px; border-radius: 5px; object-fit: cover; align-self: center; }
+.digest__art.artslot { min-height: 40px; }

@@ -5,6 +5,7 @@ import { formatCr } from "../match/format";
 import { Panel, PanelTitle, Sparkline, Badge, Stat, EmptyState } from "../ui/primitives";
 import { Icon } from "../ui/icons";
 import { CorpCrest } from "../theme/art";
+import { ArtSlot } from "../theme/ArtSlot";
 
 function phaseOf(turn: number, total: number): { label: string; note: string } {
   const p = turn / total;
@@ -65,7 +66,11 @@ export function Dashboard() {
             ) : (
               digest.slice(0, 8).map((l, i) => (
                 <div key={i} className={`digest__row digest__row--${l.tone}`}>
-                  <Icon name={l.tone === "good" ? "check" : l.tone === "bad" ? "alert" : l.tone === "warn" ? "alert" : "info"} size={15} />
+                  {l.art ? (
+                    <ArtSlot slot={l.art} className="digest__art" />
+                  ) : (
+                    <Icon name={l.tone === "good" ? "check" : l.tone === "bad" ? "alert" : l.tone === "warn" ? "alert" : "info"} size={15} />
+                  )}
                   <div>
                     <strong>{l.title}</strong>
                     <span>{l.body}</span>
