@@ -117,6 +117,23 @@ describe("procedural generator — resources by region", () => {
     for (const r of RESOURCES) expect(present.has(r)).toBe(true);
   });
 
+  it("gates deep tunnels by range, scaling beyond the old Range-3 ceiling", () => {
+    // Aggregate over several seeds/sizes so we see the full distance-scaled range spread.
+    const required = new Set<number>();
+    for (const players of PLAYER_COUNTS) {
+      const s = generateProceduralScenario({ seed: 600 + players, players });
+      for (const r of s.routes) {
+        if (!r.charted) required.add(r.requiredRange ?? 1);
+        // Charted lanes are always inner-ring Range 1.
+        if (r.charted) expect(r.requiredRange ?? 1).toBe(1);
+      }
+    }
+    const max = Math.max(...required);
+    expect(max).toBeGreaterThan(3); // deep tunnels now demand more than the legacy Range-3 cap
+    expect(max).toBeLessThanOrEqual(8); // never beyond the ladder ceiling
+    expect(required.has(2)).toBe(true); // shallow frontier tunnels still open at Range 2
+  });
+
   it("biases resources by region (basics in core, isotopes on the frontier, antimatter in the abyss)", () => {
     for (const players of PLAYER_COUNTS) {
       const s = generateProceduralScenario({ seed: players * 29, players });

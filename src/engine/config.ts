@@ -81,7 +81,7 @@ export interface Tuning {
   raiderCombatBonus: number;
   /** Rare isotopes consumed to build a ship of each tier (higher tiers need them). */
   shipIsotopeCost: Record<RangeTier, number>;
-  /** Antimatter consumed to build a ship of each tier (only capital Range-4 hulls). */
+  /** Antimatter consumed to build a ship of each tier (only capital Range 4+ hulls). */
   shipAntimatterCost: Record<RangeTier, number>;
   privateerCost: number;
   privateerStrength: number;
@@ -147,18 +147,18 @@ export const DEFAULT_TUNING: Tuning = {
   shippingFeePerHop: 1.5,
   bidRefundFrac: 0.92,
   surveyCost: 300,
-  shipCost: { 1: 600, 2: 1100, 3: 2100, 4: 4000 },
+  shipCost: { 1: 600, 2: 1100, 3: 2100, 4: 4000, 5: 6000, 6: 8500, 7: 11500, 8: 15000 },
   raiderShipExtraCost: 400,
-  shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11 },
+  shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11, 5: 16, 6: 22, 7: 29, 8: 38 },
   raiderCombatBonus: 1,
-  shipIsotopeCost: { 1: 0, 2: 2, 3: 6, 4: 14 },
-  shipAntimatterCost: { 1: 0, 2: 0, 3: 0, 4: 3 },
+  shipIsotopeCost: { 1: 0, 2: 2, 3: 6, 4: 14, 5: 20, 6: 28, 7: 36, 8: 46 },
+  shipAntimatterCost: { 1: 0, 2: 0, 3: 0, 4: 3, 5: 4, 6: 6, 7: 9, 8: 12 },
   privateerCost: 500,
   privateerStrength: 5,
   privateerTurns: 3,
   /** Fraction of plundered cargo value a raider realises when fencing it (Section 13). */
   plunderFenceRate: 0.85,
-  rangeResearchCost: { 1: 0, 2: 1100, 3: 2200, 4: 3800 },
+  rangeResearchCost: { 1: 0, 2: 1100, 3: 2200, 4: 3800, 5: 5000, 6: 6500, 7: 8200, 8: 10000 },
   debtInterest: 0.05,
   foodNeed: { outpost: 0, settlement: 2, colony: 6, city: 14, metropolis: 30 },
   iceNeed: { outpost: 1, settlement: 1, colony: 2, city: 4, metropolis: 8 },
