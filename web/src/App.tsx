@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { store, useApp, type ViewId } from "./match/store";
 import { formatCr } from "./match/format";
 import { Icon, type IconName } from "./ui/icons";
@@ -48,6 +48,20 @@ export function App() {
   useEffect(() => {
     store.init(user.id);
   }, [user.id]);
+
+  // On phones the inspector/order tray live in a slide-out drawer, so a map tap would
+  // otherwise only show the on-map selection ring. Surface the drawer when the selection
+  // changes from the map so tapping a system/lane/convoy reveals its details and actions.
+  const prevSelKey = useRef<string | null>(null);
+  useEffect(() => {
+    const key = selection ? `${selection.kind}:${selection.id}` : null;
+    const changed = key && key !== prevSelKey.current && prevSelKey.current !== null;
+    if (changed && nav === "map" && typeof window !== "undefined" &&
+        window.matchMedia("(max-width: 760px)").matches) {
+      setDrawer(true);
+    }
+    prevSelKey.current = key;
+  }, [selection, nav]);
 
   if (status === "error") {
     return (
