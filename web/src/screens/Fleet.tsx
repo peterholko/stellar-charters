@@ -59,7 +59,7 @@ export function Fleet() {
           <p className="hint">Claim a system to base a fleet.</p>
         ) : (
           <>
-            <ArtSlot slot={raider ? "ship-raider" : buildTier >= 2 ? "ship-escort" : "ship-cargo"} className="fleet__shipart" />
+            <ArtSlot slot={raider ? "ship-raider" : buildTier >= 4 ? "ship-fleet" : buildTier === 3 ? "ship-clipper" : buildTier >= 2 ? "ship-escort" : "ship-cargo"} className="fleet__shipart" />
             <Segmented value={raider ? "raider" : "escort"} onChange={(v) => setRaider(v === "raider")} options={[{ value: "escort", label: "Escort" }, { value: "raider", label: "Raider" }]} />
             <label className="field">
               <span>Hull tier</span>

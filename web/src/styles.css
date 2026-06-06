@@ -556,3 +556,30 @@ input, select { font-family: inherit; }
   .topbar { flex-wrap: wrap; }
   .topbar__username { display: none; }
 }
+
+/* ============================ generated art ============================ */
+/* Commodity icons & corp crests (painted art, with colour-dot fallbacks). */
+.res-icon { display: inline-block; object-fit: contain; vertical-align: middle; flex: none; }
+.res-dot { display: inline-block; border-radius: 50%; flex: none; }
+.corp-crest { display: inline-block; object-fit: contain; vertical-align: middle; flex: none; }
+.corp-dot { display: inline-block; border-radius: 50%; flex: none; }
+.board__icon { align-self: center; }
+.standings__crest, .stock-row__crest, .over__crest { flex: none; }
+.convoy-card__icon .corp-crest, .convoy-card__icon .corp-dot { display: block; }
+
+/* Star-system painted portraits crop to the existing disc / portrait frame. */
+.planet-art--img { object-fit: cover; }
+
+/* Colony-stage portrait + status cue in the system inspector. */
+.colony-strip { position: relative; margin-bottom: 0.55rem; }
+.colony-art, .colony-strip .artslot { display: block; width: 100%; height: 76px; border-radius: var(--radius-sm); object-fit: cover; }
+.cue-art, .artslot.cue-art { width: 30px; height: 30px; min-height: 30px; border-radius: 6px; object-fit: cover; }
+.cue-art--corner { position: absolute; top: 6px; right: 6px; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55); }
+
+/* Brand logo in the topbar mark (drop the accent tile behind the painted mark). */
+.topbar__mark:has(.topbar__logo) { background: transparent; box-shadow: none; }
+.topbar__logo { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* Auth screen key-art splash + wordmark. */
+.auth__splash { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.16; pointer-events: none; }
+.auth__logo { width: 92px; height: 92px; object-fit: contain; display: block; margin: 0 auto 0.5rem; }

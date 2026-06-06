@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { store, useApp, type ViewId } from "./match/store";
 import { formatCr } from "./match/format";
 import { Icon, type IconName } from "./ui/icons";
+import { CorpCrest } from "./theme/art";
 import { useAuth } from "./auth/AuthContext";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { Inspector } from "./components/Inspector";
@@ -75,7 +76,7 @@ export function App() {
   const top = (
     <header className="topbar">
       <div className="topbar__brand">
-        <span className="topbar__mark"><Icon name="bolt" size={18} /></span>
+        <span className="topbar__mark"><img className="topbar__logo" src="/assets/brand-logo.png" alt="" /></span>
         <div className="topbar__brandtext">
           <p className="eyebrow">Charter Command</p>
           <h1>Stellar Charters</h1>
@@ -182,6 +183,7 @@ function OverModal() {
           {standings.map((c, i) => (
             <li key={c.id} className={c.id === humanCorpId ? "is-me" : ""}>
               <span>{i + 1}</span>
+              <CorpCrest corpId={c.id} size={22} className="over__crest" />
               <strong>{c.name}{c.id === humanCorpId ? " (you)" : ""}</strong>
               <em>{formatCr(c.valuation)}</em>
             </li>

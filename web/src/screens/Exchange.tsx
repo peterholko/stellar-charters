@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { RESOURCES, type Resource } from "@engine";
 import { store, useApp } from "../match/store";
-import { formatCr, resourceColors, resourceLabels } from "../match/format";
+import { formatCr, resourceLabels } from "../match/format";
 import { Panel, PanelTitle, Sparkline, Segmented, Badge } from "../ui/primitives";
 import { Icon } from "../ui/icons";
+import { ResourceIcon } from "../theme/art";
 
 export function Exchange() {
   const { view, priceHistory } = useApp();
@@ -65,7 +66,7 @@ export function Exchange() {
                 className={`board__row ${resource === r ? "is-active" : ""}`}
                 onClick={() => { setResource(r); setLimitPrice(Math.round(view.market.prices[r])); }}
               >
-                <span className="board__dot" style={{ background: resourceColors[r] }} />
+                <ResourceIcon resource={r} size={26} className="board__icon" />
                 <span className="board__name">{resourceLabels[r]}</span>
                 <Sparkline data={hist.length > 1 ? hist : [cur, cur]} width={70} height={22} color="auto" fill={false} />
                 <span className="board__price">{cur.toFixed(1)}</span>

@@ -1,9 +1,10 @@
 import type { PlayerView } from "@engine";
 import { store, useApp } from "../match/store";
 import { buildDigest } from "../match/digest";
-import { corpColor, formatCr } from "../match/format";
+import { formatCr } from "../match/format";
 import { Panel, PanelTitle, Sparkline, Badge, Stat, EmptyState } from "../ui/primitives";
 import { Icon } from "../ui/icons";
+import { CorpCrest } from "../theme/art";
 
 function phaseOf(turn: number, total: number): { label: string; note: string } {
   const p = turn / total;
@@ -81,7 +82,7 @@ export function Dashboard() {
             {standings.map((c, i) => (
               <div key={c.id} className={`standings__row ${c.id === me.id ? "is-me" : ""}`}>
                 <span className="standings__rank">{i + 1}</span>
-                <span className="standings__dot" style={{ background: corpColor(c.id) }} />
+                <CorpCrest corpId={c.id} size={20} className="standings__crest" />
                 <span className="standings__name">{c.name}{c.id === me.id ? " (you)" : ""}</span>
                 <span className="standings__val">{formatCr(c.valuation)}</span>
                 {c.isFreeOperator && <Badge tone="neutral">Free Op</Badge>}

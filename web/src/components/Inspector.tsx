@@ -5,7 +5,6 @@ import {
   corpColor,
   formatCr,
   populationLabel,
-  resourceColors,
   resourceLabels,
   routeRisk,
   sizeBucket,
@@ -16,6 +15,7 @@ import {
 import { RESOURCES } from "@engine";
 import { Badge, Bar, Panel, PanelTitle, ActionButton } from "../ui/primitives";
 import { PlanetArt, ArtSlot } from "../theme/ArtSlot";
+import { ResourceIcon } from "../theme/art";
 
 export function Inspector({
   view,
@@ -41,7 +41,15 @@ export function Inspector({
     const reachable = route.requiredRange <= view.me.rangeTier;
     return (
       <Panel className="inspector">
-        <PanelTitle icon="radar" eyebrow="Warp Route" title={`${a.name} ↔ ${b.name}`} />
+        <div className="inspector__portrait">
+          <ArtSlot slot={route.stability >= 0.6 ? "route-stable" : "route-unstable"} />
+        </div>
+        <PanelTitle
+          icon="radar"
+          eyebrow="Warp Route"
+          title={`${a.name} ↔ ${b.name}`}
+          right={!route.charted ? <ArtSlot slot="action-survey" className="cue-art" /> : (risk.level === "severe" || risk.level === "high") ? <ArtSlot slot="status-raid-risk" className="cue-art" /> : undefined}
+        />
         <dl className="kv">
           <div><dt>Transit</dt><dd>{route.transitTime} turn{route.transitTime > 1 ? "s" : ""}</dd></div>
           <div><dt>Stability</dt><dd>{Math.round(route.stability * 100)}%</dd></div>
@@ -94,6 +102,7 @@ export function Inspector({
           icon="convoys"
           eyebrow={mine ? "Your Convoy" : "Rival Convoy"}
           title={`${resourceLabels[c.resource]} ${c.kind === "buy" ? "import" : c.kind === "transfer" ? "transfer" : "export"}`}
+          right={!mine ? <ArtSlot slot="action-interdict" className="cue-art" /> : undefined}
         />
         <dl className="kv">
           {mine ? (
@@ -150,7 +159,7 @@ export function Inspector({
         icon={mine ? "systems" : open ? "gavel" : isHub ? "exchange" : "systems"}
         eyebrow={isHub ? "Neutral" : mine ? "Your Charter" : open ? "Open Claim" : "Rival Charter"}
         title={sys.name}
-        right={owner ? <Badge tone="neutral" className="owner-chip"><span style={{ color: corpColor(owner.id) }}>●</span> {owner.name}</Badge> : undefined}
+        right={owner ? <Badge tone="neutral" className="owner-chip"><span style={{ color: corpColor(owner.id) }}>●</span> {owner.name}</Badge> : open ? <ArtSlot slot="action-claim" className="cue-art" /> : undefined}
       />
       {isHub ? (
         <p className="hint">The Wormhole Hub hosts the Galactic Exchange. It is Authority-protected — it cannot be claimed or raided.</p>
@@ -168,7 +177,7 @@ export function Inspector({
           <div className="yield-row">
             {RESOURCES.filter((r) => sys.yields[r] > 0).map((r) => (
               <span key={r} className="yield-pill">
-                <i style={{ background: resourceColors[r] }} /> {resourceLabels[r]} +{sys.yields[r]}
+                <ResourceIcon resource={r} size={16} /> {resourceLabels[r]} +{sys.yields[r]}
               </span>
             ))}
           </div>
@@ -176,6 +185,10 @@ export function Inspector({
           {mine && (
             <>
               <div className="pop-meter">
+                <div className="colony-strip">
+                  <ArtSlot slot={`colony-${sys.populationStage}`} className="colony-art" />
+                  {sys.unrest > 0.01 && <ArtSlot slot="status-unrest" className="cue-art cue-art--corner" />}
+                </div>
                 <div className="pop-meter__head">
                   <span>{populationLabel[sys.populationStage]}</span>
                   {sys.unrest > 0.01 && <Badge tone="negative">Unrest {Math.round(sys.unrest * 100)}%</Badge>}
@@ -185,7 +198,7 @@ export function Inspector({
               <div className="stock-grid">
                 {RESOURCES.map((r) => (
                   <div key={r} className="stock-cell">
-                    <i style={{ background: resourceColors[r] }} />
+                    <ResourceIcon resource={r} size={18} />
                     <span>{resourceLabels[r]}</span>
                     <strong>{Math.round(sys.stockpile[r])}</strong>
                   </div>

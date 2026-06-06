@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useApp, store } from "../match/store";
-import { corpColor, formatCr } from "../match/format";
+import { formatCr } from "../match/format";
 import { Panel, PanelTitle, Badge, Bar, Stat } from "../ui/primitives";
 import { Icon } from "../ui/icons";
+import { CorpCrest } from "../theme/art";
 
 export function Finance() {
   const { view } = useApp();
@@ -61,7 +62,7 @@ export function Finance() {
             return (
               <div key={c.id} className="stock-row">
                 <div className="stock-row__id">
-                  <span className="stock-row__dot" style={{ background: corpColor(c.id) }} />
+                  <CorpCrest corpId={c.id} size={26} className="stock-row__crest" />
                   <div>
                     <strong>{c.name}</strong>
                     <span>{c.isFreeOperator ? "Free Operator" : "Chartered"} · {formatCr(c.sharePrice)}/share</span>

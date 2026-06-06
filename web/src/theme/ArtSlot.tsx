@@ -50,7 +50,17 @@ const archetypeGradient: Record<SystemArchetype, string> = {
   hub: "radial-gradient(circle at 50% 50%, #fff6df, #f3d489 30%, #56d4ff 60%, #0a1830 90%)",
 };
 
-/** Procedural planet/system portrait disc — the placeholder for `system-<archetype>` art. */
+/**
+ * Archetypes that have a commissioned `/assets/system-<archetype>.png` portrait. Others
+ * fall straight through to the procedural gradient disc (no wasted 404 request) — so
+ * ice / helium3 / isotopes still read distinctly until art is commissioned for them.
+ */
+const SYSTEM_PORTRAITS = new Set<SystemArchetype>(["metals", "garden"]);
+
+/**
+ * Star-system portrait. Renders the painted portrait at `/assets/system-<archetype>.png`
+ * when one exists, falling back to a themed procedural gradient disc otherwise.
+ */
 export function PlanetArt({
   archetype,
   className,
@@ -60,6 +70,19 @@ export function PlanetArt({
   className?: string;
   style?: CSSProperties;
 }) {
+  const [failed, setFailed] = useState(false);
+  if (SYSTEM_PORTRAITS.has(archetype) && !failed) {
+    return (
+      <img
+        className={`planet-art planet-art--img ${className ?? ""}`}
+        style={style}
+        src={`/assets/system-${archetype}.png`}
+        alt={`${archetype} system`}
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
   return (
     <span
       className={`planet-art ${className ?? ""}`}

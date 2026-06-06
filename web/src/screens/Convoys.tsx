@@ -3,6 +3,7 @@ import { store, useApp } from "../match/store";
 import { corpColor, formatCr, resourceLabels, routeRisk, sizeBucket } from "../match/format";
 import { Panel, PanelTitle, Segmented, Badge, EmptyState } from "../ui/primitives";
 import { Icon } from "../ui/icons";
+import { CorpCrest } from "../theme/art";
 
 export function Convoys() {
   const { view, humanCorpId } = useApp();
@@ -33,8 +34,8 @@ export function Convoys() {
               const owner = view.corporations.find((x) => x.id === c.owner);
               return (
                 <article key={c.id} className="convoy-card" onClick={() => store.select({ kind: "convoy", id: c.id })}>
-                  <div className="convoy-card__icon" style={{ color: corpColor(c.owner) }}>
-                    <Icon name="convoys" size={18} />
+                  <div className="convoy-card__icon">
+                    <CorpCrest corpId={c.owner} size={26} />
                   </div>
                   <div className="convoy-card__main">
                     <div className="convoy-card__top">

@@ -38,7 +38,9 @@ export function AuthScreen({ onAuthed }: { onAuthed: () => void }) {
   return (
     <div className="auth">
       <div className="auth__field" aria-hidden />
+      <img className="auth__splash" src="/assets/key-art-splash.png" alt="" aria-hidden />
       <main className="auth__panel">
+        <img className="auth__logo" src="/assets/brand-logo.png" alt="Stellar Charters" />
         <p className="auth__eyebrow">Wormhole Authority · Charter Command</p>
         <h1 className="auth__title">STELLAR CHARTERS</h1>
         <p className="auth__sub">{mode === "login" ? "Sign in to your charter" : "Register a new charter"}</p>

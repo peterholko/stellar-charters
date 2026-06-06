@@ -2,7 +2,6 @@ import { store, useApp } from "../match/store";
 import {
   formatCr,
   populationLabel,
-  resourceColors,
   resourceLabels,
   stockpileValue,
   systemArchetype,
@@ -10,6 +9,7 @@ import {
 } from "../match/format";
 import { RESOURCES } from "@engine";
 import { PlanetArt } from "../theme/ArtSlot";
+import { ResourceIcon } from "../theme/art";
 import { Panel, PanelTitle, Badge, Bar } from "../ui/primitives";
 import { Icon } from "../ui/icons";
 
@@ -48,7 +48,7 @@ export function Systems() {
                     <Bar value={s.populationProgress} max={t.growthThreshold} tone={s.unrest > 0.01 ? "warn" : "positive"} />
                     <div className="sys-card__stock">
                       {RESOURCES.filter((r) => s.stockpile[r] >= 1).map((r) => (
-                        <span key={r} title={resourceLabels[r]}><i style={{ background: resourceColors[r] }} />{Math.round(s.stockpile[r])}</span>
+                        <span key={r} title={resourceLabels[r]}><ResourceIcon resource={r} size={16} />{Math.round(s.stockpile[r])}</span>
                       ))}
                     </div>
                     <div className="sys-card__infra">
