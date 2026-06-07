@@ -86,7 +86,7 @@ input, select { font-family: inherit; }
 .shell__body {
   flex: 1; min-height: 0;
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) 360px;
+  grid-template-columns: 92px minmax(0, 1fr) clamp(400px, 26vw, 520px);
   gap: 0;
 }
 
@@ -619,7 +619,7 @@ input, select { font-family: inherit; }
 @media (max-width: 1180px) {
   .shell__body { grid-template-columns: 80px minmax(0, 1fr); }
   .sidestack {
-    position: fixed; top: 56px; right: 0; bottom: 0; width: min(380px, 90vw); z-index: 40;
+    position: fixed; top: 56px; right: 0; bottom: 0; width: min(460px, 94vw); z-index: 40;
     transform: translateX(105%); transition: transform 0.2s; box-shadow: var(--shadow);
   }
   .shell--drawer .sidestack { transform: translateX(0); }
