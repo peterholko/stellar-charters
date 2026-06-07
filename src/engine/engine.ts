@@ -12,8 +12,17 @@
 import type { GameConfig } from "./config.js";
 import {
   EXTRACTOR_CAP,
+  agriFoodMult,
+  bodyTypeOfKey,
+  buildingTotal,
+  canBuildOnBody,
+  coloniesOf,
   effectiveYields,
+  factoryCostMult,
+  getBodyBuildings,
+  primaryBodyKey,
   siteOutput,
+  systemBuildings,
   systemHasHabitableBody,
   systemSeed,
 } from "./bodies.js";
@@ -513,9 +522,12 @@ export class Engine {
             if (corp.isFreeOperator) break;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
+            const bodyKey = order.bodyKey ?? primaryBodyKey(sys);
+            // Agri-domes need a livable surface (Section 24) — not a gas giant, lava world, or belt.
+            if (!canBuildOnBody("agridome", bodyTypeOfKey(sys, bodyKey))) break;
             if (corp.credits < this.config.tuning.hydroponicsCost) break;
             corp.credits -= this.config.tuning.hydroponicsCost;
-            sys.hydroponics += 1;
+            getBodyBuildings(sys, bodyKey).hydroponics += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Hydroponics module", systemId: sys.id });
             this.log(`  ${corp.name} builds hydroponics at ${sys.name}`);
             break;
@@ -528,11 +540,16 @@ export class Engine {
             if (!sys || sys.owner !== corp.id) break;
             const recipe = t.recipes.find((r) => r.id === order.recipeId);
             if (!recipe) break;
+            const procKey = order.bodyKey ?? primaryBodyKey(sys);
+            // Factory build cost depends on the host world's type (Section 24): metal-rich rocky/lava
+            // worlds are cheap to tool up, oceans and orbital-over-giants cost a premium.
+            const recipeCost = Math.round(recipe.buildCost * factoryCostMult(bodyTypeOfKey(sys, procKey)));
             const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
-            if (corp.credits < recipe.buildCost + alloyBill) break;
+            if (corp.credits < recipeCost + alloyBill) break;
             this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
-            corp.credits -= recipe.buildCost + alloyBill;
-            sys.processors[recipe.id] = (sys.processors[recipe.id] ?? 0) + 1;
+            corp.credits -= recipeCost + alloyBill;
+            const procBody = getBodyBuildings(sys, procKey);
+            procBody.processors[recipe.id] = (procBody.processors[recipe.id] ?? 0) + 1;
             this.events.push({ type: "build", corpId: corp.id, what: `${recipe.id} processor`, systemId: sys.id });
             this.log(`  ${corp.name} builds a ${recipe.id} processor at ${sys.name}`);
             break;
@@ -547,7 +564,7 @@ export class Engine {
             if (corp.credits < t.reactorCost + alloyBill) break;
             this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
             corp.credits -= t.reactorCost + alloyBill;
-            sys.reactors += 1;
+            getBodyBuildings(sys, order.bodyKey ?? primaryBodyKey(sys)).reactors += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Reactor", systemId: sys.id });
             this.log(`  ${corp.name} builds a reactor at ${sys.name}`);
             break;
@@ -558,17 +575,17 @@ export class Engine {
             const inf = this.config.tuning.infrastructure;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            let level: number;
-            let creditBase: number;
-            let rawRes: Resource;
-            let rawBase: number;
-            if (order.track === "mining") {
-              level = sys.miningRigs; creditBase = inf.miningCreditCost; rawRes = "metals"; rawBase = inf.miningMetalsCost;
-            } else if (order.track === "habitat") {
-              level = sys.habitats; creditBase = inf.habitatCreditCost; rawRes = "silicates"; rawBase = inf.habitatSilicatesCost;
-            } else {
-              level = sys.powerGrid; creditBase = inf.powerCreditCost; rawRes = "helium3"; rawBase = inf.powerHelium3Cost;
-            }
+            const upKey = order.bodyKey ?? primaryBodyKey(sys);
+            // Habitats need a livable surface, mining rigs a solid one (Section 24).
+            const upBuildKind = order.track === "mining" ? "mining" : order.track === "habitat" ? "habitat" : "power";
+            if (!canBuildOnBody(upBuildKind, bodyTypeOfKey(sys, upKey))) break;
+            const bb = getBodyBuildings(sys, upKey);
+            const track: "miningRigs" | "habitats" | "powerGrid" =
+              order.track === "mining" ? "miningRigs" : order.track === "habitat" ? "habitats" : "powerGrid";
+            const creditBase = order.track === "mining" ? inf.miningCreditCost : order.track === "habitat" ? inf.habitatCreditCost : inf.powerCreditCost;
+            const rawRes: Resource = order.track === "mining" ? "metals" : order.track === "habitat" ? "silicates" : "helium3";
+            const rawBase = order.track === "mining" ? inf.miningMetalsCost : order.track === "habitat" ? inf.habitatSilicatesCost : inf.powerHelium3Cost;
+            const level = bb[track];
             if (level >= inf.cap) break;
             const factor = level + 1; // cost scales with the level being reached
             const creditCost = creditBase * factor;
@@ -577,9 +594,7 @@ export class Engine {
             if (corp.credits < creditCost + rawBill) break;
             this.consumeStrategic(corp, rawRes, rawNeed);
             corp.credits -= creditCost + rawBill;
-            if (order.track === "mining") sys.miningRigs += 1;
-            else if (order.track === "habitat") sys.habitats += 1;
-            else sys.powerGrid += 1;
+            bb[track] += 1;
             this.events.push({ type: "build", corpId: corp.id, what: `${order.track} upgrade`, systemId: sys.id });
             this.log(`  ${corp.name} upgrades ${order.track} at ${sys.name} to L${level + 1}`);
             break;
@@ -759,13 +774,22 @@ export class Engine {
           site.reservesRemaining = Math.max(0, site.reservesRemaining - extracted);
         }
       }
-      // Hydroponics convert ice into food (Section 08), within available ice.
-      if (sys.hydroponics > 0) {
-        const iceWanted = sys.hydroponics * t.hydroponicsIceUse;
+      // Agri-domes convert ice into food (Section 08), within available ice. Output now scales with
+      // the host world's type (Section 24): an ocean dome out-farms a barren one (`agriFoodMult`).
+      let domes = 0; // raw dome count drives ice draw
+      let effDomes = 0; // type-weighted domes drive food output
+      for (const c of coloniesOf(sys)) {
+        const n = c.buildings.hydroponics;
+        if (n <= 0) continue;
+        domes += n;
+        effDomes += n * agriFoodMult(c.bodyType);
+      }
+      if (domes > 0) {
+        const iceWanted = domes * t.hydroponicsIceUse;
         const iceUsed = Math.min(iceWanted, sys.stockpile.ice);
         sys.stockpile.ice -= iceUsed;
         const ratio = iceWanted > 0 ? iceUsed / iceWanted : 0;
-        sys.stockpile.food += sys.hydroponics * t.hydroponicsFoodOutput * ratio;
+        sys.stockpile.food += effDomes * t.hydroponicsFoodOutput * ratio;
       }
       // Production chains (Section 07b): reactors supply power, processors run recipes.
       this.resolveProcessors(sys, efficiency);
@@ -780,17 +804,19 @@ export class Engine {
    */
   private resolveProcessors(sys: System, efficiency: number): void {
     const t = this.config.tuning;
+    // Processor/reactor/power-grid counts are aggregated across the system's bodies (Section 24).
+    const buildings = systemBuildings(sys);
     // Total power the system's processors want this turn.
     let powerNeed = 0;
-    for (const recipe of t.recipes) powerNeed += (sys.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    for (const recipe of t.recipes) powerNeed += (buildings.processors[recipe.id] ?? 0) * recipe.powerDraw;
     if (powerNeed <= 0) return; // no processors → nothing to power or run
 
     // Baseline power = free baseline + Power Grid upgrades (Section 07c); reactors fill the gap.
-    const baseline = t.basePowerPerSystem + sys.powerGrid * t.infrastructure.powerCapacityPerLevel;
+    const baseline = t.basePowerPerSystem + buildings.powerGrid * t.infrastructure.powerCapacityPerLevel;
     let powerCapacity = baseline;
     const fromReactors = Math.min(
       Math.max(0, powerNeed - baseline),
-      sys.reactors * t.reactorPowerOutput,
+      buildings.reactors * t.reactorPowerOutput,
     );
     if (fromReactors > 0) {
       const h3Want = (fromReactors / t.reactorPowerOutput) * t.reactorHelium3Use;
@@ -802,7 +828,7 @@ export class Engine {
     const powerFactor = Math.max(0, Math.min(1, powerCapacity / powerNeed));
 
     for (const recipe of t.recipes) {
-      const count = sys.processors[recipe.id] ?? 0;
+      const count = buildings.processors[recipe.id] ?? 0;
       if (count <= 0) continue;
       const scale = count * efficiency * powerFactor; // desired throughput
       if (scale <= 0) continue;
@@ -1130,7 +1156,7 @@ export class Engine {
     const t = this.config.tuning;
     let def = sys.defense;
     def += sys.platforms * t.platformDefense;
-    def += sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+    def += buildingTotal(sys, "miningRigs") * t.infrastructure.miningDefenseBonusPerLevel;
     for (const m of sys.megastructures) def += t.megastructures[m].defenseBonus;
     if (sys.hasDepot) def += t.depotDefenseBonus;
     if (sys.owner) def += this.stationedDefense(sys.id, sys.owner);
@@ -1447,8 +1473,10 @@ export class Engine {
     for (const corp of this.corps) {
       for (const sysId of corp.ownedSystemIds) {
         const sys = this.galaxy.system(sysId);
+        // Building counts are aggregated across the system's bodies (Section 24).
+        const buildings = systemBuildings(sys);
         // Mining Rig fortification lowers a system's upkeep (Section 07c).
-        const upkeepFrac = Math.max(0, 1 - sys.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
+        const upkeepFrac = Math.max(0, 1 - buildings.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
         corp.credits -= sys.upkeep * upkeepFrac;
 
         // Life support (ice) and food demand scale with population (Section 08).
@@ -1463,14 +1491,14 @@ export class Engine {
         // Habitability gate (Section 21): a population can only take root where there is a
         // habitable world or an artificial habitat (hydroponics). Dead stars (white dwarf /
         // neutron) and giant-only systems stay pure industrial outposts unless terraformed.
-        const habitable = systemHasHabitableBody(sys) || sys.hydroponics > 0;
+        const habitable = systemHasHabitableBody(sys) || buildings.hydroponics > 0;
         const thriving = fed && food.local && habitable;
 
         // Habitat upgrades raise both tax yield and growth speed (Section 07c); megastructures
         // (space elevator / ringworld) accelerate growth further (Section 22).
-        const habitatTaxMult = 1 + sys.habitats * t.infrastructure.habitatTaxBonusPerLevel;
+        const habitatTaxMult = 1 + buildings.habitats * t.infrastructure.habitatTaxBonusPerLevel;
         const megaGrowth = sys.megastructures.reduce((s, m) => s + t.megastructures[m].growthBonus, 0);
-        const habitatGrowthMult = 1 + sys.habitats * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
+        const habitatGrowthMult = 1 + buildings.habitats * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
 
         // Tax: a fed, content population pays its charter holder (Sections 08/17).
         if (fed) {
@@ -1563,10 +1591,11 @@ export class Engine {
         value += sys.sites.reduce((s, st) => s + st.extractorLevel, 0) * v.extractorValue;
         value += v.populationValue[sys.populationStage] * (1 - sys.unrest);
         if (sys.hasDepot) value += v.depotValue;
-        value += sys.hydroponics * (v.depotValue * 0.25);
-        value += Object.values(sys.processors).reduce((s, n) => s + n, 0) * v.processorValue;
-        value += sys.reactors * v.reactorValue;
-        value += (sys.miningRigs + sys.habitats + sys.powerGrid) * v.infraLevelValue;
+        const buildings = systemBuildings(sys);
+        value += buildings.hydroponics * (v.depotValue * 0.25);
+        value += Object.values(buildings.processors).reduce((s, n) => s + n, 0) * v.processorValue;
+        value += buildings.reactors * v.reactorValue;
+        value += (buildings.miningRigs + buildings.habitats + buildings.powerGrid) * v.infraLevelValue;
         value += sys.platforms * this.config.tuning.platformCost;
         // Megastructures are prestige capital (Section 22).
         for (const m of sys.megastructures) value += this.config.tuning.megastructures[m].valuation;
@@ -1761,7 +1790,7 @@ export class Engine {
         // Stationary defense platforms harden the system's tunnel mouths (Section 15).
         def += sys.platforms * this.config.tuning.platformDefense;
         // Mining Rig fortification hardens the system's tunnel mouths (Section 07c).
-        def += sys.miningRigs * this.config.tuning.infrastructure.miningDefenseBonusPerLevel;
+        def += buildingTotal(sys, "miningRigs") * this.config.tuning.infrastructure.miningDefenseBonusPerLevel;
         // Megastructures (orbital station, etc.) harden the system's tunnel mouths (Section 22).
         for (const m of sys.megastructures) def += this.config.tuning.megastructures[m].defenseBonus;
         // Depot patrols harden connected tunnels against raiders (Section 12).

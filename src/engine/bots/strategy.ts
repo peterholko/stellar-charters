@@ -5,7 +5,7 @@
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
 import { MAX_RANGE_TIER, MEGASTRUCTURE_KINDS, RESOURCES, type MegastructureKind, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
-import { EXTRACTOR_CAP, effectiveYields, potentialYields } from "../bodies.js";
+import { EXTRACTOR_CAP, effectiveYields, potentialYields, systemBuildings, buildingTotal, coloniesOf, canBuildOnBody, agriFoodMult, factoryCostMult, type BuildingKind } from "../bodies.js";
 import type { PlayerView } from "./bot.js";
 
 /** Current per-turn output of a system (worked sites, net of depletion/stellar). */
@@ -28,6 +28,17 @@ const RAW_RESOURCES: ReadonlySet<Resource> = new Set<Resource>([
 
 /** Cap on Processor modules of a given recipe per system (bot self-restraint). */
 const PROCESSOR_CAP_PER_RECIPE = 3;
+
+/** Pick the best body in a system to host a building of `kind` (Section 24 type affinities):
+ *  agri-domes go to the richest farmland (ocean), factories to the cheapest industrial world
+ *  (rocky/lava/belt). Returns null when no body can host it (e.g. agri on a giant-only system). */
+function pickBuildBody(sys: System, kind: BuildingKind): string | null {
+  const cands = coloniesOf(sys).filter((c) => canBuildOnBody(kind, c.bodyType));
+  if (cands.length === 0) return null;
+  if (kind === "agridome") cands.sort((a, b) => agriFoodMult(b.bodyType) - agriFoodMult(a.bodyType));
+  else if (kind === "factory") cands.sort((a, b) => factoryCostMult(a.bodyType) - factoryCostMult(b.bodyType));
+  return cands[0]!.key;
+}
 
 /** Rough commercial value of a system: full-development yield priced at base, minus claim cost.
  *  Uses *potential* output so an unclaimed system (whose deposits aren't worked yet) is valued
@@ -91,9 +102,12 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
   // the raws are carried into next turn's upgrade phase instead of dumped on the market. This is
   // what lets the upgrade sink actually fire — and selling less also lifts the raw's price.
   const owned = view.me.ownedSystemIds.map((id) => view.galaxy.system(id));
-  const miningHeadroom = owned.some((s) => s.miningRigs < inf.cap);
-  const habitatHeadroom = owned.some((s) => s.populationStage !== "outpost" && s.habitats < inf.cap);
-  const powerHeadroom = owned.some((s) => Object.values(s.processors).some((n) => n > 0) && s.powerGrid < inf.cap);
+  const miningHeadroom = owned.some((s) => buildingTotal(s, "miningRigs") < inf.cap);
+  const habitatHeadroom = owned.some((s) => s.populationStage !== "outpost" && buildingTotal(s, "habitats") < inf.cap);
+  const powerHeadroom = owned.some((s) => {
+    const b = systemBuildings(s);
+    return Object.values(b.processors).some((n) => n > 0) && b.powerGrid < inf.cap;
+  });
   // Megastructures (Section 22) are huge metal sinks: once a system can host one, hold a large
   // metals reserve back from the exchange to fund construction instead of dumping at the floor.
   const megaHeadroom =
@@ -107,7 +121,7 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
       let reserve = buffer;
       if (r === "food") reserve = Math.max(buffer, t.foodNeed[sys.populationStage] * 2);
       if (r === "ice") {
-        reserve = Math.max(buffer, t.iceNeed[sys.populationStage] * 2 + sys.hydroponics * t.hydroponicsIceUse * 2);
+        reserve = Math.max(buffer, t.iceNeed[sys.populationStage] * 2 + buildingTotal(sys, "hydroponics") * t.hydroponicsIceUse * 2);
       }
       // Keep a few rare isotopes back to build higher-tier warships once Range 2+,
       // but still sell the surplus (frontier income funds those hulls).
@@ -157,12 +171,14 @@ export function maybeBuildHydroponics(view: PlayerView): Order[] {
   if (view.me.credits < view.config.tuning.hydroponicsCost * 1.5) return [];
   for (const id of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(id);
-    if (sys.hydroponics >= 4) continue; // cap modules per system
+    const hydroponics = buildingTotal(sys, "hydroponics");
+    if (hydroponics >= 4) continue; // cap modules per system
     const need = view.config.tuning.foodNeed[sys.populationStage];
-    const localFood = liveYields(view, sys).food + sys.hydroponics * view.config.tuning.hydroponicsFoodOutput;
+    const localFood = liveYields(view, sys).food + hydroponics * view.config.tuning.hydroponicsFoodOutput;
     // A colony that can't feed itself locally — local food is what unlocks growth now.
     if (need > 0 && localFood < need) {
-      return [{ kind: "buildHydroponics", systemId: id }];
+      const bodyKey = pickBuildBody(sys, "agridome"); // best farmland (ocean) — Section 24
+      if (bodyKey) return [{ kind: "buildHydroponics", systemId: id, bodyKey }];
     }
   }
   return [];
@@ -186,7 +202,7 @@ function systemCanFeed(view: PlayerView, sys: System, recipe: { inputs: Partial<
       if ((live[res] ?? 0) <= 0) return false;
     } else {
       const producer = recipeProducing(view, res);
-      if (!producer || (sys.processors[producer.id] ?? 0) <= 0) return false;
+      if (!producer || (systemBuildings(sys).processors[producer.id] ?? 0) <= 0) return false;
     }
   }
   return true;
@@ -200,9 +216,10 @@ export function maybeBuildProcessor(view: PlayerView): Order[] {
     if (view.me.credits < recipe.buildCost * 1.4) continue;
     for (const id of view.me.ownedSystemIds) {
       const sys = view.galaxy.system(id);
-      if ((sys.processors[recipe.id] ?? 0) >= PROCESSOR_CAP_PER_RECIPE) continue;
+      if ((systemBuildings(sys).processors[recipe.id] ?? 0) >= PROCESSOR_CAP_PER_RECIPE) continue;
       if (!systemCanFeed(view, sys, recipe)) continue;
-      return [{ kind: "buildProcessor", systemId: id, recipeId: recipe.id }];
+      const bodyKey = pickBuildBody(sys, "factory"); // cheapest industrial world — Section 24
+      return [{ kind: "buildProcessor", systemId: id, recipeId: recipe.id, ...(bodyKey ? { bodyKey } : {}) }];
     }
   }
   return [];
@@ -214,11 +231,15 @@ export function maybeBuildReactor(view: PlayerView): Order[] {
   if (view.me.credits < t.reactorCost * 1.4) return [];
   for (const id of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(id);
+    const buildings = systemBuildings(sys);
     let draw = 0;
-    for (const recipe of t.recipes) draw += (sys.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    for (const recipe of t.recipes) draw += (buildings.processors[recipe.id] ?? 0) * recipe.powerDraw;
     if (draw <= 0) continue;
-    const capacity = t.basePowerPerSystem + sys.reactors * t.reactorPowerOutput;
-    if (capacity < draw) return [{ kind: "buildReactor", systemId: id }];
+    const capacity = t.basePowerPerSystem + buildings.reactors * t.reactorPowerOutput;
+    if (capacity < draw) {
+      const bodyKey = pickBuildBody(sys, "reactor");
+      return [{ kind: "buildReactor", systemId: id, ...(bodyKey ? { bodyKey } : {}) }];
+    }
   }
   return [];
 }
@@ -431,7 +452,7 @@ function attackForceOn(view: PlayerView, sys: System): number {
 /** Estimate a system's defensive strength (mirrors the engine, incl. allied reinforcement). */
 function systemDefenseEstimate(view: PlayerView, sys: System): number {
   const t = view.config.tuning;
-  let d = sys.defense + sys.platforms * t.platformDefense + sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+  let d = sys.defense + sys.platforms * t.platformDefense + buildingTotal(sys, "miningRigs") * t.infrastructure.miningDefenseBonusPerLevel;
   for (const m of sys.megastructures) d += t.megastructures[m].defenseBonus;
   if (sys.hasDepot) d += t.depotDefenseBonus;
   for (const owner of view.corporations) {
@@ -619,25 +640,29 @@ export function maybeUpgradeInfrastructure(view: PlayerView): Order[] {
     rawBase: number,
   ): void => {
     if (level >= inf.cap) return;
+    // Habitats need a livable world, mining rigs a solid one (Section 24) — skip if none can host it.
+    const bodyKey = pickBuildBody(sys, track === "mining" ? "mining" : track === "habitat" ? "habitat" : "power");
+    if (!bodyKey) return;
     const factor = level + 1; // cost scales with the level being reached
     const cost = creditBase * factor;
     const need = rawBase * factor;
     if (budget < cost || stock[raw] < need) return;
     budget -= cost;
     stock[raw] -= need;
-    orders.push({ kind: "upgradeInfrastructure", systemId: sys.id, track });
+    orders.push({ kind: "upgradeInfrastructure", systemId: sys.id, track, bodyKey });
   };
 
   for (const sys of systems) {
     if (orders.length >= 5) break; // a handful of upgrades per turn is plenty
+    const buildings = systemBuildings(sys);
     if (grossYieldValue(view, sys) > 0) {
-      tryUpgrade(sys, "mining", sys.miningRigs, "metals", inf.miningCreditCost, inf.miningMetalsCost);
+      tryUpgrade(sys, "mining", buildings.miningRigs, "metals", inf.miningCreditCost, inf.miningMetalsCost);
     }
     if (sys.populationStage !== "outpost") {
-      tryUpgrade(sys, "habitat", sys.habitats, "silicates", inf.habitatCreditCost, inf.habitatSilicatesCost);
+      tryUpgrade(sys, "habitat", buildings.habitats, "silicates", inf.habitatCreditCost, inf.habitatSilicatesCost);
     }
-    if (Object.values(sys.processors).some((n) => n > 0)) {
-      tryUpgrade(sys, "power", sys.powerGrid, "helium3", inf.powerCreditCost, inf.powerHelium3Cost);
+    if (Object.values(buildings.processors).some((n) => n > 0)) {
+      tryUpgrade(sys, "power", buildings.powerGrid, "helium3", inf.powerCreditCost, inf.powerHelium3Cost);
     }
   }
   return orders;

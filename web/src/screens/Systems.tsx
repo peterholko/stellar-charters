@@ -8,7 +8,7 @@ import {
   systemArchetype,
   sumPotential,
 } from "../match/format";
-import { RESOURCES } from "@engine";
+import { RESOURCES, buildingTotal } from "@engine";
 import { PlanetArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 import { Panel, PanelTitle, Badge, Bar } from "../ui/primitives";
@@ -57,7 +57,7 @@ export function Systems() {
                     </div>
                     <div className="sys-card__infra">
                       {s.hasDepot && <Badge tone="accent">Depot</Badge>}
-                      {s.hydroponics > 0 && <Badge tone="accent">Hydro ×{s.hydroponics}</Badge>}
+                      {buildingTotal(s, "hydroponics") > 0 && <Badge tone="accent">Hydro ×{buildingTotal(s, "hydroponics")}</Badge>}
                       {s.platforms > 0 && <Badge tone="accent">Platform ×{s.platforms}</Badge>}
                       {s.unrest > 0.01 && <Badge tone="negative">Unrest</Badge>}
                     </div>

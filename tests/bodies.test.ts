@@ -5,8 +5,13 @@
 import { describe, expect, it } from "vitest";
 import {
   EXTRACTOR_CAP,
+  agriFoodMult,
+  canBuildOnBody,
+  coloniesOf,
   effectiveYields,
+  factoryCostMult,
   generateSystemBodies,
+  getBodyBuildings,
   potentialYields,
   sitesFromBodies,
   sitesFromYields,
@@ -97,6 +102,66 @@ describe("extraction sites + effective yields (Section 21)", () => {
     const withoutOcean = { sites: [], bodies: { starType: "whiteDwarf", planets: [], asteroidBelts: [] } } as unknown as System;
     expect(systemHasHabitableBody(withOcean)).toBe(true);
     expect(systemHasHabitableBody(withoutOcean)).toBe(false);
+  });
+});
+
+describe("colony read-model (Section 24)", () => {
+  it("groups deposits + buildings under each body in orbital order", () => {
+    const bodies = gen(3, "core");
+    const sites = sitesFromBodies(bodies);
+    const sys = { id: "x", sites, bodies, bodyBuildings: {} } as unknown as System;
+    const colonies = coloniesOf(sys);
+    // One colony per planet + belt (+ a star-corona colony only when the star carries deposits).
+    const expected = bodies.planets.length + bodies.asteroidBelts.length + (bodies.starDeposits?.length ? 1 : 0);
+    expect(colonies.length).toBe(expected);
+    // Returned in orbital order (corona at -1 sorts first).
+    const orbits = colonies.map((c) => c.orbit);
+    expect([...orbits].sort((a, b) => a - b)).toEqual(orbits);
+    // Every site is attributed to exactly one colony; the union is the whole site list.
+    expect(colonies.flatMap((c) => c.sites).length).toBe(sites.length);
+    // A building placed on a specific body surfaces on that body's colony only.
+    getBodyBuildings(sys, "planet:0").reactors = 2;
+    const reread = coloniesOf(sys);
+    expect(reread.find((c) => c.key === "planet:0")!.buildings.reactors).toBe(2);
+    expect(reread.filter((c) => c.key !== "planet:0").every((c) => c.buildings.reactors === 0)).toBe(true);
+  });
+
+  it("gates buildings by planet type (Section 24 affinities)", () => {
+    // Domes + habitats need a livable surface; giants/belts host only orbital industry.
+    expect(canBuildOnBody("agridome", "ocean")).toBe(true);
+    expect(canBuildOnBody("agridome", "rocky")).toBe(true);
+    expect(canBuildOnBody("agridome", "gasGiant")).toBe(false);
+    expect(canBuildOnBody("agridome", "belt")).toBe(false);
+    expect(canBuildOnBody("agridome", "lava")).toBe(false);
+    expect(canBuildOnBody("habitat", "iceGiant")).toBe(false);
+    // Industry runs anywhere with a foothold; nothing builds on the star.
+    expect(canBuildOnBody("factory", "gasGiant")).toBe(true);
+    expect(canBuildOnBody("reactor", "belt")).toBe(true);
+    expect(canBuildOnBody("factory", "star")).toBe(false);
+    // Mining fortifies solid worlds + belts, never a gas envelope.
+    expect(canBuildOnBody("mining", "belt")).toBe(true);
+    expect(canBuildOnBody("mining", "gasGiant")).toBe(false);
+  });
+
+  it("ranks farmland + factory cost by world type", () => {
+    // Ocean is the breadbasket, barren the worst arable land.
+    expect(agriFoodMult("ocean")).toBeGreaterThan(agriFoodMult("rocky"));
+    expect(agriFoodMult("rocky")).toBeGreaterThan(agriFoodMult("barren"));
+    // Metal-rich rocky/lava worlds tool up cheaper than oceans or orbital-over-giants.
+    expect(factoryCostMult("rocky")).toBeLessThan(1);
+    expect(factoryCostMult("lava")).toBeLessThan(factoryCostMult("rocky"));
+    expect(factoryCostMult("ocean")).toBeGreaterThan(1);
+  });
+
+  it("folds a legacy yields system into a single synthetic colony", () => {
+    const sites = sitesFromYields({
+      ice: 12, metals: 4, silicates: 0, helium3: 0, rareIsotopes: 0, food: 6,
+      fuel: 0, alloys: 0, polymers: 0, components: 0, antimatter: 0,
+    });
+    const sys = { id: "y", sites, bodyBuildings: {} } as unknown as System;
+    const colonies = coloniesOf(sys);
+    expect(colonies.length).toBe(1); // all legacy sites share the "legacy:0" body
+    expect(colonies[0]!.sites.length).toBe(sites.length);
   });
 });
 

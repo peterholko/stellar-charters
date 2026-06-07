@@ -10,6 +10,7 @@ import type { Engine } from "./engine.js";
 import type { TurnReport } from "./report.js";
 import {
   RESOURCES,
+  type BodyBuildings,
   type BodyKind,
   type MegastructureKind,
   type PlanetType,
@@ -23,8 +24,18 @@ import {
   type Stockpile,
   type SystemPosition,
 } from "./types.js";
+import { systemBuildings } from "./bodies.js";
 
 export type GamePhase = "play" | "over";
+
+/** Deep-copy a per-body building map so the client snapshot never aliases live engine state. */
+function cloneBodyBuildings(bb: Record<string, BodyBuildings>): Record<string, BodyBuildings> {
+  const out: Record<string, BodyBuildings> = {};
+  for (const [key, b] of Object.entries(bb)) {
+    out[key] = { ...b, processors: { ...b.processors } };
+  }
+  return out;
+}
 
 /** A human seat in a (possibly shared) game. */
 export interface ClientPlayer {
@@ -78,6 +89,9 @@ export interface ClientSystem {
   innerRing: boolean;
   owner: string | null;
   populationStage: PopulationStage;
+  /** Per-body building map (Section 24): bodyKey → counts. The colony screen renders from this. */
+  bodyBuildings: Record<string, BodyBuildings>;
+  /** System-wide aggregate of hydroponics across all bodies — convenience for compact UI badges. */
   hydroponics: number;
   platforms: number;
   /** Megastructures built here (Section 22). */
@@ -227,7 +241,8 @@ export function buildClientState(
       innerRing: s.innerRing,
       owner: s.owner,
       populationStage: s.populationStage,
-      hydroponics: s.hydroponics,
+      bodyBuildings: cloneBodyBuildings(s.bodyBuildings),
+      hydroponics: systemBuildings(s).hydroponics,
       platforms: s.platforms,
       megastructures: [...s.megastructures],
       hasDepot: s.hasDepot,

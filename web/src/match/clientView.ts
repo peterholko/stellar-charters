@@ -70,7 +70,10 @@ export function reconstructView(state: ClientState): PlayerView {
     if (!sys) continue;
     sys.owner = cs.owner;
     sys.populationStage = cs.populationStage;
-    sys.hydroponics = cs.hydroponics;
+    sys.bodyBuildings = {};
+    for (const [key, b] of Object.entries(cs.bodyBuildings)) {
+      sys.bodyBuildings[key] = { ...b, processors: { ...b.processors } };
+    }
     sys.platforms = cs.platforms;
     sys.megastructures = [...cs.megastructures];
     sys.hasDepot = cs.hasDepot;

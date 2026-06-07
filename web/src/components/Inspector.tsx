@@ -1,4 +1,4 @@
-import { EXTRACTOR_CAP, MEGASTRUCTURE_KINDS, canRaidRoute, raidStrength, stellarOutputMult, systemSeed, type MegastructureKind, type PlayerView, type System } from "@engine";
+import { EXTRACTOR_CAP, MEGASTRUCTURE_KINDS, buildingTotal, canRaidRoute, raidStrength, stellarOutputMult, systemSeed, type MegastructureKind, type PlayerView, type System } from "@engine";
 import { store, type Selection } from "../match/store";
 import {
   archetypeLabel,
@@ -20,8 +20,9 @@ import {
 } from "../match/format";
 import { RESOURCES } from "@engine";
 import { Badge, Bar, Panel, PanelTitle, ActionButton } from "../ui/primitives";
-import { PlanetArt, PlanetTypeArt, ArtSlot, StarArt } from "../theme/ArtSlot";
+import { PlanetArt, ArtSlot, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
+import { ColonyPanel } from "./ColonyPanel";
 
 export function Inspector({
   view,
@@ -155,6 +156,7 @@ export function Inspector({
   const arch = systemArchetype(sys);
   const t = view.config.tuning;
   const affordClaim = view.me.credits >= sys.claimCost;
+  const hydroponics = buildingTotal(sys, "hydroponics");
 
   return (
     <Panel className="inspector">
@@ -193,8 +195,7 @@ export function Inspector({
             {open && <div><dt>Claim cost</dt><dd>{formatCr(sys.claimCost)}</dd></div>}
           </dl>
 
-          <BodyRoster sys={sys} />
-          <SystemComposition sys={sys} canBuild={mine && !view.me.isFreeOperator} turn={view.turn} totalTurns={view.config.turns} assayCost={t.assayCost} />
+          <ColonyPanel sys={sys} view={view} canBuild={mine && !view.me.isFreeOperator} />
           {!mine && sys.owner && (
             <>
               <RivalSabotage view={view} humanCorpId={humanCorpId} sys={sys} />
@@ -224,16 +225,16 @@ export function Inspector({
                   </div>
                 ))}
               </div>
-              {(sys.hasDepot || sys.hydroponics > 0 || sys.platforms > 0) && (
+              {(sys.hasDepot || hydroponics > 0 || sys.platforms > 0) && (
                 <div className="infra-art">
                   {sys.hasDepot && <ArtSlot slot="infra-depot" className="infra-thumb" />}
-                  {sys.hydroponics > 0 && <ArtSlot slot="infra-hydroponics" className="infra-thumb" />}
+                  {hydroponics > 0 && <ArtSlot slot="infra-hydroponics" className="infra-thumb" />}
                   {sys.platforms > 0 && <ArtSlot slot="infra-platform" className="infra-thumb" />}
                 </div>
               )}
               <div className="infra-row">
                 <Badge tone={sys.hasDepot ? "accent" : "neutral"}>Depot {sys.hasDepot ? "✓" : "—"}</Badge>
-                <Badge tone={sys.hydroponics ? "accent" : "neutral"}>Hydro ×{sys.hydroponics}</Badge>
+                <Badge tone={hydroponics ? "accent" : "neutral"}>Hydro ×{hydroponics}</Badge>
                 <Badge tone={sys.platforms ? "accent" : "neutral"}>Platform ×{sys.platforms}/{t.platformCap}</Badge>
                 {sys.megastructures.map((m) => (
                   <Badge key={m} tone="accent">{megastructureShort[m]}</Badge>
@@ -269,92 +270,6 @@ export function Inspector({
   );
 }
 
-/** Per-body deposit list (Section 21): what the system carries, what's worked, and the
- *  extractor/assay actions to develop it. */
-function SystemComposition({ sys, canBuild, turn, totalTurns, assayCost }: { sys: System; canBuild: boolean; turn: number; totalTurns: number; assayCost: number }) {
-  if (sys.sites.length === 0) return null;
-  const sites = [...sys.sites].sort((a, b) => a.orbit - b.orbit || a.resource.localeCompare(b.resource));
-  const star = sys.bodies?.starType;
-  // Is a stellar event acting on output THIS turn? (a flare brownout or a pulse surge)
-  const stellar = star
-    ? sys.sites.reduce(
-        (acc, s) => {
-          const m = stellarOutputMult(star, s, systemSeed(sys), turn, totalTurns);
-          return { min: Math.min(acc.min, m), max: Math.max(acc.max, m) };
-        },
-        { min: 1, max: 1 },
-      )
-    : { min: 1, max: 1 };
-  const stellarBadge =
-    stellar.min <= 0 ? { tone: "negative" as const, label: "Flare — extractors offline" }
-    : stellar.max > 1.05 ? { tone: "accent" as const, label: "Output surge this turn" }
-    : stellar.min < 0.95 ? { tone: "warn" as const, label: "Output dampened" }
-    : null;
-  return (
-    <div className="composition">
-      <div className="composition__head">
-        {star && <StarArt starType={star} className="composition__star" />}
-        <h4 className="composition__title">System composition</h4>
-        {stellarBadge && <Badge tone={stellarBadge.tone}>{stellarBadge.label}</Badge>}
-      </div>
-      <div className="composition__list">
-        {sites.map((site) => {
-          const offline = site.disabledUntil > turn;
-          const dry = site.reservesRemaining !== null && site.reservesRemaining <= 0;
-          const worked = site.extractorLevel > 0;
-          // Reserves are fogged to null until surveyed, so only call a deposit "renewable" once
-          // it's actually been prospected — otherwise its reserves are simply unknown.
-          const reserveStr = !site.prospected
-            ? "reserves ?"
-            : site.reservesRemaining === null
-            ? "renewable"
-            : `${Math.round(site.reservesRemaining)} left`;
-          return (
-            <div key={site.key} className={`site-row${offline ? " site-row--offline" : ""}`}>
-              <div className="site-row__body">
-                <ResourceIcon resource={site.resource} size={16} />
-                <div className="site-row__text">
-                  <strong>{resourceLabels[site.resource]}</strong>
-                  <span className="site-row__sub">
-                    {site.bodyLabel} · {site.prospected ? `rich ${site.richness}` : "unsurveyed"} · {reserveStr}
-                  </span>
-                </div>
-                <span className="site-row__ext">
-                  {offline ? <Badge tone="negative">Offline</Badge>
-                    : dry ? <Badge tone="neutral">Depleted</Badge>
-                    : worked ? <Badge tone="accent">Lv {site.extractorLevel}/{EXTRACTOR_CAP}</Badge>
-                    : <Badge tone="neutral">Unworked</Badge>}
-                </span>
-              </div>
-              {canBuild && (
-                <div className="site-row__actions">
-                  {site.extractorLevel < EXTRACTOR_CAP && !dry && (
-                    <ActionButton
-                      icon="systems"
-                      onClick={() => store.stage({ kind: "buildExtractor", systemId: sys.id, siteKey: site.key })}
-                    >
-                      {worked ? "Deepen" : "Work"}
-                    </ActionButton>
-                  )}
-                  {!site.prospected && (
-                    <ActionButton
-                      icon="radar"
-                      title={`Assay · ${formatCr(assayCost)}`}
-                      onClick={() => store.stage({ kind: "assay", systemId: sys.id, siteKey: site.key })}
-                    >
-                      Assay
-                    </ActionButton>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 /** Redeploy the strongest warship from another owned system to this one (Section 23 mobilisation) —
  *  mass force at a staging border for an invasion, or reinforce a threatened world. */
 function ReinforceButton({ view, sys }: { view: PlayerView; sys: System }) {
@@ -372,37 +287,6 @@ function ReinforceButton({ view, sys }: { view: PlayerView; sys: System }) {
     >
       Reinforce
     </ActionButton>
-  );
-}
-
-/** The system's worlds + asteroid belts in orbital order (Section 21). */
-function BodyRoster({ sys }: { sys: System }) {
-  const b = sys.bodies;
-  if (!b || (b.planets.length === 0 && b.asteroidBelts.length === 0)) return null;
-  const bodies = [
-    ...b.planets.map((p) => ({ kind: "planet" as const, orbit: p.orbit, type: p.type, habitable: p.habitable })),
-    ...b.asteroidBelts.map((belt) => ({ kind: "belt" as const, orbit: belt.orbit })),
-  ].sort((x, y) => x.orbit - y.orbit);
-  return (
-    <div className="bodies">
-      <h4 className="composition__title">Worlds ({b.planets.length} planet{b.planets.length === 1 ? "" : "s"}{b.asteroidBelts.length ? `, ${b.asteroidBelts.length} belt${b.asteroidBelts.length === 1 ? "" : "s"}` : ""})</h4>
-      <div className="bodies__list">
-        {bodies.map((body, i) =>
-          body.kind === "planet" ? (
-            <div key={i} className="body-chip" title={planetTypeLabel[body.type]}>
-              <PlanetTypeArt planetType={body.type} className="body-chip__art" />
-              <span className="body-chip__label">{planetTypeLabel[body.type]}</span>
-              {body.habitable && <span className="body-chip__tag">Habitable</span>}
-            </div>
-          ) : (
-            <div key={i} className="body-chip" title="Asteroid belt">
-              <span className="body-chip__art body-chip__belt" aria-hidden />
-              <span className="body-chip__label">Asteroid belt</span>
-            </div>
-          ),
-        )}
-      </div>
-    </div>
   );
 }
 

@@ -1015,6 +1015,41 @@ turn order with no same-turn chaining.
 
 Prototype the first 12 turns as a text or spreadsheet simulation with 4–8 players. Validate the opening auction, first exports, order fill UX, convoy visibility, warp-route traffic history, one-turn route interdiction, privateer economics, and Range 2 expansion before adding the full finance/takeover and Free Operator layers.
 
+## Planets as Colonies
+
+**Section 24.** Building on the Section 21 body-driven economy, planets and asteroid belts become
+first-class **colonies** you develop, and the system becomes a **container** for its bodies, its
+star, and the fleets stationed there — a Master-of-Orion-style colony layer. Buildings are owned by
+a body, not the system: each `System.bodyBuildings` maps a `bodyKey` (`planet:<i>` / `belt:<i>` /
+`star:0`, matching the Section 21 site-key prefixes) to that body's factory/reactor/agri-dome/
+habitat/mining-rig/power-grid counts. The system still holds the **single shared stockpile** its
+colonies fill and its convoys/depot ship from, and population/food/tax/conquest stay system-level —
+so this re-home is balance-neutral by construction (`coloniesOf` is a pure read-model; the engine's
+production, valuation, defense, and upkeep read the same totals via `systemBuildings` /
+`buildingTotal`, just nested one level deeper). Build orders carry an optional `bodyKey`; an order
+without one targets the system's primary body, so older replay logs resolve unchanged.
+
+### Planet-type affinities
+
+A world's **type** now shapes what you build on it, making the colony screen a real decision:
+
+- **Gating** — agri-domes and habitats need a livable surface (rocky / desert / ocean / barren);
+  lava worlds are too hostile; gas/ice giants and belts host only orbital industry (factories,
+  reactors, power grid) and, for belts and solid worlds, mining-rig fortification; the star hosts
+  nothing. (`canBuildOnBody`.)
+- **Farmland** — agri-dome food output scales with the host world: ocean ×1.5, rocky ×1.0,
+  desert ×0.85, barren ×0.65 (`agriFoodMult`), so ocean worlds are the breadbaskets.
+- **Industry** — factory build cost scales with the world: lava ×0.8 and rocky ×0.85 are the cheap
+  metal-rich workshops, belts ×0.9, oceans ×1.2 and orbital-over-giants ×1.1 a premium
+  (`factoryCostMult`).
+
+Bots pick the best valid body per build (domes to the richest farmland, factories to the cheapest
+industrial world). A 100-game / 8-player sweep shows the affinity layer leaves the macro balance
+unchanged (leader/median ≈ 16.9, metals price-floor 0%, food-growth 90%) while making planet variety
+drive build decisions. The colony screen (web `ColonyPanel`) is the management UI: pick a body, work
+its deposits, and build its structures, with a system-wide power meter since reactors/power pool at
+the container.
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

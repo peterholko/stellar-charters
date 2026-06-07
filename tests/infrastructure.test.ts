@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { Engine } from "../src/engine/engine.js";
+import { buildingTotal, getBodyBuildings, primaryBodyKey } from "../src/engine/bodies.js";
 import { loadScenario, type GameConfig } from "../src/engine/config.js";
 import type { Bot, BotFactory, PlayerView } from "../src/engine/bots/bot.js";
 import type { BidOrder, Order, System } from "../src/engine/types.js";
@@ -69,19 +70,19 @@ describe("system infrastructure upgrades", () => {
     const start = corpOf(e).credits;
     e.stepTurn();
     const sys = e.galaxy.system("s0");
-    expect(sys.miningRigs).toBe(1);
+    expect(buildingTotal(sys, "miningRigs")).toBe(1);
     expect(sys.stockpile.metals).toBeCloseTo(0, 6); // drawn from local stock
     expect(corpOf(e).credits).toBeCloseTo(start - 350, 6); // miningCreditCost only (raw was local)
   });
 
   it("refuses to upgrade past the cap", () => {
     const e = engineWith((sys) => {
-      sys.miningRigs = 4; // at cap
+      getBodyBuildings(sys, primaryBodyKey(sys)).miningRigs = 4; // at cap
       sys.stockpile.metals = 1000;
     }, true, [{ kind: "upgradeInfrastructure", systemId: "s0", track: "mining" }]);
     const start = corpOf(e).credits;
     e.stepTurn();
-    expect(e.galaxy.system("s0").miningRigs).toBe(4);
+    expect(buildingTotal(e.galaxy.system("s0"), "miningRigs")).toBe(4);
     expect(corpOf(e).credits).toBeCloseTo(start, 6); // nothing charged
   });
 
@@ -96,7 +97,7 @@ describe("system infrastructure upgrades", () => {
 
     const fort = engineWith((sys) => {
       sys.upkeep = 100;
-      sys.miningRigs = 2; // −2 × 0.1 = −20% upkeep
+      getBodyBuildings(sys, primaryBodyKey(sys)).miningRigs = 2; // −2 × 0.1 = −20% upkeep
     });
     const startFort = corpOf(fort).credits;
     fort.stepTurn();
@@ -110,7 +111,7 @@ describe("system infrastructure upgrades", () => {
         orbit: 0, habitable: false, resource: "metals", richness: 10, reservesRemaining: null,
         accessibility: 1, extractorLevel: 3, prospected: true, disabledUntil: 0,
       });
-      sys.miningRigs = 4;
+      getBodyBuildings(sys, primaryBodyKey(sys)).miningRigs = 4;
     });
     yieldCheck.stepTurn();
     expect(yieldCheck.galaxy.system("s0").stockpile.metals).toBeCloseTo(10, 6);
@@ -119,7 +120,7 @@ describe("system infrastructure upgrades", () => {
   it("Power Grid levels supply power, relieving a brownout without a reactor", () => {
     // Two alloys processors draw 4 power; base is 2 → brownout halves output to 2.
     const brown = engineWith((sys) => {
-      sys.processors = { alloys: 2 };
+      getBodyBuildings(sys, primaryBodyKey(sys)).processors = { alloys: 2 };
       sys.stockpile.metals = 100;
       sys.stockpile.helium3 = 100;
     }, false);
@@ -128,12 +129,84 @@ describe("system infrastructure upgrades", () => {
 
     // One Power Grid level adds 4 capacity → draw met → full output.
     const lit = engineWith((sys) => {
-      sys.processors = { alloys: 2 };
-      sys.powerGrid = 1;
+      const bb = getBodyBuildings(sys, primaryBodyKey(sys));
+      bb.processors = { alloys: 2 };
+      bb.powerGrid = 1;
       sys.stockpile.metals = 100;
       sys.stockpile.helium3 = 100;
     }, false);
     lit.stepTurn();
     expect(lit.galaxy.system("s0").stockpile.alloys).toBeCloseTo(4, 6);
+  });
+});
+
+/** A system anchored by a habitable ocean world (so no starter "home garden" is injected — that
+ *  would add food we don't control) plus a second `testType` planet at planet:1 we build the dome on. */
+function bodiesEngine(testType: "ocean" | "rocky"): Engine {
+  const cfg = loadScenario({
+    name: "affinity",
+    hubId: "hub",
+    players: 1,
+    turns: 4,
+    bots: ["noop"],
+    systems: [
+      { id: "hub", name: "Hub", yields: {}, claimCost: 0, upkeep: 0, defense: 99 },
+      {
+        id: "s0", name: "S0", yields: {}, claimCost: 100, upkeep: 0, defense: 1, innerRing: true,
+        bodies: {
+          starType: "mainSequence",
+          planets: [
+            { type: "ocean", orbit: 1, habitable: true, visualSeed: 0, deposits: [] }, // anchor — no deposits, no dome
+            { type: testType, orbit: 2, habitable: testType === "ocean", visualSeed: 0, deposits: [] }, // dome goes here
+          ],
+          asteroidBelts: [],
+        },
+      },
+    ],
+    routes: [
+      { a: "hub", b: "s0", transitTime: 1, stability: 0.9, capacity: 50, exposure: 0.3, authorityPresence: 0.8, requiredRange: 1, charted: true },
+    ],
+  });
+  cfg.tuning.fuelPerShipPerTurn = 0;
+  cfg.tuning.iceNeed = { ...cfg.tuning.iceNeed, outpost: 0 };
+  cfg.tuning.foodNeed = { ...cfg.tuning.foodNeed, outpost: 0 };
+  const reg = new Map<string, BotFactory>([["noop", () => new NoopBot()]]);
+  return new Engine(cfg, 0, reg);
+}
+
+describe("planet-type affinities (Section 24)", () => {
+  it("an ocean agri-dome out-farms a rocky one from the same ice", () => {
+    const food = (type: "ocean" | "rocky") => {
+      const e = bodiesEngine(type);
+      const sys = e.galaxy.system("s0");
+      getBodyBuildings(sys, "planet:1").hydroponics = 1; // dome on the test-type world
+      sys.stockpile.ice = 100; // ice is not the limiter
+      e.stepTurn();
+      return e.galaxy.system("s0").stockpile.food;
+    };
+    const ocean = food("ocean");
+    const rocky = food("rocky");
+    expect(rocky).toBeGreaterThan(0);
+    expect(ocean / rocky).toBeCloseTo(1.5, 5); // agriFoodMult ocean 1.5 vs rocky 1.0
+  });
+
+  it("refuses to build an agri-dome on a gas giant (no livable surface)", () => {
+    const reg = new Map<string, BotFactory>([["noop", () => new OnceBot([{ kind: "buildHydroponics", systemId: "s0", bodyKey: "planet:0" }])]]);
+    const cfg = loadScenario({
+      name: "gate", hubId: "hub", players: 1, turns: 4, bots: ["noop"],
+      systems: [
+        { id: "hub", name: "Hub", yields: {}, claimCost: 0, upkeep: 0, defense: 99 },
+        { id: "s0", name: "S0", yields: {}, claimCost: 100, upkeep: 0, defense: 1, innerRing: true,
+          bodies: { starType: "mainSequence", planets: [{ type: "gasGiant", orbit: 1, habitable: false, visualSeed: 0, deposits: [] }], asteroidBelts: [] } },
+      ],
+      routes: [{ a: "hub", b: "s0", transitTime: 1, stability: 0.9, capacity: 50, exposure: 0.3, authorityPresence: 0.8, requiredRange: 1, charted: true }],
+    });
+    cfg.tuning.fuelPerShipPerTurn = 0;
+    cfg.tuning.iceNeed = { ...cfg.tuning.iceNeed, outpost: 0 };
+    const e = new Engine(cfg, 0, reg);
+    const start = e.corps.find((c) => c.id === "corp-0")!.credits;
+    e.stepTurn();
+    expect(buildingTotal(e.galaxy.system("s0"), "hydroponics")).toBe(0); // gated out
+    expect(e.corps.find((c) => c.id === "corp-0")!.credits).toBeCloseTo(start, 6); // nothing charged
   });
 });

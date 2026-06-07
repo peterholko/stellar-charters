@@ -15,8 +15,10 @@
  */
 import type { Rng } from "./rng.js";
 import {
+  emptyBodyBuildings,
   emptyStockpile,
   type AsteroidBelt,
+  type BodyBuildings,
   type BodyKind,
   type Deposit,
   type ExtractionSite,
@@ -92,6 +94,180 @@ export function effectiveYields(sys: System, turn: number, totalTurns: number): 
     out[site.resource] += siteOutput(site, starType, seed, turn, totalTurns);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Per-body buildings (Section 24) — buildings are owned by planets/belts; the
+// system aggregates them (shared stockpile + pooled power).
+// ---------------------------------------------------------------------------
+
+/** The body key a site belongs to, e.g. "planet:2:metals" → "planet:2", "home:food" → "home". */
+export function siteBodyKey(site: ExtractionSite): string {
+  return site.key.split(":").slice(0, -1).join(":") || site.key;
+}
+
+/** The set of body keys a system can build on (planets/belts/star + any legacy site bodies). */
+export function bodyKeysOf(sys: System): string[] {
+  const keys = new Set<string>();
+  if (sys.bodies) {
+    sys.bodies.planets.forEach((_, i) => keys.add(`planet:${i}`));
+    sys.bodies.asteroidBelts.forEach((_, i) => keys.add(`belt:${i}`));
+    if (sys.bodies.starDeposits?.length) keys.add("star:0");
+  }
+  for (const s of sys.sites) keys.add(siteBodyKey(s)); // legacy / home-dome bodies
+  return [...keys];
+}
+
+/** A deterministic default body for orders that don't name one (legacy replay / simple bots). */
+export function primaryBodyKey(sys: System): string {
+  const keys = bodyKeysOf(sys);
+  // Prefer a habitable body, else the first by sorted key.
+  const habitable = sys.sites.find((s) => s.habitable);
+  if (habitable) return siteBodyKey(habitable);
+  return keys.sort()[0] ?? "planet:0";
+}
+
+/** Get (creating if needed) the building record for one of a system's bodies. */
+export function getBodyBuildings(sys: System, bodyKey: string): BodyBuildings {
+  return (sys.bodyBuildings[bodyKey] ??= emptyBodyBuildings());
+}
+
+/** Aggregate every body's buildings into one record (the system totals). */
+export function systemBuildings(sys: System): BodyBuildings {
+  const out = emptyBodyBuildings();
+  for (const b of Object.values(sys.bodyBuildings)) {
+    out.reactors += b.reactors;
+    out.hydroponics += b.hydroponics;
+    out.miningRigs += b.miningRigs;
+    out.habitats += b.habitats;
+    out.powerGrid += b.powerGrid;
+    for (const [id, n] of Object.entries(b.processors)) out.processors[id] = (out.processors[id] ?? 0) + n;
+  }
+  return out;
+}
+
+/** Total count of a building track across all of a system's bodies. */
+export function buildingTotal(sys: System, track: "reactors" | "hydroponics" | "miningRigs" | "habitats" | "powerGrid"): number {
+  let n = 0;
+  for (const b of Object.values(sys.bodyBuildings)) n += b[track];
+  return n;
+}
+
+/** A planet/belt/star as a first-class colony (Section 24): its metadata, deposits, and buildings.
+ *  This is a pure read-model over `sys.bodies` + `sys.sites` + `sys.bodyBuildings` — the grouping the
+ *  colony screen renders and the bots reason over. The system stays the container (shared stockpile). */
+export interface ColonyInfo {
+  key: string;
+  kind: BodyKind;
+  bodyType: ExtractionSite["bodyType"];
+  bodyLabel: string;
+  orbit: number;
+  habitable: boolean;
+  sites: ExtractionSite[];
+  buildings: BodyBuildings;
+}
+
+/** Enumerate a system's colonies in orbital order. Bodies with no deposits still appear (you can
+ *  develop a barren world's factories/habitats); legacy `yields` systems surface their synthetic
+ *  bodies grouped by site key. */
+export function coloniesOf(sys: System): ColonyInfo[] {
+  const sitesByKey = new Map<string, ExtractionSite[]>();
+  for (const s of sys.sites) {
+    const k = siteBodyKey(s);
+    (sitesByKey.get(k) ?? sitesByKey.set(k, []).get(k)!).push(s);
+  }
+  const colonies: ColonyInfo[] = [];
+  const seen = new Set<string>();
+  const add = (key: string, kind: BodyKind, bodyType: ExtractionSite["bodyType"], bodyLabel: string, orbit: number, habitable: boolean) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    colonies.push({
+      key, kind, bodyType, bodyLabel, orbit, habitable,
+      sites: sitesByKey.get(key) ?? [],
+      buildings: sys.bodyBuildings[key] ?? emptyBodyBuildings(),
+    });
+  };
+  if (sys.bodies) {
+    sys.bodies.planets.forEach((p, i) => add(`planet:${i}`, "planet", p.type, PLANET_LABEL[p.type], p.orbit, p.habitable));
+    sys.bodies.asteroidBelts.forEach((b, i) => add(`belt:${i}`, "belt", "belt", "Asteroid belt", b.orbit, false));
+    if (sys.bodies.starDeposits?.length) add("star:0", "star", "star", `${starLabel(sys.bodies.starType)} corona`, -1, false);
+  }
+  // Any body that only exists via its sites (legacy/home-dome) or that carries buildings but no
+  // generated geology — fold it in from a representative site so nothing is lost.
+  for (const [key, sites] of sitesByKey) {
+    const s = sites[0];
+    if (s) add(key, s.bodyKind, s.bodyType, s.bodyLabel, s.orbit, s.habitable);
+  }
+  for (const key of Object.keys(sys.bodyBuildings)) {
+    if (!seen.has(key)) add(key, "planet", "rocky", "Colony", 0, false);
+  }
+  return colonies.sort((a, b) => a.orbit - b.orbit || a.key.localeCompare(b.key));
+}
+
+// ---------------------------------------------------------------------------
+// Planet-type development affinities (Section 24) — a world's TYPE shapes what you build on it.
+// These are the rules that make the colony screen a real decision: you farm ocean worlds, tool up
+// rocky/lava industrial worlds, and run only orbital structures over the giants and belts.
+// ---------------------------------------------------------------------------
+
+/** The build menu a colony can offer (distinct from the underlying `BodyBuildings` storage). */
+export type BuildingKind = "factory" | "reactor" | "agridome" | "habitat" | "mining" | "power";
+
+type BodyType = ExtractionSite["bodyType"];
+
+/** Whether a building can be constructed on this body type. Habitation/agriculture need a solid,
+ *  temperate world (rocky/desert/ocean/barren); the giants and belts host only orbital industry;
+ *  lava worlds are too hostile for domes/habitats; the star hosts nothing. */
+export function canBuildOnBody(kind: BuildingKind, bodyType: BodyType): boolean {
+  if (bodyType === "star") return false;
+  const solidTemperate = bodyType === "rocky" || bodyType === "desert" || bodyType === "ocean" || bodyType === "barren";
+  switch (kind) {
+    case "agridome":
+    case "habitat":
+      return solidTemperate; // domes + population need a livable surface
+    case "mining":
+      // Fortified extraction: solid worlds + belts (you can't fortify a gas envelope).
+      return bodyType !== "gasGiant" && bodyType !== "iceGiant";
+    case "factory":
+    case "reactor":
+    case "power":
+      return true; // industry runs anywhere with a foothold (orbital over the giants/belts)
+    default:
+      return false;
+  }
+}
+
+/** Agri-dome food-output multiplier by world type — ocean worlds are the breadbaskets, barren
+ *  worlds the worst arable land. Only meaningful where `canBuildOnBody("agridome", …)` is true. */
+export function agriFoodMult(bodyType: BodyType): number {
+  switch (bodyType) {
+    case "ocean": return 1.5;
+    case "rocky": return 1.0;
+    case "desert": return 0.85;
+    case "barren": return 0.65;
+    default: return 1.0;
+  }
+}
+
+/** Factory build-cost multiplier by world type — metal-rich rocky/lava worlds are cheap to tool up;
+ *  oceans and the giants' orbital platforms cost a premium. Belts are convenient ore-side industry. */
+export function factoryCostMult(bodyType: BodyType): number {
+  switch (bodyType) {
+    case "lava": return 0.8;
+    case "rocky": return 0.85;
+    case "belt": return 0.9;
+    case "desert": return 1.0;
+    case "barren": return 1.0;
+    case "ocean": return 1.2;
+    case "gasGiant":
+    case "iceGiant": return 1.1;
+    default: return 1.0;
+  }
+}
+
+/** The body type of one of a system's bodies (for cost/affinity lookups in the engine + UI). */
+export function bodyTypeOfKey(sys: System, bodyKey: string): BodyType {
+  return coloniesOf(sys).find((c) => c.key === bodyKey)?.bodyType ?? "rocky";
 }
 
 /** Cheap, replayable per-system seed for stellar dynamics (independent of the gameplay Rng). */

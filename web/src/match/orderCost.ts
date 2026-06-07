@@ -1,4 +1,4 @@
-import type { Order, PlayerView } from "@engine";
+import { bodyTypeOfKey, factoryCostMult, primaryBodyKey, type Order, type PlayerView } from "@engine";
 import { resourceLabels } from "./format";
 
 export type OrderTone = "build" | "trade" | "raid" | "finance" | "research" | "claim";
@@ -107,7 +107,33 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
     case "buildDepot":
       return { label: "Build Trade Depot", detail: `at ${name(order.systemId)}`, cost: t.depotCost, tone: "build" };
     case "buildHydroponics":
-      return { label: "Build hydroponics", detail: `at ${name(order.systemId)}`, cost: t.hydroponicsCost, tone: "build" };
+      return { label: "Build agri-dome", detail: `at ${name(order.systemId)}`, cost: t.hydroponicsCost, tone: "build" };
+    case "buildProcessor": {
+      const recipe = t.recipes.find((r) => r.id === order.recipeId);
+      const sys = g.systems.get(order.systemId);
+      const mult = sys ? factoryCostMult(bodyTypeOfKey(sys, order.bodyKey ?? primaryBodyKey(sys))) : 1;
+      return {
+        label: `Build ${order.recipeId} factory`,
+        detail: `at ${name(order.systemId)} · ${t.buildAlloyCost} alloys`,
+        cost: Math.round((recipe?.buildCost ?? 0) * mult),
+        tone: "build",
+      };
+    }
+    case "buildReactor":
+      return { label: "Build reactor", detail: `at ${name(order.systemId)} · ${t.buildAlloyCost} alloys`, cost: t.reactorCost, tone: "build" };
+    case "upgradeInfrastructure": {
+      const inf = t.infrastructure;
+      const trackLabel = order.track === "mining" ? "Mining rig" : order.track === "habitat" ? "Habitat" : "Power grid";
+      const creditBase = order.track === "mining" ? inf.miningCreditCost : order.track === "habitat" ? inf.habitatCreditCost : inf.powerCreditCost;
+      const rawLabel = order.track === "mining" ? "metals" : order.track === "habitat" ? "silicates" : "helium-3";
+      const rawBase = order.track === "mining" ? inf.miningMetalsCost : order.track === "habitat" ? inf.habitatSilicatesCost : inf.powerHelium3Cost;
+      return {
+        label: `Upgrade ${trackLabel}`,
+        detail: `at ${name(order.systemId)} · ${rawBase}+ ${rawLabel}`,
+        cost: creditBase,
+        tone: "build",
+      };
+    }
     case "buildPlatform":
       return { label: "Build defense platform", detail: `at ${name(order.systemId)}`, cost: t.platformCost, tone: "build" };
     case "buyShares": {

@@ -224,6 +224,30 @@ export const MEGASTRUCTURE_KINDS: readonly MegastructureKind[] = [
   "ringworld",
 ];
 
+/**
+ * The buildings on a single planet/belt (Section 24). Re-homed from the system: factories run the
+ * production chains, reactors + power grid supply power, agri-domes make food, and the raw-fed
+ * upgrade tracks harden/grow the body. Construction is per-body; the system aggregates the totals.
+ */
+export interface BodyBuildings {
+  /** Processor (factory) modules by recipe id (each runs one chain recipe per turn, Section 07b). */
+  processors: Record<string, number>;
+  /** Reactor modules (each adds power capacity, burns helium3). */
+  reactors: number;
+  /** Hydroponic (agri-dome) modules (each adds food production). */
+  hydroponics: number;
+  /** Mining-rig upgrade level (metals-fed): fortification / upkeep (Section 07c). */
+  miningRigs: number;
+  /** Habitat upgrade level (silicates-fed): population growth + tax (Section 07c). */
+  habitats: number;
+  /** Power-grid upgrade level (helium3-fed): local power capacity (Section 07c). */
+  powerGrid: number;
+}
+
+export function emptyBodyBuildings(): BodyBuildings {
+  return { processors: {}, reactors: 0, hydroponics: 0, miningRigs: 0, habitats: 0, powerGrid: 0 };
+}
+
 export interface System {
   id: string;
   name: string;
@@ -245,18 +269,12 @@ export interface System {
   populationProgress: number;
   /** Social unrest (0..1) from starvation; lowers tax and production. */
   unrest: number;
-  /** Number of hydroponic modules built (each adds food production). */
-  hydroponics: number;
-  /** Processor modules by recipe id (each runs one chain recipe per turn, Section 07b). */
-  processors: Record<string, number>;
-  /** Number of reactor modules built here (each adds power capacity, burns helium3). */
-  reactors: number;
-  /** Mining-rig upgrade level (metals-fed): raises this system's extraction yields (Section 07c). */
-  miningRigs: number;
-  /** Habitat upgrade level (silicates-fed): raises population growth and tax here (Section 07c). */
-  habitats: number;
-  /** Power-grid upgrade level (helium3-fed): adds local power capacity (Section 07c). */
-  powerGrid: number;
+  /**
+   * Buildings, owned per-body (Section 24): each planet/belt keyed by its body key
+   * ("planet:2", "belt:0", "star:0") holds its own factories/reactors/agri-domes/upgrades. The
+   * system aggregates these (shared stockpile + pooled power), but construction is per-body.
+   */
+  bodyBuildings: Record<string, BodyBuildings>;
   /** Number of stationary defense platforms built here (each adds raid defense). */
   platforms: number;
   /** Megastructures built here (Section 22) — the metals/alloys demand sink + valuation race. */
@@ -497,6 +515,8 @@ export interface BuildDepotOrder {
 export interface BuildHydroponicsOrder {
   kind: "buildHydroponics";
   systemId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface BuildProcessorOrder {
@@ -504,11 +524,15 @@ export interface BuildProcessorOrder {
   systemId: string;
   /** Id of the recipe (Tuning.recipes) this processor runs. */
   recipeId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface BuildReactorOrder {
   kind: "buildReactor";
   systemId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface UpgradeInfrastructureOrder {
@@ -516,6 +540,8 @@ export interface UpgradeInfrastructureOrder {
   systemId: string;
   /** Which raw-fed upgrade track to advance one level (Section 07c). */
   track: "mining" | "habitat" | "power";
+  /** Planet/belt to upgrade (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface BuildPlatformOrder {
