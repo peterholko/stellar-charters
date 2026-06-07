@@ -236,3 +236,40 @@ describe("planet-type affinities (Section 24)", () => {
     expect(e.corps.find((c) => c.id === "corp-0")!.credits).toBeCloseTo(start, 6); // nothing charged
   });
 });
+
+describe("per-colony population (Section 24, Phase 4b)", () => {
+  it("grows a separate population on each habitable world in one system", () => {
+    const cfg = loadScenario({
+      name: "twopop", hubId: "hub", players: 1, turns: 20, bots: ["noop"],
+      systems: [
+        { id: "hub", name: "Hub", yields: {}, claimCost: 0, upkeep: 0, defense: 99 },
+        {
+          id: "s0", name: "S0", yields: {}, claimCost: 100, upkeep: 0, defense: 1, innerRing: true,
+          bodies: {
+            starType: "mainSequence",
+            planets: [
+              { type: "ocean", orbit: 1, habitable: true, visualSeed: 0, deposits: [{ resource: "food", richness: 30, reserves: null, accessibility: 1 }] },
+              { type: "ocean", orbit: 2, habitable: true, visualSeed: 0, deposits: [{ resource: "food", richness: 30, reserves: null, accessibility: 1 }] },
+            ],
+            asteroidBelts: [],
+          },
+        },
+      ],
+      routes: [{ a: "hub", b: "s0", transitTime: 1, stability: 0.9, capacity: 50, exposure: 0.3, authorityPresence: 0.8, requiredRange: 1, charted: true }],
+    });
+    cfg.tuning.fuelPerShipPerTurn = 0;
+    cfg.tuning.iceNeed = { outpost: 0, settlement: 0, colony: 0, city: 0, metropolis: 0 };
+    const reg = new Map<string, BotFactory>([["noop", () => new NoopBot()]]);
+    const e = new Engine(cfg, 0, reg);
+    const sys = e.galaxy.system("s0");
+    // Fully work both food deposits so each world feeds the shared warehouse locally.
+    for (const site of sys.sites) if (site.resource === "food") site.extractorLevel = 3;
+    for (let i = 0; i < 16; i++) e.stepTurn();
+    const pops = e.galaxy.system("s0").colonyPop;
+    // Both ocean worlds host their own population, and each grew past Outpost on local food.
+    expect(Object.keys(pops).sort()).toEqual(["planet:0", "planet:1"]);
+    expect(Object.values(pops).every((p) => p.stage !== "outpost")).toBe(true);
+    // The system aggregate reflects the leading colony for valuation / megastructure gating.
+    expect(e.galaxy.system("s0").populationStage).not.toBe("outpost");
+  });
+});

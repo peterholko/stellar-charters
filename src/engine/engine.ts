@@ -16,10 +16,12 @@ import {
   bodyTypeOfKey,
   buildingTotal,
   canBuildOnBody,
+  canHostPopulation,
   coloniesOf,
   effectiveYields,
   factoryCostMult,
   getBodyBuildings,
+  planetLabel,
   primaryBodyKey,
   siteOutput,
   systemBuildings,
@@ -42,6 +44,7 @@ import {
 } from "./metrics.js";
 import {
   RESOURCES,
+  emptyColonyPopulation,
   type Convoy,
   type Corporation,
   type MegastructureKind,
@@ -203,11 +206,23 @@ export class Engine {
    */
   private ensureStartHabitable(sys: System): void {
     if (systemHasHabitableBody(sys)) return;
+    const hasFood = sys.sites.some((s) => s.resource === "food");
     if (sys.bodies && sys.bodies.planets.length > 0) {
-      const p = sys.bodies.planets.find((pl) => pl.type === "ocean") ?? sys.bodies.planets[0]!;
+      // Establish the habitat dome on ONE real planet (Section 24, Phase 4b: a single population
+      // seed, not a separate synthetic body), so the home system has exactly one starting colony.
+      const idx = sys.bodies.planets.findIndex((pl) => pl.type === "ocean");
+      const pIdx = idx >= 0 ? idx : 0;
+      const p = sys.bodies.planets[pIdx]!;
       p.habitable = true;
-    }
-    if (!sys.sites.some((s) => s.resource === "food")) {
+      if (!hasFood) {
+        sys.sites.push({
+          key: `planet:${pIdx}:food`, bodyKind: "planet", bodyType: p.type, bodyLabel: planetLabel(p.type),
+          orbit: p.orbit, habitable: true, resource: "food", richness: 6, reservesRemaining: null,
+          accessibility: 1, extractorLevel: 1, prospected: true, disabledUntil: 0,
+        });
+      }
+    } else if (!hasFood) {
+      // Legacy/bodyless systems: fall back to a synthetic habitat-dome colony.
       sys.sites.push({
         key: "home:food", bodyKind: "planet", bodyType: "ocean", bodyLabel: "Habitat dome",
         orbit: 0, habitable: true, resource: "food", richness: 6, reservesRemaining: null,
@@ -1565,54 +1580,63 @@ export class Engine {
         const sys = this.galaxy.system(sysId);
         // Building counts are aggregated across the system's bodies (Section 24).
         const buildings = systemBuildings(sys);
-        // Mining Rig fortification lowers a system's upkeep (Section 07c).
+        // Mining Rig fortification lowers a system's upkeep (Section 07c). Upkeep is per-SYSTEM.
         const upkeepFrac = Math.max(0, 1 - buildings.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
         corp.credits -= sys.upkeep * upkeepFrac;
 
-        // Life support (ice) and food demand scale with population (Section 08).
-        const foodNeed = t.foodNeed[sys.populationStage];
-        const iceNeed = t.iceNeed[sys.populationStage];
-        const food = this.consumeOrImport(corp, sys, "food", foodNeed);
-        const ice = this.consumeOrImport(corp, sys, "ice", iceNeed);
-        const fed = food.met && ice.met;
-        if (!fed) this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
-        // Growth requires LOCAL food (garden/hydroponics/transfer), not emergency
-        // imports: imports keep a colony alive but only local supply lets it thrive.
-        // Habitability gate (Section 21): a population can only take root where there is a
-        // habitable world or an artificial habitat (hydroponics). Dead stars (white dwarf /
-        // neutron) and giant-only systems stay pure industrial outposts unless terraformed.
-        const habitable = systemHasHabitableBody(sys) || buildings.hydroponics > 0;
-        const thriving = fed && food.local && habitable;
-
-        // Habitat upgrades raise both tax yield and growth speed (Section 07c); megastructures
-        // (space elevator / ringworld) accelerate growth further (Section 22).
-        const habitatTaxMult = 1 + buildings.habitats * t.infrastructure.habitatTaxBonusPerLevel;
+        // Megastructures (space elevator / ringworld) accelerate growth across the whole system.
         const megaGrowth = sys.megastructures.reduce((s, m) => s + t.megastructures[m].growthBonus, 0);
-        const habitatGrowthMult = 1 + buildings.habitats * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
 
-        // Tax: a fed, content population pays its charter holder (Sections 08/17).
-        if (fed) {
-          const tax = t.taxPerStage[sys.populationStage] * (1 - sys.unrest) * habitatTaxMult;
-          corp.credits += tax;
-          taxLevied += tax;
-        }
-
-        // Growth vs. unrest (Section 08 food/population loop).
-        if (fed) sys.unrest = Math.max(0, sys.unrest - t.unrestRecoveryPerFedTurn);
-        else sys.unrest = Math.min(1, sys.unrest + t.unrestPerStarvedTurn);
-
-        if (thriving) {
-          sys.populationProgress += t.growthRate[sys.populationStage] * habitatGrowthMult;
-          const idx = stages.indexOf(sys.populationStage);
-          if (sys.populationProgress >= t.growthThreshold && idx < stages.length - 1) {
-            sys.populationStage = stages[idx + 1]!;
-            sys.populationProgress = 0;
-            this.events.push({ type: "growth", corpId: corp.id, systemId: sys.id, newStage: sys.populationStage });
-            this.log(`  ${sys.name} grows to ${sys.populationStage}`);
+        // Per-colony population (Section 24, Phase 4b): each habitable / agri-domed body grows its
+        // own population, feeds from the shared system stockpile, and pays its own tax. Pure
+        // industrial worlds (giants, belts, dead rock) host no people and are skipped.
+        let starvedHere = false;
+        for (const colony of coloniesOf(sys)) {
+          if (!canHostPopulation(colony)) {
+            delete sys.colonyPop[colony.key]; // lost its dome / habitability → no population
+            continue;
           }
-        } else if (!fed) {
-          sys.populationProgress = Math.max(0, sys.populationProgress - 20);
+          const pop = (sys.colonyPop[colony.key] ??= emptyColonyPopulation());
+
+          // Life support (food + ice) scales with this colony's stage; drawn from the shared
+          // warehouse (decision 2a). Colonies are served in orbital order, so local food feeds the
+          // first ones and later colonies fall back to emergency imports if the system runs short.
+          const food = this.consumeOrImport(corp, sys, "food", t.foodNeed[pop.stage]);
+          const ice = this.consumeOrImport(corp, sys, "ice", t.iceNeed[pop.stage]);
+          const fed = food.met && ice.met;
+          if (!fed) starvedHere = true;
+          // Growth needs LOCAL food (the system's own gardens/domes, not emergency imports).
+          const thriving = fed && food.local;
+
+          // This colony's own habitat upgrades raise its tax yield + growth speed (Section 07c).
+          const habs = colony.buildings.habitats;
+          const habitatTaxMult = 1 + habs * t.infrastructure.habitatTaxBonusPerLevel;
+          const habitatGrowthMult = 1 + habs * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
+
+          if (fed) {
+            const tax = t.taxPerStage[pop.stage] * (1 - pop.unrest) * habitatTaxMult;
+            corp.credits += tax;
+            taxLevied += tax;
+            pop.unrest = Math.max(0, pop.unrest - t.unrestRecoveryPerFedTurn);
+          } else {
+            pop.unrest = Math.min(1, pop.unrest + t.unrestPerStarvedTurn);
+          }
+
+          if (thriving) {
+            pop.progress += t.growthRate[pop.stage] * habitatGrowthMult;
+            const idx = stages.indexOf(pop.stage);
+            if (pop.progress >= t.growthThreshold && idx < stages.length - 1) {
+              pop.stage = stages[idx + 1]!;
+              pop.progress = 0;
+              this.events.push({ type: "growth", corpId: corp.id, systemId: sys.id, newStage: pop.stage });
+              this.log(`  ${colony.bodyLabel} at ${sys.name} grows to ${pop.stage}`);
+            }
+          } else if (!fed) {
+            pop.progress = Math.max(0, pop.progress - 20);
+          }
         }
+        if (starvedHere) this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
+        this.syncSystemPopulation(sys);
       }
 
       // Fleet operation burns fuel each turn (Section 07b): a recurring sink that keeps the
@@ -1629,6 +1653,30 @@ export class Engine {
       corp.privateers = corp.privateers.filter((p) => p.turnsLeft > 0);
     }
     return { taxLevied };
+  }
+
+  /**
+   * Roll the per-colony populations (Section 24, Phase 4b) up into the legacy system-level fields
+   * (`populationStage` = highest colony, `populationProgress` = that colony's progress, `unrest` =
+   * peak), so valuation, megastructure gating, the client payload, and the system pop-meter keep
+   * working off a single aggregate while the authoritative state lives per body.
+   */
+  private syncSystemPopulation(sys: System): void {
+    const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
+    let best: PopulationStage = "outpost";
+    let bestProgress = 0;
+    let peakUnrest = 0;
+    for (const pop of Object.values(sys.colonyPop)) {
+      if (stages.indexOf(pop.stage) > stages.indexOf(best) ||
+          (stages.indexOf(pop.stage) === stages.indexOf(best) && pop.progress > bestProgress)) {
+        best = pop.stage;
+        bestProgress = pop.progress;
+      }
+      peakUnrest = Math.max(peakUnrest, pop.unrest);
+    }
+    sys.populationStage = best;
+    sys.populationProgress = bestProgress;
+    sys.unrest = peakUnrest;
   }
 
   /**
@@ -1679,7 +1727,11 @@ export class Engine {
         const yieldTotal = RESOURCES.reduce((s, r) => s + ey[r], 0);
         value += yieldTotal * v.perSystemYieldValue;
         value += sys.sites.reduce((s, st) => s + st.extractorLevel, 0) * v.extractorValue;
-        value += v.populationValue[sys.populationStage] * (1 - sys.unrest);
+        // Each populated colony is valued on its own stage (Section 24, Phase 4b): a system with
+        // several habitable worlds is a richer prize than one with a single capital.
+        for (const pop of Object.values(sys.colonyPop)) {
+          value += v.populationValue[pop.stage] * (1 - pop.unrest);
+        }
         if (sys.hasDepot) value += v.depotValue;
         const buildings = systemBuildings(sys);
         value += buildings.hydroponics * (v.depotValue * 0.25);

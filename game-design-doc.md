@@ -1063,6 +1063,25 @@ before new orders each turn, so nothing chains the turn it's ordered. Bots won't
 that's still in flight. Slowing development slightly **compresses the leader's snowball**: a 100-game
 sweep moves leader/median from ≈16.9 to ≈14.8 with every other risk flag still green.
 
+### Per-planet population (Phase 4b)
+
+Population is now **per colony**, not per system. Each habitable world — or any world given an
+agri-dome — grows its own population (`System.colonyPop`: bodyKey → stage / progress / unrest),
+feeds from the **shared** system warehouse (decision 2a), and **pays its own tax** scaled by its own
+habitat upgrades. Pure-industrial worlds (gas/ice giants, belts, dead rock with no dome) host no
+people. The home system is seeded with exactly one population colony — its habitable world (or, on a
+bodyless legacy map, a synthetic habitat dome). Colonies are fed in orbital order, so a system that
+out-runs its local food sees its outer colonies fall back to emergency imports (which keep them alive
+but not growing). The legacy system-level `populationStage` / `populationProgress` / `unrest` are kept
+as an **aggregate** (highest colony / its progress / peak unrest) so valuation, megastructure gating,
+and the system pop-meter keep working; valuation sums each colony's population value, so **a system
+with several habitable worlds is a genuinely richer prize** than one with a single capital — the
+intended payoff. The colony screen shows each populated world's stage + a growth bar.
+
+This is the deepest change and was swept hardest: a 100-game / 8-player run holds leader/median ≈14.2
+with every risk flag green (metals floor 0%, food-growth 91%, raiding/takeover healthy), so rewarding
+multi-habitable systems did not destabilise the economy.
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

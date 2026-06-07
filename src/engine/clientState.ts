@@ -12,6 +12,7 @@ import {
   RESOURCES,
   type BodyBuildings,
   type BodyKind,
+  type ColonyPopulation,
   type QueueItem,
   type MegastructureKind,
   type PlanetType,
@@ -101,6 +102,8 @@ export interface ClientSystem {
   bodyBuildings: Record<string, BodyBuildings>;
   /** Per-body construction queues (Section 24, Phase 4a): bodyKey → pending builds with progress. */
   buildQueues: Record<string, QueueItem[]>;
+  /** Per-body population (Section 24, Phase 4b): bodyKey → stage/progress/unrest for populated worlds. */
+  colonyPop: Record<string, ColonyPopulation>;
   /** System-wide aggregate of hydroponics across all bodies — convenience for compact UI badges. */
   hydroponics: number;
   platforms: number;
@@ -253,6 +256,7 @@ export function buildClientState(
       populationStage: s.populationStage,
       bodyBuildings: cloneBodyBuildings(s.bodyBuildings),
       buildQueues: cloneBuildQueues(s.buildQueues),
+      colonyPop: Object.fromEntries(Object.entries(s.colonyPop).map(([k, p]) => [k, { ...p }])),
       hydroponics: systemBuildings(s).hydroponics,
       platforms: s.platforms,
       megastructures: [...s.megastructures],

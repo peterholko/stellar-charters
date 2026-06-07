@@ -35,6 +35,7 @@ export class Galaxy {
         populationStage: s.populationStage ?? "outpost",
         populationProgress: 0,
         unrest: 0,
+        colonyPop: {},
         bodyBuildings: {},
         buildQueues: {},
         platforms: 0,

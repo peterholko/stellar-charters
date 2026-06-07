@@ -39,6 +39,7 @@ export {
   systemBuildings,
   buildingTotal,
   coloniesOf,
+  canHostPopulation,
   canBuildOnBody,
   agriFoodMult,
   factoryCostMult,

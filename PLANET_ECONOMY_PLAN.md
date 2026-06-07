@@ -1,9 +1,10 @@
 # Planet Economy — Implementation Plan
 
-**Status:** Phases 1–3 implemented (Section 24). Phase 1 (re-home buildings to per-body, balance-neutral),
-Phase 2 (the colony management UI — `web/src/components/ColonyPanel.tsx`), and Phase 3 (planet-type
-gating + farmland/industry affinities) are done, tested, and balance-swept. Phase 4a (build queue)
-and Phase 4b (per-planet population) remain optional/deferred. Companion to
+**Status:** Phases 1–4 implemented (Section 24). Phase 1 (re-home buildings to per-body),
+Phase 2 (the colony management UI — `web/src/components/ColonyPanel.tsx`), Phase 3 (planet-type
+gating + farmland/industry affinities), Phase 4a (the per-colony construction queue), and Phase 4b
+(per-planet population — each habitable/agri-domed world grows + taxes on its own) are all done,
+tested, and balance-swept (100-game sweep holds leader/median ≈14.2, all risk flags green). Companion to
 [`STAR_SYSTEM_RESOURCE_MODEL_DESIGN.md`](./STAR_SYSTEM_RESOURCE_MODEL_DESIGN.md) (Section 21,
 which made systems body-driven) and the war/fleet layer (Section 23). This plan inverts the
 economic unit: today the **system** owns the economy and planets are cosmetic; the goal is for

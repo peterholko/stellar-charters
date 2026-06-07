@@ -23,6 +23,7 @@ import {
   type Deposit,
   type ExtractionSite,
   type Planet,
+  type ColonyPopulation,
   type PlanetType,
   type QueueItem,
   type Resource,
@@ -168,6 +169,14 @@ export interface ColonyInfo {
   buildings: BodyBuildings;
   /** Pending builds on this body (Section 24, Phase 4a), front = under construction. */
   queue: QueueItem[];
+  /** This body's own population (Section 24, Phase 4b), if it hosts one (habitable or agri-domed). */
+  population?: ColonyPopulation;
+}
+
+/** True if a body can host a population (Section 24, Phase 4b): a habitable world, or any world
+ *  given an artificial life-support dome. Pure-industrial worlds (giants, belts, dead rock) can't. */
+export function canHostPopulation(colony: Pick<ColonyInfo, "habitable" | "buildings">): boolean {
+  return colony.habitable || colony.buildings.hydroponics > 0;
 }
 
 /** Enumerate a system's colonies in orbital order. Bodies with no deposits still appear (you can
@@ -189,6 +198,7 @@ export function coloniesOf(sys: System): ColonyInfo[] {
       sites: sitesByKey.get(key) ?? [],
       buildings: sys.bodyBuildings[key] ?? emptyBodyBuildings(),
       queue: sys.buildQueues?.[key] ?? [],
+      population: sys.colonyPop?.[key],
     });
   };
   if (sys.bodies) {
@@ -199,8 +209,10 @@ export function coloniesOf(sys: System): ColonyInfo[] {
   // Any body that only exists via its sites (legacy/home-dome) or that carries buildings but no
   // generated geology — fold it in from a representative site so nothing is lost.
   for (const [key, sites] of sitesByKey) {
-    const s = sites[0];
-    if (s) add(key, s.bodyKind, s.bodyType, s.bodyLabel, s.orbit, s.habitable);
+    // A site-derived (legacy / synthetic) body is habitable if ANY of its sites is a garden/food
+    // deposit; describe it by that representative site so its type/affinity reflect the colony.
+    const rep = sites.find((x) => x.habitable) ?? sites[0];
+    if (rep) add(key, rep.bodyKind, rep.bodyType, rep.bodyLabel, rep.orbit, sites.some((x) => x.habitable));
   }
   for (const key of Object.keys(sys.bodyBuildings)) {
     if (!seen.has(key)) add(key, "planet", "rocky", "Colony", 0, false);

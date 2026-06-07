@@ -12,8 +12,8 @@ import {
   type System,
 } from "@engine";
 import { store } from "../match/store";
-import { formatCr, planetTypeLabel, resourceLabels } from "../match/format";
-import { ActionButton, Badge } from "../ui/primitives";
+import { formatCr, planetTypeLabel, populationLabel, resourceLabels } from "../match/format";
+import { ActionButton, Badge, Bar } from "../ui/primitives";
 import { PlanetTypeArt, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 
@@ -132,8 +132,20 @@ function ColonyCard({
             {colony.habitable ? " · habitable" : ""}
           </span>
         </div>
+        {colony.population && <Badge tone="neutral">{populationLabel[colony.population.stage]}</Badge>}
         {stellarBadge && <Badge tone={stellarBadge.tone}>{stellarBadge.label}</Badge>}
       </div>
+
+      {colony.population && (
+        <div className="colony__pop">
+          <Bar
+            value={colony.population.progress}
+            max={view.config.tuning.growthThreshold}
+            tone={colony.population.unrest > 0.01 ? "warn" : "positive"}
+          />
+          {colony.population.unrest > 0.01 && <span className="colony__unrest">unrest {Math.round(colony.population.unrest * 100)}%</span>}
+        </div>
+      )}
 
       <div className="colony__deposits">
         {sites.length === 0 && <span className="colony__empty">No deposits</span>}

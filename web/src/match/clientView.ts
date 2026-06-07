@@ -78,6 +78,8 @@ export function reconstructView(state: ClientState): PlayerView {
     for (const [key, items] of Object.entries(cs.buildQueues)) {
       sys.buildQueues[key] = items.map((it) => ({ ...it }));
     }
+    sys.colonyPop = {};
+    for (const [key, p] of Object.entries(cs.colonyPop)) sys.colonyPop[key] = { ...p };
     sys.platforms = cs.platforms;
     sys.megastructures = [...cs.megastructures];
     sys.hasDepot = cs.hasDepot;

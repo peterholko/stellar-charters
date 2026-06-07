@@ -248,6 +248,20 @@ export function emptyBodyBuildings(): BodyBuildings {
   return { processors: {}, reactors: 0, hydroponics: 0, miningRigs: 0, habitats: 0, powerGrid: 0 };
 }
 
+/** Per-colony population (Section 24, Phase 4b): each habitable / agri-domed body grows its own
+ *  population, feeds from the shared system stockpile, and pays its own tax. */
+export interface ColonyPopulation {
+  stage: PopulationStage;
+  /** Progress (0..growthThreshold) toward the next stage. */
+  progress: number;
+  /** Social unrest (0..1) from starvation on this body. */
+  unrest: number;
+}
+
+export function emptyColonyPopulation(): ColonyPopulation {
+  return { stage: "outpost", progress: 0, unrest: 0 };
+}
+
 /** The building kinds that run through a colony's construction queue (Section 24, Phase 4a). System
  *  structures (platforms, depot, megastructures) and per-site extractors stay instant-on-affordability. */
 export type QueueBuildingKind = "factory" | "reactor" | "agridome" | "mining" | "habitat" | "power";
@@ -280,11 +294,21 @@ export interface System {
   sites: ExtractionSite[];
   claimCost: number;
   upkeep: number;
+  /**
+   * System-level population AGGREGATE (Section 24, Phase 4b): the highest stage / its progress /
+   * peak unrest across the system's populated colonies (`colonyPop`). Kept for valuation,
+   * megastructure gating, and the system pop-meter; the authoritative per-body state is `colonyPop`.
+   */
   populationStage: PopulationStage;
-  /** Progress (0..100) toward the next population stage (Section 08). */
+  /** Progress (0..100) toward the next population stage of the leading colony (Section 08). */
   populationProgress: number;
-  /** Social unrest (0..1) from starvation; lowers tax and production. */
+  /** Peak social unrest across the system's colonies (0..1); lowers tax and production. */
   unrest: number;
+  /**
+   * Per-body population (Section 24, Phase 4b): bodyKey → its colony's stage/progress/unrest. Only
+   * habitable bodies (or those with an agri-dome) appear here; pure-industrial worlds host no people.
+   */
+  colonyPop: Record<string, ColonyPopulation>;
   /**
    * Buildings, owned per-body (Section 24): each planet/belt keyed by its body key
    * ("planet:2", "belt:0", "star:0") holds its own factories/reactors/agri-domes/upgrades. The
