@@ -44,6 +44,8 @@ export interface ResearchTech {
   choiceGroup?: string;
   /** Galaxy-unique: once any charter completes it, no other charter can (a race). Phase 3. */
   secret?: boolean;
+  /** Navigation Warp-Drive techs raise the charter's range tier on completion (Section 28, Phase 2). */
+  grantsRangeTier?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,18 +68,30 @@ export const RESEARCH_TREE: ResearchTech[] = [
     desc: "Colonies pour +50% construction points per turn — everything builds faster." },
   { id: "fab-lean", division: "fabrication", tier: 2, name: "Lean Manufacturing", rpCost: 320, prereqs: ["fab-assembly"], choiceGroup: "fab-2",
     desc: "Building material bills cut by 40%." },
+  { id: "fab-metallurgy", division: "fabrication", tier: 3, name: "Advanced Metallurgy", rpCost: 460, prereqs: ["fab-assembly"],
+    desc: "Superalloy fabrication cuts megastructure construction cost by 30%." },
 
-  // — Navigation — (Phase 2 folds the Warp-Drive range ladder into this division)
-  { id: "nav-lanes", division: "navigation", tier: 1, name: "Lane Stabilization", rpCost: 200, prereqs: [],
+  // — Navigation — (the Warp-Drive range ladder now lives here, Section 28 Phase 2)
+  { id: "nav-warp2", division: "navigation", tier: 1, name: "Warp Drive II", rpCost: 150, prereqs: [], grantsRangeTier: 2,
+    desc: "Range 2 warp drives — reach the second ring of warp lanes." },
+  { id: "nav-lanes", division: "navigation", tier: 1, name: "Lane Stabilization", rpCost: 180, prereqs: [],
     desc: "Charting frontier warp lanes costs half as much." },
-  { id: "nav-logistics", division: "navigation", tier: 2, name: "Convoy Logistics", rpCost: 320, prereqs: ["nav-lanes"],
+  { id: "nav-warp3", division: "navigation", tier: 2, name: "Warp Drive III", rpCost: 260, prereqs: ["nav-warp2"], grantsRangeTier: 3,
+    desc: "Range 3 warp drives — push into the rare-isotope frontier." },
+  { id: "nav-logistics", division: "navigation", tier: 2, name: "Convoy Logistics", rpCost: 300, prereqs: ["nav-lanes"],
     desc: "Leaner fleet operations cut per-turn ship fuel burn by 40%." },
+  { id: "nav-warp4", division: "navigation", tier: 3, name: "Warp Drive IV", rpCost: 380, prereqs: ["nav-warp3"], grantsRangeTier: 4,
+    desc: "Range 4 warp drives — the deep abyssal lanes open up." },
+  { id: "nav-warp5", division: "navigation", tier: 4, name: "Warp Drive V", rpCost: 520, prereqs: ["nav-warp4"], grantsRangeTier: 5,
+    desc: "Range 5 warp drives — capital-class jump range across the galaxy." },
 
   // — Colonial —
   { id: "col-habitat", division: "colonial", tier: 1, name: "Habitat Engineering", rpCost: 200, prereqs: [],
     desc: "Every colony's population grows 30% faster." },
   { id: "col-charter", division: "colonial", tier: 2, name: "Charter Reform", rpCost: 320, prereqs: ["col-habitat"],
     desc: "Corporate restructuring cuts system upkeep by 40%." },
+  { id: "col-terraform", division: "colonial", tier: 3, name: "Terraforming", rpCost: 500, prereqs: ["col-charter"],
+    desc: "Unlocks terraforming: make a barren / lava / giant world habitable so it can grow a population." },
 
   // — Security —
   { id: "sec-plating", division: "security", tier: 1, name: "Hull Plating", rpCost: 200, prereqs: [],
@@ -86,6 +100,8 @@ export const RESEARCH_TREE: ResearchTech[] = [
     desc: "Targeting suites raise warship combat by 25% (offense)." },
   { id: "sec-pointdef", division: "security", tier: 2, name: "Point-Defense", rpCost: 320, prereqs: ["sec-plating"], choiceGroup: "sec-2",
     desc: "Interceptor screens add a further +25% system defense (defense)." },
+  { id: "sec-capital", division: "security", tier: 3, name: "Capital Shipyards", rpCost: 460, prereqs: ["sec-plating"],
+    desc: "Dedicated yards build capital hulls (Range 5+) for 30% less." },
 
   // — Acquisitions —
   { id: "acq-algorithms", division: "acquisitions", tier: 1, name: "Market Algorithms", rpCost: 200, prereqs: [],
@@ -139,6 +155,9 @@ export interface ResearchMods {
   marketEdge: number;           // fraction of a better fill on exchange orders (0..1)
   acquisitionCostMult: number;  // share-buy / acquisition cost
   surveyCostMult: number;       // route-charting cost
+  capitalHullCostMult: number;  // capital warship (Range 5+) build cost
+  megastructureCostMult: number;// megastructure build cost
+  canTerraform: boolean;        // Terraforming unlocked (Section 28, Phase 2)
 }
 
 export function emptyResearchMods(): ResearchMods {
@@ -146,6 +165,7 @@ export function emptyResearchMods(): ResearchMods {
     yieldMult: 1, depletionMult: 1, factoryOutputMult: 1, constructionRateMult: 1, buildMaterialsMult: 1,
     growthMult: 1, upkeepMult: 1, defenseMult: 1, shipCombatMult: 1, shipFuelMult: 1,
     marketEdge: 0, acquisitionCostMult: 1, surveyCostMult: 1,
+    capitalHullCostMult: 1, megastructureCostMult: 1, canTerraform: false,
   };
 }
 
@@ -168,5 +188,8 @@ export function researchMods(completed: string[]): ResearchMods {
   if (has("sec-firecontrol")) m.shipCombatMult *= 1.25;
   if (has("acq-algorithms")) m.marketEdge += 0.06;
   if (has("acq-takeover")) m.acquisitionCostMult *= 0.75;
+  if (has("fab-metallurgy")) m.megastructureCostMult *= 0.7;
+  if (has("sec-capital")) m.capitalHullCostMult *= 0.7;
+  if (has("col-terraform")) m.canTerraform = true;
   return m;
 }

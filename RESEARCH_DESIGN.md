@@ -1,10 +1,12 @@
 # Research & Specialization — Design (Section 28)
 
-**Status:** **Phase 1 implemented** (Section 28) — RP economy (Research Labs + population), the 15-tech
-tree with live `researchMods` effects, the Research screen + queue, bot doctrines, and conquest
-tech-seizure (1–3 random) are in and balance-swept. Remaining: P2 (fold Range into Navigation,
-terraforming, new recipes/hulls), P3 (espionage/acquisition tech transfer, secret-project races incl.
-wormhole lanes). Inspired by **Master of Orion 2** (field tree with
+**Status:** **Phases 1–2 implemented** (Section 28). P1: RP economy (Research Labs + population), the
+tech tree with live `researchMods` effects, Research screen + queue, bot doctrines, conquest
+tech-seizure (1–3 random). P2: Warp-Drive range ladder folded into Navigation (`grantsRangeTier`; old
+`researchRange` removed), Terraforming (`terraform` order), Capital Shipyards (cheaper Range-5+ hulls),
+Advanced Metallurgy (cheaper megastructures). Tree now 22 techs; balance-swept (leader/median ≈12).
+Remaining: P3 — secret-project capstones (wormhole-lane / arcology / nanofab races) + espionage
+tech-steal + acquisition tech transfer + deeper choice nodes. Inspired by **Master of Orion 2** (field tree with
 "pick-one" tier choices you can't un-pick; trade/steal what you skipped) and **Alpha Centauri** (research
 as the spine of an asymmetric empire; one-time *secret projects*; tech feeds society / units / facilities).
 

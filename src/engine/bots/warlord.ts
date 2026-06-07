@@ -18,7 +18,6 @@ import {
   maybeConquest,
   maybeDefendAlly,
   maybeFrontier,
-  maybeResearchRange,
   maybeSabotage,
   maybeResearch,
   RESEARCH_PLANS,
@@ -44,7 +43,6 @@ export class WarlordBot implements Bot {
     orders.push(...sellSurplus(view));
     orders.push(...maybeBuildExtractor(view));
     orders.push(...maybeResearch(view, RESEARCH_PLANS.warlord));
-    orders.push(...maybeResearchRange(view)); // climb toward capital hulls
     orders.push(...maybeSurvey(view)); // scout conquest targets (Section 25)
     orders.push(...maybeFrontier(view));
     // Military first: build a fleet, then mass it and conquer.

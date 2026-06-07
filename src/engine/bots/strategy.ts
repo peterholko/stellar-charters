@@ -776,26 +776,6 @@ export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
  * Earliest turn a corp will reach for each range tier (keeps fleets advancing). The eight-tier
  * ladder is paced to fit the 42-turn arc, so aggressive corps can climb to capital hulls late.
  */
-const RANGE_MIN_TURN: Record<number, number> = {
-  2: 6, 3: 11, 4: 16, 5: 21, 6: 26, 7: 30, 8: 34,
-};
-
-/**
- * Climb the range-tech ladder one tier at a time (Section 04). Reaching Range 2 opens
- * the frontier; Range 3–8 unlock progressively stronger hulls and the longest, deepest
- * warp tunnels so fleets don't stall.
- */
-export function maybeResearchRange(view: PlayerView): Order[] {
-  const next = (view.me.rangeTier + 1) as RangeTier;
-  if (next > MAX_RANGE_TIER) return [];
-  const cost = view.config.tuning.rangeResearchCost[next];
-  const minTurn = RANGE_MIN_TURN[next] ?? 99;
-  if (view.turn >= minTurn && view.me.credits > cost * 1.3) {
-    return [{ kind: "researchRange", targetTier: next }];
-  }
-  return [];
-}
-
 /** Gross full-development export value of a system priced at base (potential, not current). */
 function grossYieldValue(view: PlayerView, sys: System): number {
   const pot = potentialYields(sys);
@@ -823,11 +803,13 @@ export function maybeExpand(view: PlayerView): Order[] {
 /** Per-archetype research doctrines (Section 28): the ordered tech queue a bot pursues. Each leans
  *  into ~2 divisions matching its play, so the sim exercises the whole tree and bots specialise too. */
 export const RESEARCH_PLANS: Record<string, string[]> = {
-  miner: ["pro-extractors", "pro-deepcore", "fab-assembly", "fab-lean", "col-habitat", "nav-lanes"],
-  balanced: ["fab-assembly", "fab-modular", "col-habitat", "col-charter", "pro-extractors", "acq-algorithms"],
-  raider: ["acq-algorithms", "acq-takeover", "sec-plating", "sec-firecontrol", "nav-logistics"],
-  warlord: ["sec-plating", "sec-firecontrol", "fab-assembly", "pro-extractors", "col-habitat"],
-  hybrid: ["fab-assembly", "fab-modular", "pro-extractors", "pro-deepcore", "col-habitat"],
+  // Every doctrine opens with Warp Drive II/III (range fuels expansion + reach), then leans into ~2
+  // divisions. Range now comes from research (Section 28 Phase 2), so it's part of the queue.
+  miner: ["nav-warp2", "pro-extractors", "nav-warp3", "pro-deepcore", "nav-warp4", "fab-assembly", "fab-lean", "col-habitat"],
+  balanced: ["nav-warp2", "fab-assembly", "fab-modular", "nav-warp3", "col-habitat", "col-charter", "pro-extractors", "acq-algorithms"],
+  raider: ["nav-warp2", "acq-algorithms", "nav-warp3", "acq-takeover", "sec-plating", "sec-firecontrol", "nav-warp4", "nav-warp5", "sec-capital"],
+  warlord: ["nav-warp2", "sec-plating", "nav-warp3", "sec-firecontrol", "nav-warp4", "nav-warp5", "sec-capital", "fab-assembly", "pro-extractors"],
+  hybrid: ["nav-warp2", "fab-assembly", "nav-warp3", "fab-modular", "pro-extractors", "col-habitat"],
 };
 
 /** Fund research (Section 28): keep a few Research Labs going and steer the tech queue by doctrine. */

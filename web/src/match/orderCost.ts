@@ -92,11 +92,11 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
         warn: order.rangeTier > view.me.rangeTier ? `Needs Range ${order.rangeTier} tech` : undefined,
       };
     }
-    case "researchRange":
+    case "terraform":
       return {
-        label: `Research Range ${order.targetTier}`,
-        detail: "unlock deeper warp drives",
-        cost: t.rangeResearchCost[order.targetTier],
+        label: "Terraform world",
+        detail: `make a world at ${name(order.systemId)} habitable`,
+        cost: t.terraformCost,
         tone: "research",
       };
     case "hirePrivateer":

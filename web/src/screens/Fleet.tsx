@@ -29,7 +29,6 @@ export function Fleet() {
           {TIERS.map((tier) => {
             const owned = me.rangeTier >= tier;
             const next = tier === me.rangeTier + 1;
-            const cost = t.rangeResearchCost[tier];
             return (
               <div key={tier} className={`ladder__rung ${owned ? "is-owned" : next ? "is-next" : "is-locked"}`}>
                 <div className="ladder__tier">R{tier}</div>
@@ -40,8 +39,8 @@ export function Fleet() {
                 {owned ? (
                   <Badge tone="positive">Online</Badge>
                 ) : next ? (
-                  <button type="button" className="mini-btn" disabled={me.credits < cost} onClick={() => store.stage({ kind: "researchRange", targetTier: tier })}>
-                    {formatCr(cost)}
+                  <button type="button" className="mini-btn" title="Warp Drive is now a Navigation research tech" onClick={() => store.setNav("research")}>
+                    Research →
                   </button>
                 ) : (
                   <Badge tone="neutral">Locked</Badge>

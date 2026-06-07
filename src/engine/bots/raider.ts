@@ -17,7 +17,6 @@ import {
   maybeBuildWarships,
   maybeConquest,
   maybeDefendAlly,
-  maybeResearchRange,
   maybeSabotage,
   maybeResearch,
   RESEARCH_PLANS,
@@ -64,7 +63,6 @@ export class RaiderBot implements Bot {
     orders.push(...maybeDefendAlly(view, this.state));
     orders.push(...maybeConquest(view, this.state));
     // Advance range tech, then defend its home system and convoys.
-    orders.push(...maybeResearchRange(view));
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
     // Having bled a rival via raids, move to seize it through equity (Section 17).

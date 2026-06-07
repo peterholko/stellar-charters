@@ -47,6 +47,44 @@ describe("research (Section 28)", () => {
     expect(researchMods(corp.research.completed).yieldMult).toBeCloseTo(1.15, 5); // effect live
   });
 
+  it("Warp Drive research raises the charter's range tier (range folded into Navigation)", () => {
+    const eng = new Engine(loadScenario(scenario(1, 1)), 0, reg());
+    const corp = eng.corps[0]!;
+    const sys = eng.galaxy.system("s0");
+    sys.owner = corp.id; corp.ownedSystemIds = ["s0"]; corp.hasCharter = true; corp.isFreeOperator = false;
+    getBodyBuildings(sys, primaryBodyKey(sys)).labs = 4; // 96 RP/turn → warp2 (150) in ~2 turns
+    corp.research.queue = ["nav-warp2"];
+    expect(corp.rangeTier).toBe(1);
+    for (let i = 0; i < 4; i++) eng.stepTurn();
+    expect(corp.research.completed).toContain("nav-warp2");
+    expect(corp.rangeTier).toBe(2);
+  });
+
+  it("Terraforming research lets a charter make a non-habitable world habitable", () => {
+    const cfg = loadScenario({
+      name: "tf", hubId: "hub", players: 1, turns: 6, bots: ["noop"],
+      systems: [
+        { id: "hub", name: "Hub", yields: {}, claimCost: 0, upkeep: 0, defense: 99 },
+        { id: "s0", name: "S0", yields: {}, claimCost: 100, upkeep: 0, defense: 1, innerRing: true,
+          bodies: { starType: "mainSequence", planets: [
+            { type: "ocean", orbit: 1, habitable: true, visualSeed: 0, deposits: [] },
+            { type: "barren", orbit: 2, habitable: false, visualSeed: 0, deposits: [] },
+          ], asteroidBelts: [] } },
+      ],
+      routes: [{ a: "hub", b: "s0", transitTime: 1, stability: 0.9, capacity: 50, exposure: 0.3, authorityPresence: 0.8, requiredRange: 1, charted: true }],
+    });
+    const eng = new Engine(cfg, 0, reg());
+    const corp = eng.corps[0]!;
+    eng.galaxy.system("s0").owner = corp.id; corp.ownedSystemIds = ["s0"]; corp.hasCharter = true; corp.isFreeOperator = false;
+    corp.research.completed = ["col-terraform"]; // unlocked
+    corp.credits = 50000;
+    for (const sys of eng.galaxy.allSystems()) sys.stockpile.silicates = 100, (sys.stockpile.metals = 100);
+    eng.makeHybrid(corp.id);
+    eng.setHumanOrders(corp.id, [{ kind: "terraform", systemId: "s0", bodyKey: "planet:1" }]);
+    eng.stepTurn();
+    expect(eng.galaxy.system("s0").bodies!.planets[1]!.habitable).toBe(true);
+  });
+
   it("a choice node locks out its sibling once one is taken", () => {
     const fork = techById("pro-deepcore")!;
     expect(canResearch(fork, ["pro-extractors"])).toBe(true); // prereq met, nothing chosen yet

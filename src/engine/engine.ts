@@ -24,6 +24,7 @@ import {
   getBodyBuildings,
   planetLabel,
   primaryBodyKey,
+  siteBodyKey,
   siteOutput,
   systemBuildings,
   systemHasHabitableBody,
@@ -559,8 +560,10 @@ export class Engine {
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break; // must base it at an owned system
             if (order.rangeTier > corp.rangeTier) break;
+            // Capital Shipyards research (Section 28) discounts capital hulls (Range 5+).
+            const hullMult = order.rangeTier >= 5 ? this.mods(corp).capitalHullCostMult : 1;
             const cost =
-              t.shipCost[order.rangeTier] + (order.raider ? t.raiderShipExtraCost : 0);
+              (t.shipCost[order.rangeTier] + (order.raider ? t.raiderShipExtraCost : 0)) * hullMult;
             // Higher-tier hulls require strategic resources — rare isotopes (Range 2+) and
             // antimatter (capital Range 4+ hulls) — drawn from the corp's own stockpiles
             // first, with any shortfall bought from the exchange. Controlling the frontier
@@ -595,17 +598,27 @@ export class Engine {
             );
             break;
           }
-          case "researchRange": {
-            const cost = this.config.tuning.rangeResearchCost[order.targetTier];
-            if (order.targetTier <= corp.rangeTier) break;
-            if (corp.credits < cost) break;
-            corp.credits -= cost;
-            corp.rangeTier = order.targetTier;
-            if (order.targetTier >= 2 && this.metrics.range2Turn[corp.id] === -1) {
-              this.metrics.range2Turn[corp.id] = this.turn;
-            }
-            this.events.push({ type: "build", corpId: corp.id, what: `Researched Range ${order.targetTier}` });
-            this.log(`  ${corp.name} researches Range ${order.targetTier}`);
+          case "terraform": {
+            // Terraforming (Section 28, Phase 2): make a non-habitable owned world habitable so it can
+            // grow a population. Requires the Terraforming tech; costs credits + materials.
+            if (corp.isFreeOperator) break;
+            if (!this.mods(corp).canTerraform) break;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id || !sys.bodies) break;
+            const m = order.bodyKey.match(/^planet:(\d+)$/);
+            const planet = m ? sys.bodies.planets[Number(m[1])] : undefined;
+            if (!planet || planet.habitable) break;
+            const t = this.config.tuning;
+            const mats = this.scaleMats(corp, t.buildResources.agridome);
+            const bill = this.resourceBill(corp, mats);
+            if (corp.credits < t.terraformCost + bill) break;
+            this.consumeResources(corp, mats);
+            corp.credits -= t.terraformCost + bill;
+            planet.habitable = true;
+            // Reflect it on the world's worked sites so the colony reads as habitable.
+            for (const site of sys.sites) if (siteBodyKey(site) === order.bodyKey) site.habitable = true;
+            this.events.push({ type: "build", corpId: corp.id, what: `Terraformed ${planet.type} world`, systemId: sys.id });
+            this.log(`  ${corp.name} terraforms a ${planet.type} world at ${sys.name}`);
             break;
           }
           case "hirePrivateer": {
@@ -869,12 +882,14 @@ export class Engine {
             const spec = t.megastructures[order.structure];
             const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
             if (stages.indexOf(sys.populationStage) < stages.indexOf(spec.requiresStage)) break;
+            // Advanced Metallurgy research (Section 28) discounts megastructure construction.
+            const megaMult = this.mods(corp).megastructureCostMult;
             const metalsBill = this.strategicBill(corp, "metals", spec.metalsCost);
             const alloyBill = this.strategicBill(corp, "alloys", spec.alloyCost);
-            if (corp.credits < spec.creditCost + metalsBill + alloyBill) break;
+            if (corp.credits < spec.creditCost * megaMult + metalsBill + alloyBill) break;
             this.consumeStrategic(corp, "metals", spec.metalsCost);
             this.consumeStrategic(corp, "alloys", spec.alloyCost);
-            corp.credits -= spec.creditCost + metalsBill + alloyBill;
+            corp.credits -= spec.creditCost * megaMult + metalsBill + alloyBill;
             sys.megastructures.push(order.structure);
             this.events.push({ type: "build", corpId: corp.id, what: MEGASTRUCTURE_LABEL[order.structure], systemId: sys.id });
             this.log(`  ${corp.name} completes a ${MEGASTRUCTURE_LABEL[order.structure]} at ${sys.name}`);
@@ -1734,6 +1749,11 @@ export class Engine {
           delete r.invested[id];
           r.queue.shift();
           r.completed.push(id);
+          // Warp-Drive research raises the charter's range tier (Section 28, Phase 2).
+          if (tech.grantsRangeTier && tech.grantsRangeTier > corp.rangeTier) {
+            corp.rangeTier = tech.grantsRangeTier as typeof corp.rangeTier;
+            if (corp.rangeTier >= 2 && this.metrics.range2Turn[corp.id] === -1) this.metrics.range2Turn[corp.id] = this.turn;
+          }
           this.events.push({ type: "research", corpId: corp.id, techId: id });
           this.log(`  ${corp.name} completes research: ${tech.name}`);
         } else {

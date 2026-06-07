@@ -5,6 +5,7 @@ import {
   coloniesOf,
   constructionCpCost,
   factoryCostMult,
+  researchMods,
   systemBuildings,
   systemSeed,
   stellarOutputMult,
@@ -309,6 +310,16 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
     Object.entries(m).filter(([, n]) => (n ?? 0) > 0).map(([r, n]) => `${n} ${(resourceLabels[r as keyof typeof resourceLabels] ?? r).toLowerCase()}`).join(" + ");
 
   const opts: BuildOpt[] = [];
+  // Terraforming (Section 28, Phase 2): turn a non-habitable world habitable, if research unlocked it.
+  if (colony.kind === "planet" && !colony.habitable && researchMods(view.me.research.completed).canTerraform) {
+    opts.push({
+      key: "terraform", art: "building-agridome", name: "Terraform",
+      desc: "Make this world habitable so it can seed and grow a population.",
+      have: "", costNote: `${formatCr(t.terraformCost)} + ${matsLabel(t.buildResources.agridome)}`,
+      turns: 1, afford: credits >= t.terraformCost, action: "Terraform",
+      onClick: () => store.stage({ kind: "terraform", systemId: sys.id, bodyKey: colony.key }),
+    });
+  }
   if (canBuildOnBody("factory", type)) {
     for (const r of t.recipes) {
       const cost = Math.round(r.buildCost * factoryMult);

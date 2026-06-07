@@ -252,6 +252,8 @@ export interface Tuning {
   labCost: number;
   labRpOutput: number;
   researchPopBase: Record<PopulationStage, number>;
+  /** Credits to terraform a world habitable once the Terraforming research is unlocked (Section 28). */
+  terraformCost: number;
   /**
    * Per-body extractor economy (Section 21). Building an extractor on a deposit raises its
    * level; the credit cost scales with the level reached and the deposit's accessibility (harder
@@ -442,6 +444,7 @@ export const DEFAULT_TUNING: Tuning = {
   labCost: 320,
   labRpOutput: 24,
   researchPopBase: { outpost: 0, settlement: 3, colony: 6, city: 11, metropolis: 18 },
+  terraformCost: 1400,
   extractor: {
     buildCost: 300,
     alloyCost: 2,

@@ -1137,9 +1137,17 @@ only **~2 divisions (~5–6 of 15 techs)** in the 42-turn game — you **special
 skipped: **conquering a charter seizes 1–3 random techs it held** (and acquisition/espionage routes
 come in later phases). Bots run per-archetype research doctrines so the sim exercises the whole tree.
 A 30-game / 8-player sweep stays green (leader/median ≈14, every flag healthy); per-game completions
-spread ~3–6 per charter, so nobody nears the full tree. *(Phase 1; Navigation's Warp-Drive range
-ladder fold-in, terraforming/wormhole/secret-project capstones, and espionage are later phases — see
-`RESEARCH_DESIGN.md`.)*
+spread ~3–6 per charter, so nobody nears the full tree.
+
+**Phase 2** wires branches into the rest of the game: the **Warp-Drive range ladder is now a
+Navigation research chain** (`grantsRangeTier` — the old credit-bought `researchRange` is gone; range
+competes for RP like everything else, and conquest can even seize a rival's warp tech), **Terraforming**
+(Colonial — a `terraform` order makes a non-habitable owned world habitable so it can grow a
+population), **Capital Shipyards** (Security — Range-5+ hulls 30% cheaper), and **Advanced Metallurgy**
+(Fabrication — megastructures 30% cheaper). Bots open every doctrine with Warp II/III so they still
+reach the frontier; the 30-game sweep stays green (leader/median ≈12, metals floor 0%, food 92%).
+*(Remaining: wormhole-lane / arcology / nanofab secret-project capstones and espionage tech-steal —
+see `RESEARCH_DESIGN.md`.)*
 
 ◆ END OF DOSSIER ◆
 

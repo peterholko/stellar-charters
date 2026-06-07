@@ -554,9 +554,12 @@ export interface BuildShipOrder {
   systemId: string;
 }
 
-export interface ResearchRangeOrder {
-  kind: "researchRange";
-  targetTier: RangeTier;
+/** Terraform a non-habitable owned world so it can host a population (Section 28, Phase 2). Requires
+ *  the Terraforming research. */
+export interface TerraformOrder {
+  kind: "terraform";
+  systemId: string;
+  bodyKey: string;
 }
 
 export interface HirePrivateerOrder {
@@ -736,7 +739,7 @@ export type Order =
   | ClaimOrder
   | SurveyOrder
   | BuildShipOrder
-  | ResearchRangeOrder
+  | TerraformOrder
   | HirePrivateerOrder
   | InterdictOrder
   | TargetConvoyOrder
