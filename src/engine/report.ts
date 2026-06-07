@@ -70,6 +70,28 @@ export type TurnEvent =
       success: boolean;
     }
   | {
+      type: "invasion";
+      attackerId: string;
+      defenderId: string;
+      systemId: string;
+      captured: boolean;
+    }
+  | {
+      type: "warDeclared";
+      aggressorId: string;
+      defenderId: string;
+    }
+  | {
+      type: "warEnded";
+      aggressorId: string;
+      defenderId: string;
+    }
+  | {
+      type: "alliance";
+      aId: string;
+      bId: string;
+    }
+  | {
       type: "acquisition";
       acquirerId: string;
       targetId: string;

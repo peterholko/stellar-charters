@@ -13,6 +13,7 @@ import {
   type BodyKind,
   type MegastructureKind,
   type PlanetType,
+  type War,
   type PopulationStage,
   type Privateer,
   type RangeTier,
@@ -113,6 +114,8 @@ export interface ClientCorp {
   isFreeOperator: boolean;
   hasCharter: boolean;
   founderId: string;
+  /** Charters this corp has pledged to defend (Section 23). Allied iff mutual. */
+  alliancePledges: string[];
   /** Self-only fields (undefined for rivals). */
   credits?: number;
   debt?: number;
@@ -152,6 +155,10 @@ export interface ClientState {
   routes: ClientRoute[];
   corps: ClientCorp[];
   convoys: ClientConvoy[];
+  /** Active wars between charters (Section 23). */
+  wars: War[];
+  /** True if you (the viewing charter) are barred from the Exchange as a war aggressor. */
+  marketLockedOut: boolean;
   reports: TurnReport[];
   // ----- multiplayer / lobby (filled by the server) -----
   /** This client's seat, or null if it hasn't joined. */
@@ -254,6 +261,7 @@ export function buildClientState(
       isFreeOperator: c.isFreeOperator,
       hasCharter: c.hasCharter,
       founderId: c.founderId,
+      alliancePledges: [...c.alliancePledges],
     };
     if (mine) {
       base.credits = c.credits;
@@ -299,6 +307,8 @@ export function buildClientState(
     routes,
     corps,
     convoys,
+    wars: engine.activeWars.map((w) => ({ ...w })),
+    marketLockedOut: engine.isMarketLockedOut(humanCorpId),
     reports,
     // Multiplayer fields default here; the server overrides them with DB membership.
     mySeat: humanCorpId,

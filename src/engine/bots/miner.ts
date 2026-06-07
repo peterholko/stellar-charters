@@ -9,6 +9,7 @@ import type { Bot, PlayerView } from "./bot.js";
 import {
   bidList,
   freeOperatorOrders,
+  maybeAlliance,
   maybeBuildDepot,
   maybeBuildExtractor,
   maybeBuildHydroponics,
@@ -56,6 +57,8 @@ export class MinerBot implements Bot {
     // Cheap stationary platforms first, then mobile escort fleets.
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
+    // Peaceful miners take a defensive alliance for protection (Section 23).
+    orders.push(...maybeAlliance(view));
     return orders;
   }
 }

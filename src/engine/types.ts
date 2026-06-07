@@ -342,6 +342,19 @@ export interface Privateer {
   turnsLeft: number;
 }
 
+/**
+ * An active war between charters (Section 23). Declared by the aggressor's first invasion of a
+ * non-hostile rival; the aggressor is locked out of the Galactic Exchange until `endTurn`. Each
+ * new act of aggression in the war pushes `endTurn` out; once it passes, a ceasefire ends the war.
+ */
+export interface War {
+  aggressorId: string;
+  defenderId: string;
+  startTurn: number;
+  /** First turn on which the war is over (a ceasefire) unless aggression refreshes it. */
+  endTurn: number;
+}
+
 export interface Corporation {
   id: string;
   name: string;
@@ -370,6 +383,8 @@ export interface Corporation {
   botId: string;
   /** True once the corporation holds at least one charter claim. */
   hasCharter: boolean;
+  /** Charters this corp has pledged to defend (Section 23). Allied iff the pledge is mutual. */
+  alliancePledges: string[];
 }
 
 // ----- Orders (discriminated union) -----
@@ -511,6 +526,25 @@ export interface SabotageOrder {
   siteKey: string;
 }
 
+/** Invade a rival-owned system to capture it — declares war (Section 23). */
+export interface InvadeOrder {
+  kind: "invade";
+  systemId: string;
+}
+
+/** Pledge a mutual defensive alliance with another charter (Section 23). Allied only once
+ *  both charters have pledged each other. */
+export interface AlliancePledgeOrder {
+  kind: "alliancePledge";
+  targetId: string;
+}
+
+/** Withdraw a defensive-alliance pledge (Section 23). */
+export interface AllianceBreakOrder {
+  kind: "allianceBreak";
+  targetId: string;
+}
+
 export interface BuySharesOrder {
   kind: "buyShares";
   targetId: string;
@@ -544,5 +578,8 @@ export type Order =
   | BuildExtractorOrder
   | AssayOrder
   | SabotageOrder
+  | InvadeOrder
+  | AlliancePledgeOrder
+  | AllianceBreakOrder
   | BuySharesOrder
   | BorrowOrder;

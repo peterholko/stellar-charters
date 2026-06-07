@@ -25,6 +25,7 @@ export function makeCorp(over: Partial<Corporation> = {}): Corporation {
     isFreeOperator: false,
     botId: "miner",
     hasCharter: false,
+    alliancePledges: [],
     ...over,
   };
 }

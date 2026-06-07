@@ -214,6 +214,22 @@ export interface Tuning {
   /** Extraction sabotage (Section 21): raid strength needed, and turns a hit site stays offline. */
   sabotage: { minStrength: number; disableTurns: number };
   /**
+   * War & conquest (Section 23). An invasion captures the target system when the attacker's
+   * reachable fleet strength exceeds the system's defense (plus allied reinforcement) by
+   * `captureRatio`; otherwise it is repelled. Declaring war locks the aggressor out of the
+   * Galactic Exchange until `durationTurns` after its last act of aggression (a ceasefire).
+   */
+  war: {
+    /** Attacker:defender strength ratio needed to capture (else repelled). */
+    captureRatio: number;
+    /** Fraction of the attacker's committed combat lost on a repelled assault. */
+    repelLossFrac: number;
+    /** Fraction of the attacker's committed combat lost even on a successful capture. */
+    captureLossFrac: number;
+    /** Turns a war lasts after the latest act of aggression before a ceasefire. */
+    durationTurns: number;
+  };
+  /**
    * Megastructures (Section 22): the enormous metals/alloys demand sink. Each is one-per-system,
    * gated by population stage, and pays back in defense, growth, and a big valuation bump — so
    * overproduced metal has somewhere to go and an end-game construction race emerges.
@@ -344,6 +360,7 @@ export const DEFAULT_TUNING: Tuning = {
   },
   assayCost: 120,
   sabotage: { minStrength: 4, disableTurns: 3 },
+  war: { captureRatio: 1.25, repelLossFrac: 0.5, captureLossFrac: 0.2, durationTurns: 6 },
   // Megastructures (Section 22): the metal-hungry demand sink. Costs escalate from a mid-game
   // station to the apex ringworld; metalsCost dwarfs anything else in the game so a metals-rich
   // empire finally has somewhere to pour its overproduction (and buys the shortfall at market,

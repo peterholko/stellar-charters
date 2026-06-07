@@ -1,0 +1,116 @@
+/**
+ * War & conquest (Section 23): invasion capture/repel, the aggressor market lockout + ceasefire,
+ * defensive-alliance reinforcement, and ally immunity.
+ */
+import { describe, expect, it } from "vitest";
+import { Engine } from "../src/engine/engine.js";
+import { loadScenario, type Scenario } from "../src/engine/config.js";
+import type { Bot, BotFactory, PlayerView } from "../src/engine/bots/bot.js";
+import type { BidOrder, Order } from "../src/engine/types.js";
+
+/** Hub + three fully-interconnected inner systems (all charted Range-1 lanes). */
+function warScenario(): Scenario {
+  const lane = (a: string, b: string) => ({ a, b, transitTime: 1, stability: 0.9, capacity: 40, exposure: 0.4, authorityPresence: 0.5, charted: true });
+  return {
+    name: "war", hubId: "hub", players: 3, turns: 16, bots: ["noop"],
+    systems: [
+      { id: "hub", name: "Hub", yields: {}, claimCost: 0, upkeep: 0, defense: 99 },
+      { id: "s0", name: "S0", yields: { metals: 10 }, claimCost: 1000, upkeep: 0, defense: 2, innerRing: true },
+      { id: "s1", name: "S1", yields: { metals: 10 }, claimCost: 1000, upkeep: 0, defense: 2, innerRing: true },
+      { id: "s2", name: "S2", yields: { metals: 10 }, claimCost: 1000, upkeep: 0, defense: 2, innerRing: true },
+    ],
+    routes: [lane("hub", "s0"), lane("hub", "s1"), lane("hub", "s2"), lane("s0", "s1"), lane("s1", "s2"), lane("s0", "s2")],
+  };
+}
+
+class NoopBot implements Bot {
+  readonly id = "noop";
+  bid(): BidOrder { return { kind: "bid", priorities: [] }; }
+  decide(): Order[] { return []; }
+}
+const reg = (): Map<string, BotFactory> => new Map([["noop", () => new NoopBot()]]);
+
+/**
+ * Deterministic 3-charter board: corp-0 owns S0 (attacker), corp-1 owns S1 (defender),
+ * corp-2 owns S2. The attacker gets a fleet at S0; options arm the defender / its ally.
+ */
+function setup(opts: { attackerCombat: number; defenderEscort?: number; ally2?: boolean; ally2Combat?: number }) {
+  const eng = new Engine(loadScenario(warScenario()), 1, reg());
+  const [a, d, third] = eng.corps;
+  for (const sys of eng.galaxy.allSystems()) if (sys.id !== "hub") sys.owner = null;
+  const own = (corp: NonNullable<typeof a>, id: string) => { corp.ownedSystemIds = [id]; corp.hasCharter = true; corp.isFreeOperator = false; eng.galaxy.system(id).owner = corp.id; };
+  own(a!, "s0"); own(d!, "s1"); own(third!, "s2");
+  a!.ships = [{ rangeTier: 1, combat: opts.attackerCombat, raider: false, stationedAt: "s0" }];
+  if (opts.defenderEscort) d!.ships = [{ rangeTier: 1, combat: opts.defenderEscort, raider: false, stationedAt: "s1" }];
+  if (opts.ally2) {
+    d!.alliancePledges = [third!.id];
+    third!.alliancePledges = [d!.id];
+    third!.ships = [{ rangeTier: 1, combat: opts.ally2Combat ?? 0, raider: false, stationedAt: "s2" }];
+  }
+  eng.makeHybrid(a!.id);
+  return { eng, a: a!, d: d!, third: third! };
+}
+
+describe("war & conquest (Section 23)", () => {
+  it("captures a weakly-defended system with an overwhelming fleet and declares war", () => {
+    const { eng, a, d } = setup({ attackerCombat: 30 });
+    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
+    eng.stepTurn();
+    expect(eng.galaxy.system("s1").owner).toBe(a.id);
+    expect(a.ownedSystemIds).toContain("s1");
+    expect(d.ownedSystemIds).not.toContain("s1");
+    expect(eng.activeWars.some((w) => w.aggressorId === a.id && w.defenderId === d.id)).toBe(true);
+  });
+
+  it("is repelled by a strong defense, costing the attacker ships, but still starts the war", () => {
+    const { eng, a } = setup({ attackerCombat: 10, defenderEscort: 24 });
+    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
+    eng.stepTurn();
+    expect(eng.galaxy.system("s1").owner).not.toBe(a.id); // not captured
+    expect(a.ships.reduce((s, sh) => s + sh.combat, 0)).toBeLessThan(10); // took losses
+    expect(eng.isMarketLockedOut(a.id)).toBe(true); // war declared regardless
+  });
+
+  it("locks the aggressor out of the Exchange until a ceasefire ends the war", () => {
+    const { eng, a } = setup({ attackerCombat: 30 });
+    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
+    eng.stepTurn(); // turn 1: war declared, endTurn = 1 + durationTurns(6) = 7
+    eng.setHumanOrders(a.id, null);
+    expect(eng.isMarketLockedOut(a.id)).toBe(true);
+    for (let i = 0; i < 6; i++) eng.stepTurn(); // through turn 7 — ceasefire
+    expect(eng.isMarketLockedOut(a.id)).toBe(false);
+  });
+
+  it("an aggressor's market orders are dropped while locked out", () => {
+    const { eng, a } = setup({ attackerCombat: 30 });
+    // Invade and, the next turn while locked out, try to sell — the order must not fill.
+    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
+    eng.stepTurn();
+    const creditsBefore = a.credits;
+    eng.setHumanOrders(a.id, [{ kind: "market", side: "sell", resource: "metals", quantity: 50, limitPrice: 1, systemId: "s0", strict: false }]);
+    eng.stepTurn();
+    // The locked-out sell order is dropped: the metal stays in the stockpile (≈2 turns × 10),
+    // rather than being shipped out to the exchange. (Credits only drift down from fleet fuel.)
+    expect(eng.galaxy.system("s0").stockpile.metals).toBeGreaterThan(15);
+    expect(a.credits).toBeLessThanOrEqual(creditsBefore); // no export income gained while locked out
+  });
+
+  it("a defensive alliance reinforces the defender, turning a capture into a repel", () => {
+    // Without the ally, attack 20 vs defense ~2 would capture; the ally's 40 combat at adjacent
+    // S2 reinforces S1's defense past the capture threshold.
+    const { eng, a } = setup({ attackerCombat: 20, ally2: true, ally2Combat: 40 });
+    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
+    eng.stepTurn();
+    expect(eng.galaxy.system("s1").owner).not.toBe(a.id); // alliance held the line
+  });
+
+  it("allies cannot invade each other", () => {
+    const { eng, a, d } = setup({ attackerCombat: 30 });
+    a.alliancePledges = [d.id];
+    d.alliancePledges = [a.id];
+    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
+    eng.stepTurn();
+    expect(eng.galaxy.system("s1").owner).toBe(d.id); // invasion ignored between allies
+    expect(eng.activeWars.length).toBe(0);
+  });
+});

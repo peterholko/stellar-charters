@@ -935,6 +935,53 @@ Together with megastructures, this gives a metals-rich empire two huge places to
 the market stays healthy, and "what do I build with all this metal?" becomes a real strategic
 question rather than a glut.
 
+
+`SECTION 23`
+
+
+## War & Conquest
+
+Up to now charters fought obliquely — raiding convoys, sabotaging extractors, buying each other
+out through equity. **War** adds the direct option: take a rival's *territory* by force. It is a
+high-stakes, costly act, deliberately hard and heavily penalised, so it stays a deliberate
+strategic choice rather than a constant state.
+
+### Invasion
+
+A charter may **invade** a rival-owned system it can reach with a warfleet. The attacker's
+committed strength is the combat of its ships (and privateers) stationed on a charted lane
+adjacent to the target. The defender's strength is the system's full standing defense — base,
+defense platforms, Mining-Rig fortification, megastructures, a Trade Depot's patrols, and any
+warships stationed there — **plus allied reinforcement** (below). If the attacker exceeds the
+defense by the capture ratio, the system is **captured** and its ownership transfers (a charter
+that loses its last system collapses into a Free Operator). Otherwise the assault is **repelled**
+and the attacker loses a large fraction of the force it committed. Either way, blood is spilled and
+war is declared. The Wormhole Hub itself remains Authority-protected and cannot be invaded.
+
+### Declared war & the aggressor penalty
+
+The first invasion of a non-hostile rival **declares war** between the two charters. The
+**aggressor is barred from the Galactic Exchange** — it cannot buy or sell at the hub — until the
+war ends. This is the core deterrent: a warmonger gives up its trade lifeline for the duration, so
+conquest must pay for itself in territory. (Internal transfers between the aggressor's own systems
+still work.) A war lasts a fixed span after the latest act of aggression; once that passes, a
+**ceasefire** ends it and Exchange access is restored. A defender striking back inside an existing
+war is acting defensively — it is *not* treated as a new aggressor and keeps its market access.
+
+### Defensive alliances
+
+Charters may form **mutual defensive alliances** (both sides must pledge). When an ally's system is
+invaded, the ally's warships in range **reinforce the defense**, often turning a winnable assault
+into a bloody repulse. Allies cannot invade one another. An alliance is cheap insurance and a way
+for smaller charters to make themselves too costly to conquer — and for the galaxy to gang up on an
+over-mighty aggressor.
+
+### Resolution placement
+
+Alliance pledges resolve in the administrative step; invasions resolve in the combat phase (after
+raids, step ~6.7); war declaration, the Exchange lockout, and ceasefires all key off the Section 20
+turn order with no same-turn chaining.
+
 ### Prototype priority
 
 Prototype the first 12 turns as a text or spreadsheet simulation with 4–8 players. Validate the opening auction, first exports, order fill UX, convoy visibility, warp-route traffic history, one-turn route interdiction, privateer economics, and Range 2 expansion before adding the full finance/takeover and Free Operator layers.

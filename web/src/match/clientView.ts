@@ -125,6 +125,7 @@ export function reconstructView(state: ClientState): PlayerView {
     isFreeOperator: c.isFreeOperator,
     botId: "",
     hasCharter: c.hasCharter,
+    alliancePledges: c.alliancePledges ?? [],
   }));
   const me = corporations.find((c) => c.id === state.humanCorpId) ?? corporations[0]!;
 
@@ -152,6 +153,7 @@ export function reconstructView(state: ClientState): PlayerView {
     me,
     corporations,
     convoys,
+    wars: state.wars,
     rng: new Rng(0), // present for type-compatibility; views never draw randomness
   };
 }

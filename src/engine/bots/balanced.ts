@@ -10,7 +10,9 @@ import {
   bidList,
   financierOrders,
   freeOperatorOrders,
+  maybeAlliance,
   maybeBuildDepot,
+  maybeInvade,
   maybeBuildExtractor,
   maybeBuildHydroponics,
   maybeBuildMegastructure,
@@ -61,8 +63,11 @@ export class BalancedBot implements Bot {
       orders.push(...planRaid(view, { minTraffic: 2, fundFactor: 4 }));
     }
 
-    // Late game: pursue a hostile takeover of the weakest charter (Section 17).
+    // Late game: pursue a hostile takeover of the weakest charter (Section 17), and — with an
+    // ally for cover — opportunistic conquest of a weak neighbour (Section 23).
     orders.push(...financierOrders(view, this.state, { sinceTurn: 24 }));
+    orders.push(...maybeAlliance(view));
+    if (view.turn >= 22) orders.push(...maybeInvade(view));
 
     return orders;
   }

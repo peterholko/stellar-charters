@@ -246,6 +246,9 @@ input, select { font-family: inherit; }
 .sys-card__star { font-size: 0.62rem; color: var(--ink-dim); margin-top: 0.15rem; }
 .mega-builds { margin-top: 0.6rem; }
 .mega-builds .composition__title { margin-bottom: 0.35rem; }
+.war-controls { margin-top: 0.6rem; }
+.hint--war { color: var(--negative); font-weight: 600; }
+.exchange__lockout { border-color: var(--negative); margin-bottom: 0.6rem; }
 
 .pop-meter { margin: 0.7rem 0; }
 .pop-meter__head { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; margin-bottom: 0.3rem; }

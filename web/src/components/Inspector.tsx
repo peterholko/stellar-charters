@@ -193,8 +193,11 @@ export function Inspector({
           </dl>
 
           <SystemComposition sys={sys} canBuild={mine && !view.me.isFreeOperator} turn={view.turn} totalTurns={view.config.turns} assayCost={t.assayCost} />
-          {!mine && (
-            <RivalSabotage view={view} humanCorpId={humanCorpId} sys={sys} />
+          {!mine && sys.owner && (
+            <>
+              <RivalSabotage view={view} humanCorpId={humanCorpId} sys={sys} />
+              <WarControls view={view} sys={sys} />
+            </>
           )}
 
           {mine && (
@@ -406,6 +409,51 @@ function RivalSabotage({ view, humanCorpId, sys }: { view: PlayerView; humanCorp
       >
         Sabotage {resourceLabels[target.resource]}
       </ActionButton>
+    </div>
+  );
+}
+
+/** War & diplomacy controls for a rival-held system (Section 23): invade, ally, war status. */
+function WarControls({ view, sys }: { view: PlayerView; sys: System }) {
+  const ownerId = sys.owner!;
+  const me = view.me;
+  if (ownerId === me.id || me.isFreeOperator) return null;
+  const owner = view.corporations.find((c) => c.id === ownerId);
+  const allied = !!owner && me.alliancePledges.includes(ownerId) && owner.alliancePledges.includes(me.id);
+  const iPledged = me.alliancePledges.includes(ownerId);
+  const atWar = view.wars.some(
+    (w) => w.endTurn > view.turn && ((w.aggressorId === me.id && w.defenderId === ownerId) || (w.aggressorId === ownerId && w.defenderId === me.id)),
+  );
+  // Can a combat ship reach this system to invade?
+  const canReach = me.ships.some((sh) => {
+    if (sh.combat <= 0 || !sh.stationedAt) return false;
+    const r = view.galaxy.routeBetween(sh.stationedAt, sys.id);
+    return !!r && r.charted && r.requiredRange <= sh.rangeTier;
+  });
+  return (
+    <div className="war-controls">
+      {atWar && <p className="hint hint--war">⚔ At war with {owner?.name ?? ownerId}.</p>}
+      {allied && <p className="hint">🤝 Defensive alliance with {owner?.name ?? ownerId}.</p>}
+      <div className="action-row">
+        {!allied && (
+          <ActionButton
+            icon="crosshair"
+            variant="danger"
+            disabled={!canReach}
+            title={canReach ? "Invade this system — declares war and bars you from the Exchange until a ceasefire" : "Need a warship stationed on an adjacent lane"}
+            onClick={() => store.stage({ kind: "invade", systemId: sys.id })}
+          >
+            Invade
+          </ActionButton>
+        )}
+        {allied ? (
+          <ActionButton icon="systems" onClick={() => store.stage({ kind: "allianceBreak", targetId: ownerId })}>Break alliance</ActionButton>
+        ) : !atWar ? (
+          <ActionButton icon="systems" disabled={iPledged} title={iPledged ? "Pledge sent — awaiting their reciprocation" : "Pledge a mutual defensive alliance"} onClick={() => store.stage({ kind: "alliancePledge", targetId: ownerId })}>
+            {iPledged ? "Pledge sent" : "Pledge alliance"}
+          </ActionButton>
+        ) : null}
+      </div>
     </div>
   );
 }

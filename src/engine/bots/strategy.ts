@@ -347,6 +347,94 @@ export function maybeBuildMegastructure(view: PlayerView): Order[] {
   return [];
 }
 
+// ----- War & diplomacy (Section 23) -----
+
+/** Two charters are allied iff each has pledged the other. */
+function areAlliedView(view: PlayerView, a: string, b: string): boolean {
+  const ca = view.corporations.find((c) => c.id === a);
+  const cb = view.corporations.find((c) => c.id === b);
+  return !!ca && !!cb && ca.alliancePledges.includes(b) && cb.alliancePledges.includes(a);
+}
+
+function atWarView(view: PlayerView, a: string, b: string): boolean {
+  return view.wars.some(
+    (w) =>
+      w.endTurn > view.turn &&
+      ((w.aggressorId === a && w.defenderId === b) || (w.aggressorId === b && w.defenderId === a)),
+  );
+}
+
+function isLockedOutAggressor(view: PlayerView): boolean {
+  return view.wars.some((w) => w.aggressorId === view.me.id && w.endTurn > view.turn);
+}
+
+/** Combat strength this corp can bring against a target system (ships/privateers in range). */
+function attackForceOn(view: PlayerView, sys: System): number {
+  let f = 0;
+  for (const ship of view.me.ships) {
+    if (ship.combat <= 0 || !ship.stationedAt) continue;
+    const r = view.galaxy.routeBetween(ship.stationedAt, sys.id);
+    if (r && r.charted && r.requiredRange <= ship.rangeTier) f += ship.combat;
+  }
+  for (const p of view.me.privateers) {
+    const r = view.galaxy.routeBetween(p.basedAt, sys.id);
+    if (r && r.charted && r.requiredRange <= view.me.rangeTier) f += p.strength;
+  }
+  return f;
+}
+
+/** Estimate a system's defensive strength (mirrors the engine, incl. allied reinforcement). */
+function systemDefenseEstimate(view: PlayerView, sys: System): number {
+  const t = view.config.tuning;
+  let d = sys.defense + sys.platforms * t.platformDefense + sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+  for (const m of sys.megastructures) d += t.megastructures[m].defenseBonus;
+  if (sys.hasDepot) d += t.depotDefenseBonus;
+  for (const owner of view.corporations) {
+    const allied = sys.owner === owner.id || areAlliedView(view, sys.owner ?? "", owner.id);
+    if (!allied) continue;
+    for (const sh of owner.ships) if (sh.combat > 0 && sh.stationedAt === sys.id) d += sh.combat;
+  }
+  return d;
+}
+
+/**
+ * Conquer a weak, reachable rival system (Section 23). Invading declares war and locks the
+ * aggressor out of the Exchange, so a bot only does it when it is militarily dominant, already
+ * established, and not already fighting a war it started — the prize must clearly outweigh the
+ * lost trade access.
+ */
+export function maybeInvade(view: PlayerView): Order[] {
+  if (view.turn < 16 || view.me.ownedSystemIds.length === 0 || !view.me.hasCharter) return [];
+  if (isLockedOutAggressor(view)) return []; // already paying the aggressor penalty
+  const myCombat = view.me.ships.reduce((s, sh) => s + sh.combat, 0);
+  if (myCombat < 6) return []; // need a real fleet to commit to conquest
+  const ratio = view.config.tuning.war.captureRatio + 0.25; // require clear superiority
+  let best: { id: string; gain: number } | null = null;
+  for (const sys of view.galaxy.allSystems()) {
+    if (sys.owner === null || sys.owner === view.me.id || sys.id === view.galaxy.hubId) continue;
+    if (areAlliedView(view, view.me.id, sys.owner)) continue;
+    const attack = attackForceOn(view, sys);
+    if (attack <= 0) continue;
+    if (attack < systemDefenseEstimate(view, sys) * ratio) continue;
+    const gain = grossYieldValue(view, sys) + 250;
+    if (!best || gain > best.gain) best = { id: sys.id, gain };
+  }
+  return best ? [{ kind: "invade", systemId: best.id }] : [];
+}
+
+/**
+ * Take out a mutual defensive alliance with a comparable charter (Section 23) — cheap insurance
+ * that deters invasion. One ally is plenty; never ally with a charter we're at war with.
+ */
+export function maybeAlliance(view: PlayerView): Order[] {
+  if (view.turn < 8 || !view.me.hasCharter) return [];
+  if (view.corporations.some((c) => c.id !== view.me.id && areAlliedView(view, view.me.id, c.id))) return [];
+  const peers = view.corporations
+    .filter((c) => c.id !== view.me.id && c.hasCharter && c.ownedSystemIds.length > 0 && !atWarView(view, view.me.id, c.id))
+    .sort((a, b) => Math.abs(a.valuation - view.me.valuation) - Math.abs(b.valuation - view.me.valuation));
+  return peers[0] ? [{ kind: "alliancePledge", targetId: peers[0].id }] : [];
+}
+
 /** Total of a resource across all of a corp's owned-system stockpiles. */
 function corpStock(view: PlayerView, res: Resource): number {
   let n = 0;

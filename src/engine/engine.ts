@@ -40,6 +40,7 @@ import {
   type PopulationStage,
   type Resource,
   type System,
+  type War,
 } from "./types.js";
 import type { Bot, BotFactory, PlayerView } from "./bots/bot.js";
 import { HybridBot } from "./bots/hybrid.js";
@@ -67,6 +68,8 @@ export class Engine {
   private readonly bots = new Map<string, Bot>();
   private convoys: Convoy[] = [];
   private convoyCounter = 0;
+  /** Active wars (Section 23). */
+  private wars: War[] = [];
   private readonly claimedTurn = new Map<string, number>();
   private turn = 0;
   private readonly log: (line: string) => void;
@@ -115,6 +118,7 @@ export class Engine {
         isFreeOperator: false,
         botId,
         hasCharter: false,
+        alliancePledges: [],
       };
       this.corps.push(corp);
       this.bots.set(corp.id, factory());
@@ -244,6 +248,16 @@ export class Engine {
     return this.convoys;
   }
 
+  /** Wars currently active (Section 23). */
+  get activeWars(): readonly War[] {
+    return this.wars;
+  }
+
+  /** True if `corpId` is barred from the Exchange as a war aggressor (Section 23). */
+  isMarketLockedOut(corpId: string): boolean {
+    return this.isAggressorAtWar(corpId);
+  }
+
   /** A player's full view of the game (the same surface bots reason over). */
   playerView(corpId: string): PlayerView {
     const corp = this.corps.find((c) => c.id === corpId);
@@ -311,6 +325,9 @@ export class Engine {
     this.events = [];
     const creditsBefore = new Map(this.corps.map((c) => [c.id, c.credits]));
 
+    // 0. End wars whose ceasefire has arrived (lifts the aggressor's market lockout).
+    this.expireWars();
+
     // 1. Lock: collect orders from every bot.
     const ordersByCorp = new Map<string, Order[]>();
     const orderCounts: Record<string, number> = {};
@@ -332,6 +349,9 @@ export class Engine {
 
     // 5. Route interdiction (predictive) + 6. targeted raids.
     const raidStats = this.resolveRaids(ordersByCorp);
+
+    // 6.7 Invasions & conquest (Section 23): capture rival systems, declaring/extending war.
+    this.resolveInvasions(ordersByCorp);
 
     // 7. Arrivals & settlements.
     this.resolveArrivals();
@@ -627,6 +647,22 @@ export class Engine {
             this.events.push({ type: "build", corpId: corp.id, what: `Assayed ${site.resource} deposit`, systemId: sys.id });
             break;
           }
+          case "alliancePledge": {
+            // Pledge to defend another charter (Section 23). Allied once the pledge is mutual.
+            const target = this.corps.find((c) => c.id === order.targetId);
+            if (!target || target.id === corp.id) break;
+            if (!corp.alliancePledges.includes(target.id)) corp.alliancePledges.push(target.id);
+            // Emit an alliance event when this completes a mutual pledge.
+            if (target.alliancePledges.includes(corp.id)) {
+              this.events.push({ type: "alliance", aId: corp.id, bId: target.id });
+              this.log(`  ${corp.name} and ${target.name} form a defensive alliance`);
+            }
+            break;
+          }
+          case "allianceBreak": {
+            corp.alliancePledges = corp.alliancePledges.filter((id) => id !== order.targetId);
+            break;
+          }
           case "borrow": {
             // Debt is capped to a multiple of valuation (Section 17).
             const ceiling = Math.max(0, corp.valuation * this.config.tuning.maxDebtToValuation);
@@ -748,6 +784,8 @@ export class Engine {
     const clearables: ClearableOrder[] = [];
     const orderMeta = new Map<ClearableOrder, { corp: Corporation }>();
     for (const corp of this.corps) {
+      // War aggressors are barred from the Galactic Exchange until their wars end (Section 23).
+      if (this.isAggressorAtWar(corp.id)) continue;
       for (const order of ordersByCorp.get(corp.id) ?? []) {
         if (order.kind !== "market") continue;
         const co: ClearableOrder = {
@@ -1037,6 +1075,157 @@ export class Engine {
     if (sys.hasDepot) def += t.depotDefenseBonus;
     if (sys.owner) def += this.stationedDefense(sys.id, sys.owner);
     return def;
+  }
+
+  // ----- War & conquest (Section 23) -----
+
+  private name(corpId: string): string {
+    return this.corps.find((c) => c.id === corpId)?.name ?? corpId;
+  }
+
+  /** Two charters are allied iff each has pledged to defend the other (Section 23). */
+  private areAllied(a: string, b: string): boolean {
+    if (a === b) return false;
+    const ca = this.corps.find((c) => c.id === a);
+    const cb = this.corps.find((c) => c.id === b);
+    return !!ca && !!cb && ca.alliancePledges.includes(b) && cb.alliancePledges.includes(a);
+  }
+
+  /** True if the corp is the aggressor in any still-active war (→ barred from the Exchange). */
+  private isAggressorAtWar(corpId: string): boolean {
+    return this.wars.some((w) => w.aggressorId === corpId && w.endTurn > this.turn);
+  }
+
+  /** End wars whose ceasefire turn has arrived. */
+  private expireWars(): void {
+    for (const w of this.wars) {
+      if (w.endTurn <= this.turn) {
+        this.events.push({ type: "warEnded", aggressorId: w.aggressorId, defenderId: w.defenderId });
+        this.log(`  Ceasefire: ${this.name(w.aggressorId)} ↔ ${this.name(w.defenderId)}`);
+      }
+    }
+    this.wars = this.wars.filter((w) => w.endTurn > this.turn);
+  }
+
+  /**
+   * Declare a war (or extend an existing one) for an act of aggression. A *defensive*
+   * counter-invasion — the attacker is the defender of an existing war — only extends that war
+   * and does not make the counter-attacker an aggressor (so it keeps Exchange access).
+   */
+  private declareOrExtendWar(aggressorId: string, defenderId: string): void {
+    const newEnd = this.turn + this.config.tuning.war.durationTurns;
+    const reverse = this.wars.find(
+      (w) => w.aggressorId === defenderId && w.defenderId === aggressorId && w.endTurn > this.turn,
+    );
+    if (reverse) {
+      reverse.endTurn = Math.max(reverse.endTurn, newEnd);
+      return;
+    }
+    const existing = this.wars.find(
+      (w) => w.aggressorId === aggressorId && w.defenderId === defenderId && w.endTurn > this.turn,
+    );
+    if (existing) {
+      existing.endTurn = Math.max(existing.endTurn, newEnd);
+      return;
+    }
+    this.wars.push({ aggressorId, defenderId, startTurn: this.turn, endTurn: newEnd });
+    this.events.push({ type: "warDeclared", aggressorId, defenderId });
+    this.log(`  WAR DECLARED: ${this.name(aggressorId)} invades ${this.name(defenderId)}'s territory`);
+  }
+
+  /** Combat strength an attacker can bring to bear on a target system (ships/privateers in range). */
+  private invasionAttackForce(attacker: Corporation, target: System): number {
+    let force = 0;
+    for (const ship of attacker.ships) {
+      if (ship.combat <= 0 || !ship.stationedAt) continue;
+      const route = this.galaxy.routeBetween(ship.stationedAt, target.id);
+      if (route && route.charted && route.requiredRange <= ship.rangeTier) force += ship.combat;
+    }
+    for (const p of attacker.privateers) {
+      const route = this.galaxy.routeBetween(p.basedAt, target.id);
+      if (route && route.charted && route.requiredRange <= attacker.rangeTier) force += p.strength;
+    }
+    return force;
+  }
+
+  /** A target system's total defensive strength, including allied reinforcement (Section 23). */
+  private invasionDefenseForce(target: System): number {
+    let def = this.systemDefense(target);
+    if (!target.owner) return def;
+    for (const ally of this.corps) {
+      if (!this.areAllied(target.owner, ally.id)) continue;
+      for (const ship of ally.ships) {
+        if (ship.combat <= 0 || !ship.stationedAt) continue;
+        const route = this.galaxy.routeBetween(ship.stationedAt, target.id);
+        if (route && route.charted) def += ship.combat;
+      }
+    }
+    return def;
+  }
+
+  /** Destroy `committed × frac` worth of an invader's combat (privateers first, then warships). */
+  private applyInvaderLosses(corp: Corporation, committed: number, frac: number): void {
+    let remaining = committed * frac;
+    for (const p of corp.privateers) {
+      if (remaining <= 0) break;
+      const a = Math.min(p.strength, remaining);
+      p.strength -= a;
+      remaining -= a;
+    }
+    corp.privateers = corp.privateers.filter((p) => p.strength > 0);
+    const destroyed = new Set<(typeof corp.ships)[number]>();
+    for (const ship of corp.ships) {
+      if (remaining <= 0) break;
+      if (ship.combat <= 0) continue;
+      const a = Math.min(ship.combat, remaining);
+      ship.combat -= a;
+      remaining -= a;
+      if (ship.combat <= 0) destroyed.add(ship);
+    }
+    corp.ships = corp.ships.filter((s) => !destroyed.has(s));
+  }
+
+  /**
+   * Resolve invasions (Section 23): each captures the target if the attacker's reachable fleet
+   * beats the defense (with allied reinforcement) by `captureRatio`, else is repelled. Every
+   * invasion declares/extends war; capture transfers the system (and may unseat a charter).
+   */
+  private resolveInvasions(ordersByCorp: Map<string, Order[]>): void {
+    const t = this.config.tuning.war;
+    for (const corp of this.corps) {
+      for (const order of ordersByCorp.get(corp.id) ?? []) {
+        if (order.kind !== "invade") continue;
+        const sys = this.galaxy.systems.get(order.systemId);
+        if (!sys || sys.owner === null || sys.owner === corp.id) continue;
+        if (sys.id === this.galaxy.hubId) continue; // the hub is Authority-protected
+        if (this.areAllied(corp.id, sys.owner)) continue; // allies don't invade each other
+        const attack = this.invasionAttackForce(corp, sys);
+        if (attack <= 0) continue; // no military able to reach the target
+        const defenderId = sys.owner;
+        const defense = this.invasionDefenseForce(sys);
+        this.declareOrExtendWar(corp.id, defenderId);
+        const captured = attack >= Math.max(1, defense) * t.captureRatio;
+        if (captured) {
+          const prevOwner = this.corps.find((c) => c.id === defenderId);
+          if (prevOwner) {
+            prevOwner.ownedSystemIds = prevOwner.ownedSystemIds.filter((id) => id !== sys.id);
+            for (const ship of prevOwner.ships) if (ship.stationedAt === sys.id) ship.stationedAt = "";
+            if (prevOwner.ownedSystemIds.length === 0) {
+              prevOwner.hasCharter = false;
+              prevOwner.isFreeOperator = true;
+            }
+          }
+          sys.owner = corp.id;
+          corp.ownedSystemIds.push(sys.id);
+          this.grantStarterExtractor(sys);
+          this.applyInvaderLosses(corp, attack, t.captureLossFrac);
+        } else {
+          this.applyInvaderLosses(corp, attack, t.repelLossFrac);
+        }
+        this.events.push({ type: "invasion", attackerId: corp.id, defenderId, systemId: sys.id, captured });
+        this.log(`  INVASION: ${corp.name} ${captured ? "captures" : "is repelled at"} ${sys.name}`);
+      }
+    }
   }
 
   private resolveArrivals(): void {
@@ -1481,6 +1670,7 @@ export class Engine {
       me: corp,
       corporations: this.corps,
       convoys: this.convoys,
+      wars: this.wars,
       rng: this.rng,
     };
   }

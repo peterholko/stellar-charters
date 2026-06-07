@@ -48,8 +48,16 @@ export function Exchange() {
     });
   };
 
+  // War aggressors are barred from the Exchange until a ceasefire (Section 23).
+  const lockedOut = view.wars.some((w) => w.aggressorId === view.me.id && w.endTurn > view.turn);
+
   return (
     <div className="exchange">
+      {lockedOut && (
+        <Panel className="exchange__lockout">
+          <p className="hint hint--war">⚔ Your charter is at war as the aggressor — the Galactic Exchange is closed to you until a ceasefire. You can still move goods between your own systems.</p>
+        </Panel>
+      )}
       <Panel className="exchange__board">
         <PanelTitle icon="exchange" eyebrow="Galactic Exchange" title="Commodity Desk" />
         <div className="board">
