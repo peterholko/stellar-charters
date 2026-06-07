@@ -136,6 +136,15 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
     }
     case "buildPlatform":
       return { label: "Build defense platform", detail: `at ${name(order.systemId)}`, cost: t.platformCost, tone: "build" };
+    case "buildSurveyShip":
+      return { label: "Build survey vessel", detail: `at ${name(order.systemId)} — an unarmed scout`, cost: t.surveyShipCost, tone: "build" };
+    case "surveySystem":
+      return {
+        label: `Survey ${name(order.targetSystemId)}`,
+        detail: `dispatch a survey vessel from ${name(order.fromSystemId)} — reveals its deposits`,
+        cost: 0,
+        tone: "build",
+      };
     case "assay": {
       const site = g.systems.get(order.systemId)?.sites.find((s) => s.key === order.siteKey);
       const res = site ? resourceLabels[site.resource] : "deposit";

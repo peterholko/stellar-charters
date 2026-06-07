@@ -1082,6 +1082,26 @@ This is the deepest change and was swept hardest: a 100-game / 8-player run hold
 with every risk flag green (metals floor 0%, food-growth 91%, raiding/takeover healthy), so rewarding
 multi-habitable systems did not destabilise the economy.
 
+## Survey Vessels
+
+**Section 25.** Prospecting moves from per-deposit busywork to a **system-level scouting loop**. A
+charter builds an unarmed **survey vessel** (`surveyShipCost`, `Ship.surveyor`) at one of its systems
+and dispatches it to scout any reachable system (`surveySystem` order). The vessel travels the
+cheapest charted path turn-by-turn — reusing the Section 23 mobile-fleet machinery — surveys the
+**whole** target system on arrival (revealing every deposit's richness AND remaining reserves), then
+flies home. A scout never fights, so it can slip into a **rival's** territory for intelligence ahead
+of expansion or invasion; if it can't reach home it bases in the nearest own/neutral system rather
+than stranding in enemy space.
+
+Knowledge is **per-charter fog of war**: a survey records the system in `Corporation.surveyedSystemIds`
+and `buildClientState` reveals that charter's intel only to it — surveying does **not** flip a
+deposit's global "publicly worked" flag, so the intel stays private (unlike a worked deposit, whose
+richness is public to all). A charter always has full intel on systems it **owns**, so the survey
+vessel is purely about scouting *other* systems — frontier worlds you're weighing for a claim, or a
+rival's economy before you move on it. The deterministic, all-bot balance simulator is untouched
+(bots still use the cheap per-deposit `assay` internally; survey vessels are a human-facing layer that
+costs only a small ship build, so the economy sweep is unchanged).
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

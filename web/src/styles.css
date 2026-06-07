@@ -284,6 +284,8 @@ input, select { font-family: inherit; }
 .colony__pop .bar { flex: 1; }
 .colony__unrest { font-size: 0.6rem; color: var(--warn, #d8a657); }
 .colony__deposits { display: flex; flex-direction: column; gap: 0.35rem; }
+.site-row__unsurveyed { font-size: 0.6rem; color: var(--ink-dim); font-style: italic; }
+.survey-controls { margin: 0.6rem 0; }
 .colony__empty { font-size: 0.66rem; color: var(--ink-dim); font-style: italic; }
 .colony__builds { margin-top: 0.5rem; border-top: 1px solid var(--line-soft); padding-top: 0.45rem; }
 .colony__buildlabel { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-dim); }

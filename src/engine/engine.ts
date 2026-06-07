@@ -135,6 +135,7 @@ export class Engine {
         ownedSystemIds: [],
         ships: [{ rangeTier: 1, combat: 0, raider: false, stationedAt: "" }],
         privateers: [],
+        surveyedSystemIds: [],
         rangeTier: 1,
         valuation: 0,
         sharePrice: 0,
@@ -718,6 +719,45 @@ export class Engine {
             this.metrics.platformsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Defense platform", systemId: sys.id });
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
+            break;
+          }
+          case "buildSurveyShip": {
+            // An unarmed scout (Section 25): cheap, no combat, used to survey systems.
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            if (corp.credits < t.surveyShipCost) break;
+            corp.credits -= t.surveyShipCost;
+            corp.ships.push({ rangeTier: corp.rangeTier, combat: 0, raider: false, surveyor: true, stationedAt: sys.id });
+            this.events.push({ type: "build", corpId: corp.id, what: "Survey vessel", systemId: sys.id });
+            this.log(`  ${corp.name} builds a survey vessel at ${sys.name}`);
+            break;
+          }
+          case "surveySystem": {
+            // Dispatch one idle survey vessel to scout `targetSystemId` (Section 25). It flies the
+            // cheapest charted path, surveys the system on arrival, then returns home — always
+            // peaceful (a scout never fights), so it can slip into rival territory for intel.
+            const from = this.galaxy.systems.get(order.fromSystemId);
+            const to = this.galaxy.systems.get(order.targetSystemId);
+            if (!from || !to || from.id === to.id) break;
+            const ship = corp.ships.find((s) => s.surveyor && !s.transit && s.stationedAt === from.id);
+            if (!ship) break;
+            const path = this.galaxy.shortestWarpPath(from.id, to.id, ship.rangeTier);
+            if (!path || path.routes.length === 0) break; // no charted path within range
+            const firstRoute = this.galaxy.routes.get(path.routes[0]!);
+            ship.stationedAt = "";
+            ship.transit = {
+              path: path.systems,
+              routeIds: path.routes,
+              position: 0,
+              segmentTurnsLeft: firstRoute ? firstRoute.transitTime : 1,
+              launchedTurn: this.turn,
+              attack: false,
+              surveyReturnTo: from.id,
+            };
+            this.events.push({ type: "build", corpId: corp.id, what: `Survey en route to ${to.name}`, systemId: to.id });
+            this.log(`  ${corp.name} dispatches a survey vessel from ${from.name} to scout ${to.name}`);
             break;
           }
           case "moveFleet": {
@@ -1468,6 +1508,14 @@ export class Engine {
    * re-bases there — unless the destination is a non-allied rival system, in which case the
    * arriving ships give battle: a win captures and occupies the system, a loss falls back.
    */
+  /** Record that `corp` has fully scouted `sys` (Section 25): grants it richness + reserves intel
+   *  on every deposit there, even in rival territory. Owned systems are always fully known. */
+  private surveyReveal(corp: Corporation, sys: System): void {
+    if (!corp.surveyedSystemIds.includes(sys.id)) corp.surveyedSystemIds.push(sys.id);
+    this.events.push({ type: "build", corpId: corp.id, what: `Survey complete: ${sys.name}`, systemId: sys.id });
+    this.log(`  ${corp.name}'s survey vessel scouts ${sys.name} — full deposit intel acquired`);
+  }
+
   private resolveFleetMovement(): void {
     // Group ships that arrive at the same destination this turn so a fleet fights as one.
     const arrivals = new Map<string, { corp: Corporation; sys: System; ships: Ship[]; attack: boolean }>();
@@ -1495,6 +1543,27 @@ export class Engine {
           arrivals.set(key, g);
           ship.stationedAt = ""; // resolved below
           ship.transit = undefined;
+        } else if (ship.surveyor && sys) {
+          // A survey vessel (Section 25) reaches its target — even in rival space (it never fights).
+          // It scouts the whole system, then flies home; if it can't, it bases where it can.
+          this.surveyReveal(corp, sys);
+          const home = tr.surveyReturnTo;
+          const back = home && home !== dest && this.galaxy.systems.has(home)
+            ? this.galaxy.shortestWarpPath(dest, home, ship.rangeTier)
+            : null;
+          if (back && back.routes.length > 0) {
+            const firstRoute = this.galaxy.routes.get(back.routes[0]!);
+            ship.stationedAt = "";
+            ship.transit = {
+              path: back.systems, routeIds: back.routes, position: 0,
+              segmentTurnsLeft: firstRoute ? firstRoute.transitTime : 1,
+              launchedTurn: this.turn, attack: false, surveyReturnTo: undefined,
+            };
+          } else {
+            // Already home, or no way back — base in own/neutral space, never in a rival's system.
+            ship.stationedAt = sys.owner === corp.id || sys.owner === null ? dest : (home ?? dest);
+            ship.transit = undefined;
+          }
         } else {
           // Peaceful arrival (own/allied/neutral) — re-base here. (A would-be attack on a system
           // that is no longer hostile just becomes a peaceful move.)

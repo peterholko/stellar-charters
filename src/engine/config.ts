@@ -117,6 +117,8 @@ export interface Tuning {
   surveyCost: number;
   shipCost: Record<RangeTier, number>;
   raiderShipExtraCost: number;
+  /** Cost of an unarmed survey vessel (Section 25) — a cheap scout. */
+  surveyShipCost: number;
   /** Combat strength of a (non-raider escort) ship by tier; raiders get +raiderCombatBonus. */
   shipCombat: Record<RangeTier, number>;
   raiderCombatBonus: number;
@@ -310,6 +312,7 @@ export const DEFAULT_TUNING: Tuning = {
   surveyCost: 300,
   shipCost: { 1: 380, 2: 720, 3: 1400, 4: 2800, 5: 4400, 6: 6500, 7: 9000, 8: 12000 },
   raiderShipExtraCost: 400,
+  surveyShipCost: 250,
   shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11, 5: 16, 6: 22, 7: 29, 8: 38 },
   raiderCombatBonus: 1,
   shipIsotopeCost: { 1: 0, 2: 2, 3: 6, 4: 14, 5: 20, 6: 28, 7: 36, 8: 46 },

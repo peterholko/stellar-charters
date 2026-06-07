@@ -407,6 +407,8 @@ export interface ShipTransit {
   launchedTurn: number;
   /** Destination is a non-allied rival system → resolve a battle on arrival. */
   attack: boolean;
+  /** Survey vessel only (Section 25): system to fly home to after surveying the destination. */
+  surveyReturnTo?: string;
 }
 
 export interface Ship {
@@ -417,6 +419,8 @@ export interface Ship {
   raider: boolean;
   /** System this ship is based at (defends it and escorts its convoys); "" while in transit. */
   stationedAt: string;
+  /** An unarmed survey vessel (Section 25): scouts a target system, then returns. Never fights. */
+  surveyor?: boolean;
   /** Movement state when the ship is travelling between systems (Section 23). */
   transit?: ShipTransit;
 }
@@ -450,6 +454,9 @@ export interface Corporation {
   ownedSystemIds: string[];
   ships: Ship[];
   privateers: Privateer[];
+  /** Systems this charter has scouted with a survey vessel (Section 25): grants full deposit intel
+   *  (richness + reserves) on them, even in rival territory. Owned systems are always fully known. */
+  surveyedSystemIds: string[];
   /** Best range tier the corporation can field (from research/licensing). */
   rangeTier: RangeTier;
   /** Latest computed valuation (Section 17). */
@@ -653,6 +660,23 @@ export interface MoveFleetOrder {
   toSystemId: string;
 }
 
+/** Build a survey vessel — an unarmed scout — at an owned system (Section 25). */
+export interface BuildSurveyShipOrder {
+  kind: "buildSurveyShip";
+  systemId: string;
+}
+
+/**
+ * Dispatch an idle survey vessel from `fromSystemId` to scout `targetSystemId` (Section 25). It
+ * travels the cheapest charted path, surveys the whole target system on arrival (revealing every
+ * deposit's richness + reserves to this charter, even in rival territory), then returns home.
+ */
+export interface SurveySystemOrder {
+  kind: "surveySystem";
+  fromSystemId: string;
+  targetSystemId: string;
+}
+
 /** Pledge a mutual defensive alliance with another charter (Section 23). Allied only once
  *  both charters have pledged each other. */
 export interface AlliancePledgeOrder {
@@ -702,6 +726,8 @@ export type Order =
   | InvadeOrder
   | RedeployShipOrder
   | MoveFleetOrder
+  | BuildSurveyShipOrder
+  | SurveySystemOrder
   | AlliancePledgeOrder
   | AllianceBreakOrder
   | BuySharesOrder

@@ -153,6 +153,8 @@ export interface ClientCorp {
   ships?: Ship[];
   privateers?: Privateer[];
   recentEarnings?: number[];
+  /** Systems this charter has scouted with a survey vessel (Section 25); self-only. */
+  surveyedSystemIds?: string[];
 }
 
 export interface ClientConvoy {
@@ -215,12 +217,15 @@ export function buildClientState(
   reports: TurnReport[],
 ): ClientState {
   const g = engine.galaxy;
-  const owned = new Set(
-    engine.corps.find((c) => c.id === humanCorpId)?.ownedSystemIds ?? [],
-  );
+  const me = engine.corps.find((c) => c.id === humanCorpId);
+  const owned = new Set(me?.ownedSystemIds ?? []);
+  const surveyed = new Set(me?.surveyedSystemIds ?? []);
 
   const systems: ClientSystem[] = g.allSystems().map((s) => {
     const mine = s.owner === humanCorpId || owned.has(s.id);
+    // A survey vessel (Section 25) grants full deposit intel on a system — richness AND reserves —
+    // even in rival territory. Owning it, or its deposits being publicly worked, also reveals.
+    const scouted = mine || surveyed.has(s.id);
     const sites: ClientSite[] = s.sites.map((site) => ({
       key: site.key,
       bodyKind: site.bodyKind,
@@ -232,10 +237,11 @@ export function buildClientState(
       accessibility: site.accessibility,
       extractorLevel: site.extractorLevel,
       disabledUntil: site.disabledUntil,
-      prospected: site.prospected,
-      // Fog of war: richness known once surveyed; depletion intel is owner-only.
-      richness: site.prospected ? site.richness : null,
-      reservesRemaining: mine && site.prospected ? site.reservesRemaining : null,
+      prospected: site.prospected || scouted,
+      // Fog of war: richness is public once a deposit is worked/assayed, or known if you own/scouted
+      // the system; reserves (depletion intel) stay private — only the owner or a surveyor sees them.
+      richness: site.prospected || scouted ? site.richness : null,
+      reservesRemaining: scouted ? site.reservesRemaining : null,
     }));
     // Only ship the flat yields for legacy/authored systems; body-driven systems render from
     // `sites` and would otherwise waste an all-zero 11-key object per system, every poll.
@@ -305,6 +311,7 @@ export function buildClientState(
       base.ships = c.ships.map((s) => ({ ...s }));
       base.privateers = c.privateers.map((p) => ({ ...p }));
       base.recentEarnings = [...c.recentEarnings];
+      base.surveyedSystemIds = [...c.surveyedSystemIds];
     }
     return base;
   });

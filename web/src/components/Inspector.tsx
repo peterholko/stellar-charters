@@ -196,6 +196,7 @@ export function Inspector({
           </dl>
 
           <ColonyPanel sys={sys} view={view} canBuild={mine && !view.me.isFreeOperator} />
+          {!mine && !isHub && <SurveyControls view={view} sys={sys} />}
           {!mine && sys.owner && (
             <>
               <RivalSabotage view={view} humanCorpId={humanCorpId} sys={sys} />
@@ -245,6 +246,7 @@ export function Inspector({
                 {!sys.hasDepot && <ActionButton icon="systems" onClick={() => store.stage({ kind: "buildDepot", systemId: sys.id })}>Depot</ActionButton>}
                 <ActionButton icon="flask" onClick={() => store.stage({ kind: "buildHydroponics", systemId: sys.id })}>Hydro</ActionButton>
                 {sys.platforms < t.platformCap && <ActionButton icon="shield" onClick={() => store.stage({ kind: "buildPlatform", systemId: sys.id })}>Platform</ActionButton>}
+                <ActionButton icon="radar" title={`Build a survey vessel here · ${formatCr(t.surveyShipCost)} — an unarmed scout for surveying other systems`} onClick={() => store.stage({ kind: "buildSurveyShip", systemId: sys.id })}>Survey ship</ActionButton>
                 <ReinforceButton view={view} sys={sys} />
               </div>
               <MegastructureBuilds sys={sys} view={view} />
@@ -267,6 +269,45 @@ export function Inspector({
         </>
       )}
     </Panel>
+  );
+}
+
+/** Dispatch an idle survey vessel to scout this system (Section 25): it flies the cheapest charted
+ *  path, reveals every deposit's richness + reserves on arrival (even in rival space), then returns. */
+function SurveyControls({ view, sys }: { view: PlayerView; sys: System }) {
+  const me = view.me;
+  const scouted = me.ownedSystemIds.includes(sys.id) || me.surveyedSystemIds.includes(sys.id);
+  const surveyStaged = store.state.staged.some((s) => s.order.kind === "surveySystem" && s.order.targetSystemId === sys.id);
+  // Find an idle survey vessel that can reach this system on charted routes within its range.
+  const scouts = me.ships.filter((s) => s.surveyor && !s.transit && s.stationedAt);
+  let from: string | null = null;
+  for (const ship of scouts) {
+    const path = view.galaxy.shortestWarpPath(ship.stationedAt, sys.id, ship.rangeTier);
+    if (path && path.routes.length > 0) { from = ship.stationedAt; break; }
+  }
+  return (
+    <div className="survey-controls">
+      {scouted ? (
+        <Badge tone="positive">Surveyed — deposits revealed</Badge>
+      ) : surveyStaged ? (
+        <Badge tone="accent">Survey vessel dispatched</Badge>
+      ) : (
+        <ActionButton
+          icon="radar"
+          disabled={!from}
+          title={
+            from
+              ? "Send a survey vessel to scout this system's deposits — it returns home after"
+              : scouts.length > 0
+                ? "No survey vessel within charted range of this system (chart a route or move a scout closer)"
+                : "Build a survey vessel first, at one of your systems"
+          }
+          onClick={() => from && store.stage({ kind: "surveySystem", fromSystemId: from, targetSystemId: sys.id })}
+        >
+          Survey system
+        </ActionButton>
+      )}
+    </div>
   );
 }
 

@@ -130,7 +130,6 @@ function ColonyCard({
   const sites = [...colony.sites].sort((a, b) => a.resource.localeCompare(b.resource));
   // Reflect orders already staged this turn so a click gives immediate feedback (these resolve next turn).
   const staged = store.state.staged;
-  const assayStaged = (key: string) => staged.some((s) => s.order.kind === "assay" && s.order.siteKey === key);
   const workStaged = (key: string) => staged.some((s) => s.order.kind === "buildExtractor" && s.order.siteKey === key);
   // World type → shown as the subtitle now that the title carries the planet's designation.
   const typeLabel =
@@ -222,18 +221,7 @@ function ColonyCard({
                       </ActionButton>
                     )
                   )}
-                  {!site.prospected &&
-                    (assayStaged(site.key) ? (
-                      <Badge tone="accent">Survey queued</Badge>
-                    ) : (
-                      <ActionButton
-                        icon="radar"
-                        title={`Assay · ${formatCr(view.config.tuning.assayCost)} — reveals this deposit's richness & reserves next turn`}
-                        onClick={() => store.stage({ kind: "assay", systemId: sys.id, siteKey: site.key })}
-                      >
-                        Assay
-                      </ActionButton>
-                    ))}
+                  {!site.prospected && <span className="site-row__unsurveyed">unsurveyed — send a survey vessel</span>}
                 </div>
               )}
             </div>
