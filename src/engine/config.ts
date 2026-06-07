@@ -290,7 +290,7 @@ export const DEFAULT_TUNING: Tuning = {
   shippingFeePerHop: 1.5,
   bidRefundFrac: 0.92,
   surveyCost: 300,
-  shipCost: { 1: 600, 2: 1100, 3: 2100, 4: 4000, 5: 6000, 6: 8500, 7: 11500, 8: 15000 },
+  shipCost: { 1: 380, 2: 720, 3: 1400, 4: 2800, 5: 4400, 6: 6500, 7: 9000, 8: 12000 },
   raiderShipExtraCost: 400,
   shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11, 5: 16, 6: 22, 7: 29, 8: 38 },
   raiderCombatBonus: 1,

@@ -67,7 +67,7 @@ export class BalancedBot implements Bot {
     // ally for cover — opportunistic conquest of a weak neighbour (Section 23).
     orders.push(...financierOrders(view, this.state, { sinceTurn: 24 }));
     orders.push(...maybeAlliance(view));
-    if (view.turn >= 20) orders.push(...maybeConquest(view, this.state));
+    if (view.turn >= 16) orders.push(...maybeConquest(view, this.state));
 
     return orders;
   }

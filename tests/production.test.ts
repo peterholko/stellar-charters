@@ -144,13 +144,14 @@ describe("production chains", () => {
       sys.stockpile.alloys = 2;
     });
     const startCredits = corpOf(local).credits;
+    const shipCost = local.config.tuning.shipCost[1];
     local.stepTurn();
     expect(local.galaxy.system("s0").stockpile.alloys).toBeCloseTo(0, 6);
-    expect(corpOf(local).credits).toBeCloseTo(startCredits - 600, 6); // shipCost[1] only
+    expect(corpOf(local).credits).toBeCloseTo(startCredits - shipCost, 6); // shipCost[1] only
 
     // No local alloys: the 2-alloy bill is bought at the market price (base 40 → +80).
     const market = buildShipEngine(() => {});
     market.stepTurn();
-    expect(corpOf(market).credits).toBeCloseTo(startCredits - 600 - 80, 6);
+    expect(corpOf(market).credits).toBeCloseTo(startCredits - shipCost - 80, 6);
   });
 });

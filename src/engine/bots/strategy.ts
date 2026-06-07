@@ -445,7 +445,8 @@ function buildWarshipAt(view: PlayerView, systemId: string): Order[] {
     const tier = cand as RangeTier;
     const isoBill = Math.max(0, t.shipIsotopeCost[tier] - localIso) * view.market.prices.rareIsotopes;
     const alloyBill = Math.max(0, t.shipAlloyCost[tier] - localAlloys) * view.market.prices.alloys;
-    if (view.me.credits > (t.shipCost[tier] + isoBill + alloyBill) * 1.1) {
+    // Commit to the war effort — build as soon as the hull is just affordable.
+    if (view.me.credits >= t.shipCost[tier] + isoBill + alloyBill) {
       return [{ kind: "buildShip", rangeTier: tier, raider: false, systemId }];
     }
   }
@@ -460,7 +461,7 @@ function resolveConquestTarget(view: PlayerView, state: BotState): System | unde
   const current = state.conquestTarget ? view.galaxy.systems.get(state.conquestTarget) : undefined;
   if (valid(current)) return current;
   // Pick the highest-value reachable rival system whose defense isn't hopeless.
-  const cap = view.config.tuning.shipCombat[view.me.rangeTier] * 3 + 20; // affordable to overcome
+  const cap = view.config.tuning.shipCombat[view.me.rangeTier] * 5 + 50; // willing to mass for a defended prize
   const candidates = view.galaxy.allSystems()
     .filter((s): s is System => valid(s) && systemDefenseEstimate(view, s) <= cap)
     .sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a));
@@ -475,14 +476,14 @@ function resolveConquestTarget(view: PlayerView, state: BotState): System | unde
  * the price of empire — only a corp that can fund a real fleet pursues this.
  */
 export function maybeConquest(view: PlayerView, state: BotState): Order[] {
-  if (view.turn < 16 || !view.me.hasCharter || view.me.isFreeOperator) return [];
+  if (view.turn < 11 || !view.me.hasCharter || view.me.isFreeOperator) return [];
   if (isLockedOutAggressor(view)) return []; // finish the current war before starting another
   const target = resolveConquestTarget(view, state);
   if (!target) return [];
   const staging = stagingFor(view, target);
   if (!staging) { state.conquestTarget = undefined; return []; }
   const force = attackForceOn(view, target);
-  const need = systemDefenseEstimate(view, target) * (view.config.tuning.war.captureRatio + 0.15);
+  const need = systemDefenseEstimate(view, target) * (view.config.tuning.war.captureRatio + 0.05);
   if (force >= need) {
     state.conquestTarget = undefined; // mission accomplished (or about to be)
     return [{ kind: "invade", systemId: target.id }];
