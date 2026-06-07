@@ -29,7 +29,7 @@ function scenarioFromState(state: ClientState): Scenario {
   const systems: ScenarioSystem[] = state.systems.map((s) => ({
     id: s.id,
     name: s.name,
-    yields: s.yields,
+    yields: s.yields ?? {},
     claimCost: s.claimCost,
     upkeep: s.upkeep,
     populationStage: s.populationStage,
@@ -72,10 +72,29 @@ export function reconstructView(state: ClientState): PlayerView {
     sys.populationStage = cs.populationStage;
     sys.hydroponics = cs.hydroponics;
     sys.platforms = cs.platforms;
+    sys.megastructures = [...cs.megastructures];
     sys.hasDepot = cs.hasDepot;
     sys.populationProgress = cs.populationProgress ?? 0;
     sys.unrest = cs.unrest ?? 0;
     if (cs.stockpile) sys.stockpile = cs.stockpile;
+    // Overlay the server's (fogged) extraction sites + star (Section 21). The rebuilt galaxy
+    // has no deposits of its own (bodies aren't shipped), so these are the source of truth.
+    if (cs.starType) sys.bodies = { starType: cs.starType, planets: [], asteroidBelts: [] };
+    sys.sites = cs.sites.map((cse) => ({
+      key: cse.key,
+      bodyKind: cse.bodyKind,
+      bodyType: cse.bodyType,
+      bodyLabel: cse.bodyLabel,
+      orbit: cse.orbit,
+      habitable: cse.habitable,
+      resource: cse.resource,
+      richness: cse.richness ?? 0,
+      reservesRemaining: cse.reservesRemaining,
+      accessibility: cse.accessibility,
+      extractorLevel: cse.extractorLevel,
+      prospected: cse.prospected,
+      disabledUntil: cse.disabledUntil,
+    }));
   }
 
   for (const cr of state.routes) {
@@ -106,6 +125,8 @@ export function reconstructView(state: ClientState): PlayerView {
     isFreeOperator: c.isFreeOperator,
     botId: "",
     hasCharter: c.hasCharter,
+    alliancePledges: c.alliancePledges ?? [],
+    grudges: {}, // AI retaliation intel — not surfaced to the client
   }));
   const me = corporations.find((c) => c.id === state.humanCorpId) ?? corporations[0]!;
 
@@ -133,6 +154,7 @@ export function reconstructView(state: ClientState): PlayerView {
     me,
     corporations,
     convoys,
+    wars: state.wars,
     rng: new Rng(0), // present for type-compatibility; views never draw randomness
   };
 }

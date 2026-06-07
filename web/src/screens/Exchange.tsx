@@ -48,8 +48,17 @@ export function Exchange() {
     });
   };
 
+  // War aggressors pay a tariff on every Exchange trade until a ceasefire (Section 23).
+  const atWarAsAggressor = view.wars.some((w) => w.aggressorId === view.me.id && w.endTurn > view.turn);
+  const tariffPct = Math.round(view.config.tuning.war.aggressorTariff * 100);
+
   return (
     <div className="exchange">
+      {atWarAsAggressor && (
+        <Panel className="exchange__lockout">
+          <p className="hint hint--war">⚔ Your charter is at war as the aggressor — a {tariffPct}% war tariff is skimmed off every Exchange trade until a ceasefire. Internal transfers between your own systems are untaxed.</p>
+        </Panel>
+      )}
       <Panel className="exchange__board">
         <PanelTitle icon="exchange" eyebrow="Galactic Exchange" title="Commodity Desk" />
         <div className="board">

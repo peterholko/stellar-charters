@@ -10,11 +10,16 @@ import type { Engine } from "./engine.js";
 import type { TurnReport } from "./report.js";
 import {
   RESOURCES,
+  type BodyKind,
+  type MegastructureKind,
+  type PlanetType,
+  type War,
   type PopulationStage,
   type Privateer,
   type RangeTier,
   type Resource,
   type Ship,
+  type StarType,
   type Stockpile,
   type SystemPosition,
 } from "./types.js";
@@ -30,10 +35,39 @@ export interface ClientPlayer {
   submitted: boolean;
 }
 
+/**
+ * One extraction site as seen by a client (Section 21 fog of war). Operational state (what is
+ * being worked, what's offline) is public; `richness` is hidden until the deposit is surveyed
+ * (prospected), and `reservesRemaining` (depletion intel) is owner-only.
+ */
+export interface ClientSite {
+  key: string;
+  bodyKind: BodyKind;
+  bodyType: PlanetType | "belt" | "star";
+  bodyLabel: string;
+  orbit: number;
+  habitable: boolean;
+  resource: Resource;
+  accessibility: number;
+  extractorLevel: number;
+  disabledUntil: number;
+  prospected: boolean;
+  /** Revealed only once surveyed; null = unsurveyed (richness unknown). */
+  richness: number | null;
+  /** Owner-only remaining reserves; null for rivals / renewable / unsurveyed. */
+  reservesRemaining: number | null;
+}
+
 export interface ClientSystem {
   id: string;
   name: string;
-  yields: Stockpile;
+  /** Legacy flat-yield shortcut — only present for authored maps; body-driven systems omit it
+   *  (their economy is in `sites`), which keeps the per-poll payload compact. */
+  yields?: Stockpile;
+  /** The system's star (Section 21), for rendering + stellar forecasts. */
+  starType?: StarType;
+  /** Fogged extraction sites — the system's resource economy (Section 21). */
+  sites: ClientSite[];
   claimCost: number;
   upkeep: number;
   defense: number;
@@ -42,6 +76,8 @@ export interface ClientSystem {
   populationStage: PopulationStage;
   hydroponics: number;
   platforms: number;
+  /** Megastructures built here (Section 22). */
+  megastructures: MegastructureKind[];
   hasDepot: boolean;
   routeIds: string[];
   /** Atlas coordinates / region for map rendering (procedural scenarios). */
@@ -78,6 +114,8 @@ export interface ClientCorp {
   isFreeOperator: boolean;
   hasCharter: boolean;
   founderId: string;
+  /** Charters this corp has pledged to defend (Section 23). Allied iff mutual. */
+  alliancePledges: string[];
   /** Self-only fields (undefined for rivals). */
   credits?: number;
   debt?: number;
@@ -117,6 +155,10 @@ export interface ClientState {
   routes: ClientRoute[];
   corps: ClientCorp[];
   convoys: ClientConvoy[];
+  /** Active wars between charters (Section 23). */
+  wars: War[];
+  /** Exchange tariff you (the viewing charter) pay as a war aggressor; 0 if not at war. */
+  warTariff: number;
   reports: TurnReport[];
   // ----- multiplayer / lobby (filled by the server) -----
   /** This client's seat, or null if it hasn't joined. */
@@ -148,10 +190,31 @@ export function buildClientState(
 
   const systems: ClientSystem[] = g.allSystems().map((s) => {
     const mine = s.owner === humanCorpId || owned.has(s.id);
+    const sites: ClientSite[] = s.sites.map((site) => ({
+      key: site.key,
+      bodyKind: site.bodyKind,
+      bodyType: site.bodyType,
+      bodyLabel: site.bodyLabel,
+      orbit: site.orbit,
+      habitable: site.habitable,
+      resource: site.resource,
+      accessibility: site.accessibility,
+      extractorLevel: site.extractorLevel,
+      disabledUntil: site.disabledUntil,
+      prospected: site.prospected,
+      // Fog of war: richness known once surveyed; depletion intel is owner-only.
+      richness: site.prospected ? site.richness : null,
+      reservesRemaining: mine && site.prospected ? site.reservesRemaining : null,
+    }));
+    // Only ship the flat yields for legacy/authored systems; body-driven systems render from
+    // `sites` and would otherwise waste an all-zero 11-key object per system, every poll.
+    const hasFlatYields = RESOURCES.some((r) => s.yields[r] !== 0);
     return {
       id: s.id,
       name: s.name,
-      yields: { ...s.yields },
+      yields: hasFlatYields ? { ...s.yields } : undefined,
+      starType: s.bodies?.starType,
+      sites,
       claimCost: s.claimCost,
       upkeep: s.upkeep,
       defense: s.defense,
@@ -160,6 +223,7 @@ export function buildClientState(
       populationStage: s.populationStage,
       hydroponics: s.hydroponics,
       platforms: s.platforms,
+      megastructures: [...s.megastructures],
       hasDepot: s.hasDepot,
       routeIds: [...s.routeIds],
       position: s.position,
@@ -197,6 +261,7 @@ export function buildClientState(
       isFreeOperator: c.isFreeOperator,
       hasCharter: c.hasCharter,
       founderId: c.founderId,
+      alliancePledges: [...c.alliancePledges],
     };
     if (mine) {
       base.credits = c.credits;
@@ -242,6 +307,8 @@ export function buildClientState(
     routes,
     corps,
     convoys,
+    wars: engine.activeWars.map((w) => ({ ...w })),
+    warTariff: engine.warTariffFor(humanCorpId),
     reports,
     // Multiplayer fields default here; the server overrides them with DB membership.
     mySeat: humanCorpId,

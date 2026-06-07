@@ -10,6 +10,13 @@
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
 import type { GameConfig } from "./config.js";
+import {
+  EXTRACTOR_CAP,
+  effectiveYields,
+  siteOutput,
+  systemHasHabitableBody,
+  systemSeed,
+} from "./bodies.js";
 import { Galaxy } from "./galaxy.js";
 import { Market, type ClearableOrder } from "./market.js";
 import {
@@ -28,9 +35,13 @@ import {
   RESOURCES,
   type Convoy,
   type Corporation,
+  type MegastructureKind,
   type Order,
   type PopulationStage,
   type Resource,
+  type Ship,
+  type System,
+  type War,
 } from "./types.js";
 import type { Bot, BotFactory, PlayerView } from "./bots/bot.js";
 import { HybridBot } from "./bots/hybrid.js";
@@ -40,6 +51,13 @@ export interface EngineOptions {
   /** Optional per-turn text logger for `--verbose` single-game runs. */
   log?: (line: string) => void;
 }
+
+/** Display names for megastructures (Section 22). */
+const MEGASTRUCTURE_LABEL: Record<MegastructureKind, string> = {
+  orbitalStation: "Orbital Station",
+  spaceElevator: "Space Elevator",
+  ringworld: "Ringworld",
+};
 
 export class Engine {
   readonly config: GameConfig;
@@ -51,6 +69,8 @@ export class Engine {
   private readonly bots = new Map<string, Bot>();
   private convoys: Convoy[] = [];
   private convoyCounter = 0;
+  /** Active wars (Section 23). */
+  private wars: War[] = [];
   private readonly claimedTurn = new Map<string, number>();
   private turn = 0;
   private readonly log: (line: string) => void;
@@ -99,6 +119,8 @@ export class Engine {
         isFreeOperator: false,
         botId,
         hasCharter: false,
+        alliancePledges: [],
+        grudges: {},
       };
       this.corps.push(corp);
       this.bots.set(corp.id, factory());
@@ -145,7 +167,49 @@ export class Engine {
       sys.owner = corp.id;
       corp.ownedSystemIds.push(sys.id);
       corp.hasCharter = true;
+      this.ensureStartHabitable(sys);
+      this.grantStarterExtractor(sys);
     });
+  }
+
+  /**
+   * Guarantee a corp's home system can host a population (Section 21): if it has no habitable
+   * world, the charter establishes a habitat dome (a habitable planet + a small local food
+   * source). Applied only to starting systems — later expansion claims get no such grant, so
+   * garden worlds stay a scarce prize and population/tax doesn't become universal.
+   */
+  private ensureStartHabitable(sys: System): void {
+    if (systemHasHabitableBody(sys)) return;
+    if (sys.bodies && sys.bodies.planets.length > 0) {
+      const p = sys.bodies.planets.find((pl) => pl.type === "ocean") ?? sys.bodies.planets[0]!;
+      p.habitable = true;
+    }
+    if (!sys.sites.some((s) => s.resource === "food")) {
+      sys.sites.push({
+        key: "home:food", bodyKind: "planet", bodyType: "ocean", bodyLabel: "Habitat dome",
+        orbit: 0, habitable: true, resource: "food", richness: 6, reservesRemaining: null,
+        accessibility: 1, extractorLevel: 1, prospected: true, disabledUntil: 0,
+      });
+    }
+  }
+
+  /**
+   * Grant a fresh charter system a free level-1 extractor on its best raw deposit (Section 21),
+   * so a newly-claimed/assigned world produces immediately instead of sitting inert until the
+   * owner has built an extractor. No-op on legacy `yields` systems (already fully developed).
+   */
+  private grantStarterExtractor(sys: System): void {
+    if (sys.sites.some((s) => s.extractorLevel > 0)) return;
+    const candidates = sys.sites
+      .filter((s) => s.extractorLevel === 0)
+      // Prefer an accessible, rich, basic raw to bootstrap the economy.
+      .map((s) => ({ s, score: s.richness * s.accessibility * (s.resource === "antimatter" ? 0.3 : 1) }))
+      .sort((a, b) => b.score - a.score);
+    const pick = candidates[0]?.s;
+    if (pick) {
+      pick.extractorLevel = 1;
+      pick.prospected = true;
+    }
   }
 
   /** Run the whole game and return collected metrics. */
@@ -184,6 +248,16 @@ export class Engine {
   /** Convoys currently live on the map. */
   get activeConvoys(): readonly Convoy[] {
     return this.convoys;
+  }
+
+  /** Wars currently active (Section 23). */
+  get activeWars(): readonly War[] {
+    return this.wars;
+  }
+
+  /** The Exchange tariff `corpId` pays as a war aggressor (Section 23); 0 if not at war. */
+  warTariffFor(corpId: string): number {
+    return this.isAggressorAtWar(corpId) ? this.config.tuning.war.aggressorTariff : 0;
   }
 
   /** A player's full view of the game (the same surface bots reason over). */
@@ -253,6 +327,15 @@ export class Engine {
     this.events = [];
     const creditsBefore = new Map(this.corps.map((c) => [c.id, c.credits]));
 
+    // 0. End wars whose ceasefire has arrived (lifts the aggressor's trade tariff); fade grudges.
+    this.expireWars();
+    for (const c of this.corps) {
+      for (const k of Object.keys(c.grudges)) {
+        c.grudges[k]! *= 0.85;
+        if (c.grudges[k]! < 0.5) delete c.grudges[k];
+      }
+    }
+
     // 1. Lock: collect orders from every bot.
     const ordersByCorp = new Map<string, Order[]>();
     const orderCounts: Record<string, number> = {};
@@ -274,6 +357,12 @@ export class Engine {
 
     // 5. Route interdiction (predictive) + 6. targeted raids.
     const raidStats = this.resolveRaids(ordersByCorp);
+
+    // 6.6 Fleet movement (Section 23): advance travelling fleets; arrivals at hostile systems fight.
+    this.resolveFleetMovement();
+
+    // 6.7 Invasions & conquest (Section 23): capture adjacent rival systems (the static-force path).
+    this.resolveInvasions(ordersByCorp);
 
     // 7. Arrivals & settlements.
     this.resolveArrivals();
@@ -313,6 +402,7 @@ export class Engine {
             corp.credits -= order.amount;
             sys.owner = corp.id;
             corp.ownedSystemIds.push(sys.id);
+            this.grantStarterExtractor(sys);
             this.claimedTurn.set(sys.id, this.turn);
             if (
               corp.ownedSystemIds.length === 2 &&
@@ -345,12 +435,18 @@ export class Engine {
             // antimatter (capital Range 4+ hulls) — drawn from the corp's own stockpiles
             // first, with any shortfall bought from the exchange. Controlling the frontier
             // makes advanced fleets cheaper; everyone else pays market price.
+            // Hulls also need manufactured alloys + components (Section 07b), drawn from the
+            // corp's stockpiles first with any shortfall bought from the exchange.
             const isoBill = this.strategicBill(corp, "rareIsotopes", t.shipIsotopeCost[order.rangeTier]);
             const amBill = this.strategicBill(corp, "antimatter", t.shipAntimatterCost[order.rangeTier]);
-            if (corp.credits < cost + isoBill + amBill) break;
+            const alloyBill = this.strategicBill(corp, "alloys", t.shipAlloyCost[order.rangeTier]);
+            const compBill = this.strategicBill(corp, "components", t.shipComponentCost[order.rangeTier]);
+            if (corp.credits < cost + isoBill + amBill + alloyBill + compBill) break;
             this.consumeStrategic(corp, "rareIsotopes", t.shipIsotopeCost[order.rangeTier]);
             this.consumeStrategic(corp, "antimatter", t.shipAntimatterCost[order.rangeTier]);
-            corp.credits -= cost + isoBill + amBill;
+            this.consumeStrategic(corp, "alloys", t.shipAlloyCost[order.rangeTier]);
+            this.consumeStrategic(corp, "components", t.shipComponentCost[order.rangeTier]);
+            corp.credits -= cost + isoBill + amBill + alloyBill + compBill;
             corp.ships.push({
               rangeTier: order.rangeTier,
               combat: t.shipCombat[order.rangeTier] + (order.raider ? t.raiderCombatBonus : 0),
@@ -397,10 +493,16 @@ export class Engine {
           case "buildDepot": {
             // Trade Depots are colonial infrastructure (Section 12); not for Free Operators.
             if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id || sys.hasDepot) break;
-            if (corp.credits < this.config.tuning.depotCost) break;
-            corp.credits -= this.config.tuning.depotCost;
+            // Construction consumes alloys; a depot also needs components (Section 07b).
+            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
+            const compBill = this.strategicBill(corp, "components", t.depotComponentCost);
+            if (corp.credits < t.depotCost + alloyBill + compBill) break;
+            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
+            this.consumeStrategic(corp, "components", t.depotComponentCost);
+            corp.credits -= t.depotCost + alloyBill + compBill;
             sys.hasDepot = true;
             this.metrics.depotsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Trade Depot", systemId: sys.id });
@@ -418,17 +520,204 @@ export class Engine {
             this.log(`  ${corp.name} builds hydroponics at ${sys.name}`);
             break;
           }
-          case "buildPlatform": {
+          case "buildProcessor": {
+            // A Processor runs one production-chain recipe each turn (Section 07b).
             if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            if (sys.platforms >= this.config.tuning.platformCap) break;
-            if (corp.credits < this.config.tuning.platformCost) break;
-            corp.credits -= this.config.tuning.platformCost;
+            const recipe = t.recipes.find((r) => r.id === order.recipeId);
+            if (!recipe) break;
+            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
+            if (corp.credits < recipe.buildCost + alloyBill) break;
+            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
+            corp.credits -= recipe.buildCost + alloyBill;
+            sys.processors[recipe.id] = (sys.processors[recipe.id] ?? 0) + 1;
+            this.events.push({ type: "build", corpId: corp.id, what: `${recipe.id} processor`, systemId: sys.id });
+            this.log(`  ${corp.name} builds a ${recipe.id} processor at ${sys.name}`);
+            break;
+          }
+          case "buildReactor": {
+            // Reactors add power capacity and burn helium3 to run processors (Section 07b).
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
+            if (corp.credits < t.reactorCost + alloyBill) break;
+            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
+            corp.credits -= t.reactorCost + alloyBill;
+            sys.reactors += 1;
+            this.events.push({ type: "build", corpId: corp.id, what: "Reactor", systemId: sys.id });
+            this.log(`  ${corp.name} builds a reactor at ${sys.name}`);
+            break;
+          }
+          case "upgradeInfrastructure": {
+            // Raw-fed system upgrades (Section 07c): a scaling sink for metals/silicates/helium3.
+            if (corp.isFreeOperator) break;
+            const inf = this.config.tuning.infrastructure;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            let level: number;
+            let creditBase: number;
+            let rawRes: Resource;
+            let rawBase: number;
+            if (order.track === "mining") {
+              level = sys.miningRigs; creditBase = inf.miningCreditCost; rawRes = "metals"; rawBase = inf.miningMetalsCost;
+            } else if (order.track === "habitat") {
+              level = sys.habitats; creditBase = inf.habitatCreditCost; rawRes = "silicates"; rawBase = inf.habitatSilicatesCost;
+            } else {
+              level = sys.powerGrid; creditBase = inf.powerCreditCost; rawRes = "helium3"; rawBase = inf.powerHelium3Cost;
+            }
+            if (level >= inf.cap) break;
+            const factor = level + 1; // cost scales with the level being reached
+            const creditCost = creditBase * factor;
+            const rawNeed = rawBase * factor;
+            const rawBill = this.strategicBill(corp, rawRes, rawNeed);
+            if (corp.credits < creditCost + rawBill) break;
+            this.consumeStrategic(corp, rawRes, rawNeed);
+            corp.credits -= creditCost + rawBill;
+            if (order.track === "mining") sys.miningRigs += 1;
+            else if (order.track === "habitat") sys.habitats += 1;
+            else sys.powerGrid += 1;
+            this.events.push({ type: "build", corpId: corp.id, what: `${order.track} upgrade`, systemId: sys.id });
+            this.log(`  ${corp.name} upgrades ${order.track} at ${sys.name} to L${level + 1}`);
+            break;
+          }
+          case "buildPlatform": {
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            if (sys.platforms >= t.platformCap) break;
+            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
+            if (corp.credits < t.platformCost + alloyBill) break;
+            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
+            corp.credits -= t.platformCost + alloyBill;
             sys.platforms += 1;
             this.metrics.platformsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Defense platform", systemId: sys.id });
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
+            break;
+          }
+          case "moveFleet": {
+            // Send every idle combat ship at `fromSystemId` travelling to `toSystemId` along the
+            // cheapest charted path (Section 23 — mobile fleets). Passage is peaceful; arriving at
+            // a non-allied rival's system gives battle.
+            const from = this.galaxy.systems.get(order.fromSystemId);
+            const to = this.galaxy.systems.get(order.toSystemId);
+            if (!from || !to || from.id === to.id) break;
+            const fleet = corp.ships.filter((s) => s.combat > 0 && !s.transit && s.stationedAt === from.id);
+            if (fleet.length === 0) break;
+            const minTier = fleet.map((s) => s.rangeTier).reduce((a, b) => (a < b ? a : b));
+            const path = this.galaxy.shortestWarpPath(from.id, to.id, minTier);
+            if (!path || path.routes.length === 0) break; // no charted path within range
+            const attack = to.owner !== null && to.owner !== corp.id && !this.areAllied(corp.id, to.owner);
+            const firstRoute = this.galaxy.routes.get(path.routes[0]!);
+            for (const ship of fleet) {
+              ship.stationedAt = ""; // leaves home — no longer defends/escorts
+              ship.transit = {
+                path: path.systems,
+                routeIds: path.routes,
+                position: 0,
+                segmentTurnsLeft: firstRoute ? firstRoute.transitTime : 1,
+                launchedTurn: this.turn,
+                attack,
+              };
+            }
+            this.events.push({ type: "build", corpId: corp.id, what: `Fleet to ${to.name}`, systemId: to.id });
+            this.log(`  ${corp.name} sends a fleet from ${from.name} toward ${to.name}${attack ? " (assault)" : ""}`);
+            break;
+          }
+          case "redeployShip": {
+            // Mobilise a warfleet (Section 23): move the strongest combat ship between two owned
+            // systems to concentrate force for an invasion or reinforce a threatened defense.
+            const from = this.galaxy.systems.get(order.fromSystemId);
+            const to = this.galaxy.systems.get(order.toSystemId);
+            if (!from || !to || from.id === to.id) break;
+            if (from.owner !== corp.id || to.owner !== corp.id) break;
+            let best: (typeof corp.ships)[number] | undefined;
+            for (const s of corp.ships) {
+              if (s.stationedAt === from.id && s.combat > 0 && (!best || s.combat > best.combat)) best = s;
+            }
+            if (!best) break;
+            best.stationedAt = to.id;
+            this.events.push({ type: "build", corpId: corp.id, what: "Redeployed warship", systemId: to.id });
+            this.log(`  ${corp.name} redeploys a Range-${best.rangeTier} warship to ${to.name}`);
+            break;
+          }
+          case "buildMegastructure": {
+            // Pour overproduced metal into a grand construction (Section 22). One of each per
+            // system, gated by population; consumes an enormous metals + alloys bill (drawn from
+            // owned stockpiles first, shortfall bought at market — which lifts the metals price).
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            if (sys.megastructures.includes(order.structure)) break;
+            const spec = t.megastructures[order.structure];
+            const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
+            if (stages.indexOf(sys.populationStage) < stages.indexOf(spec.requiresStage)) break;
+            const metalsBill = this.strategicBill(corp, "metals", spec.metalsCost);
+            const alloyBill = this.strategicBill(corp, "alloys", spec.alloyCost);
+            if (corp.credits < spec.creditCost + metalsBill + alloyBill) break;
+            this.consumeStrategic(corp, "metals", spec.metalsCost);
+            this.consumeStrategic(corp, "alloys", spec.alloyCost);
+            corp.credits -= spec.creditCost + metalsBill + alloyBill;
+            sys.megastructures.push(order.structure);
+            this.events.push({ type: "build", corpId: corp.id, what: MEGASTRUCTURE_LABEL[order.structure], systemId: sys.id });
+            this.log(`  ${corp.name} completes a ${MEGASTRUCTURE_LABEL[order.structure]} at ${sys.name}`);
+            break;
+          }
+          case "buildExtractor": {
+            // Work (or deepen) a deposit on one of the system's bodies (Section 21).
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            const site = sys.sites.find((s) => s.key === order.siteKey);
+            if (!site || site.extractorLevel >= EXTRACTOR_CAP) break;
+            // Cost climbs with the level reached and with how inaccessible the deposit is.
+            const factor =
+              (site.extractorLevel + 1) * (1 + (1 - site.accessibility) * t.extractor.accessibilityMult);
+            const cost = Math.round(t.extractor.buildCost * factor);
+            const alloyBill = this.strategicBill(corp, "alloys", t.extractor.alloyCost);
+            if (corp.credits < cost + alloyBill) break;
+            this.consumeStrategic(corp, "alloys", t.extractor.alloyCost);
+            corp.credits -= cost + alloyBill;
+            site.extractorLevel += 1;
+            site.prospected = true; // working a deposit reveals its true richness
+            this.events.push({ type: "build", corpId: corp.id, what: `${site.resource} extractor`, systemId: sys.id });
+            this.log(`  ${corp.name} builds a ${site.resource} extractor at ${sys.name} (L${site.extractorLevel})`);
+            break;
+          }
+          case "assay": {
+            // Survey a deposit to reveal its exact richness/reserves (Section 21).
+            if (corp.isFreeOperator) break;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            const site = sys.sites.find((s) => s.key === order.siteKey);
+            if (!site || site.prospected) break;
+            if (corp.credits < this.config.tuning.assayCost) break;
+            corp.credits -= this.config.tuning.assayCost;
+            site.prospected = true;
+            this.events.push({ type: "build", corpId: corp.id, what: `Assayed ${site.resource} deposit`, systemId: sys.id });
+            break;
+          }
+          case "alliancePledge": {
+            // Pledge to defend another charter (Section 23). Allied once the pledge is mutual.
+            const target = this.corps.find((c) => c.id === order.targetId);
+            if (!target || target.id === corp.id) break;
+            if (!corp.alliancePledges.includes(target.id)) corp.alliancePledges.push(target.id);
+            // Emit an alliance event when this completes a mutual pledge.
+            if (target.alliancePledges.includes(corp.id)) {
+              this.events.push({ type: "alliance", aId: corp.id, bId: target.id });
+              this.log(`  ${corp.name} and ${target.name} form a defensive alliance`);
+            }
+            break;
+          }
+          case "allianceBreak": {
+            corp.alliancePledges = corp.alliancePledges.filter((id) => id !== order.targetId);
             break;
           }
           case "borrow": {
@@ -455,8 +744,20 @@ export class Engine {
       if ((this.claimedTurn.get(sys.id) ?? 0) >= this.turn) continue; // claimed this turn
       // Unrest from starvation drags extraction output down (Section 08).
       const efficiency = 1 - t.unrestProductionPenalty * sys.unrest;
-      for (const r of RESOURCES) {
-        sys.stockpile[r] += sys.yields[r] * efficiency;
+      // Body-driven extraction (Section 21): each worked site produces richness × extractor
+      // efficiency × stellar modifier, clamped to its remaining reserves. Finite deposits
+      // deplete by what they actually extract, so rich worlds eventually run dry.
+      const starType = sys.bodies?.starType;
+      const seed = systemSeed(sys);
+      for (const site of sys.sites) {
+        const base = siteOutput(site, starType, seed, this.turn, this.config.turns);
+        if (base <= 0) continue;
+        const extracted = base * efficiency;
+        if (extracted <= 0) continue;
+        sys.stockpile[site.resource] += extracted;
+        if (site.reservesRemaining !== null) {
+          site.reservesRemaining = Math.max(0, site.reservesRemaining - extracted);
+        }
       }
       // Hydroponics convert ice into food (Section 08), within available ice.
       if (sys.hydroponics > 0) {
@@ -465,6 +766,60 @@ export class Engine {
         sys.stockpile.ice -= iceUsed;
         const ratio = iceWanted > 0 ? iceUsed / iceWanted : 0;
         sys.stockpile.food += sys.hydroponics * t.hydroponicsFoodOutput * ratio;
+      }
+      // Production chains (Section 07b): reactors supply power, processors run recipes.
+      this.resolveProcessors(sys, efficiency);
+    }
+  }
+
+  /**
+   * Run a system's Processor modules for the turn (Section 07b). Reactors burn helium3 to meet
+   * the processors' power draw; any deficit browns the whole system out via `powerFactor`.
+   * Recipes run in dependency order (config), so a tier-1 output (e.g. alloys) is available to
+   * a tier-2 recipe (e.g. components) the same turn — exactly as hydroponics consumes same-turn ice.
+   */
+  private resolveProcessors(sys: System, efficiency: number): void {
+    const t = this.config.tuning;
+    // Total power the system's processors want this turn.
+    let powerNeed = 0;
+    for (const recipe of t.recipes) powerNeed += (sys.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    if (powerNeed <= 0) return; // no processors → nothing to power or run
+
+    // Baseline power = free baseline + Power Grid upgrades (Section 07c); reactors fill the gap.
+    const baseline = t.basePowerPerSystem + sys.powerGrid * t.infrastructure.powerCapacityPerLevel;
+    let powerCapacity = baseline;
+    const fromReactors = Math.min(
+      Math.max(0, powerNeed - baseline),
+      sys.reactors * t.reactorPowerOutput,
+    );
+    if (fromReactors > 0) {
+      const h3Want = (fromReactors / t.reactorPowerOutput) * t.reactorHelium3Use;
+      const h3Used = Math.min(h3Want, sys.stockpile.helium3);
+      sys.stockpile.helium3 -= h3Used;
+      const fuelledFrac = h3Want > 0 ? h3Used / h3Want : 1;
+      powerCapacity += fromReactors * fuelledFrac;
+    }
+    const powerFactor = Math.max(0, Math.min(1, powerCapacity / powerNeed));
+
+    for (const recipe of t.recipes) {
+      const count = sys.processors[recipe.id] ?? 0;
+      if (count <= 0) continue;
+      const scale = count * efficiency * powerFactor; // desired throughput
+      if (scale <= 0) continue;
+      // Pro-rate by the limiting input (same shape as hydroponics' ice ratio).
+      let ratio = 1;
+      for (const res of Object.keys(recipe.inputs) as Resource[]) {
+        const want = (recipe.inputs[res] ?? 0) * scale;
+        if (want <= 0) continue;
+        ratio = Math.min(ratio, sys.stockpile[res] / want);
+      }
+      ratio = Math.max(0, Math.min(1, ratio));
+      if (ratio <= 0) continue;
+      for (const res of Object.keys(recipe.inputs) as Resource[]) {
+        sys.stockpile[res] -= (recipe.inputs[res] ?? 0) * scale * ratio;
+      }
+      for (const res of Object.keys(recipe.outputs) as Resource[]) {
+        sys.stockpile[res] += (recipe.outputs[res] ?? 0) * scale * ratio;
       }
     }
   }
@@ -529,7 +884,8 @@ export class Engine {
         if (!path) continue;
         const hops = path.routes.length;
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
-        const unitCost = price + this.config.tuning.shippingFeePerHop * hops * shipMult;
+        // War aggressors pay a tariff on Exchange trades (Section 23) — imports cost more.
+        const unitCost = (price + this.config.tuning.shippingFeePerHop * hops * shipMult) * (1 + this.warTariffFor(corp.id));
         const affordable = Math.min(
           fill.filledQuantity,
           Math.floor(corp.credits / Math.max(0.01, unitCost)),
@@ -568,7 +924,8 @@ export class Engine {
         sys.stockpile[resource] -= qty;
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
         const shipping = this.config.tuning.shippingFeePerHop * hops * qty * shipMult;
-        const payout = Math.max(0, qty * price - shipping);
+        // War aggressors pay a tariff on Exchange trades (Section 23) — exports earn less.
+        const payout = Math.max(0, (qty * price - shipping) * (1 - this.warTariffFor(corp.id)));
         const value = qty * this.config.tuning.basePrices[resource];
         this.events.push({
           type: "fill",
@@ -638,6 +995,8 @@ export class Engine {
           resource: convoy.resource,
           cargoLost: result.cargoDestroyed + result.cargoPlundered,
         });
+        // A struck convoy stokes a grievance against the raider (Section 23 retaliation).
+        if (result.cargoDestroyed + result.cargoPlundered > 0) this.addGrudge(convoy.owner, attacker.id, 1);
       }
       if (
         result.outcome === "noContact" ||
@@ -728,9 +1087,309 @@ export class Engine {
       }
     }
 
+    // 6.5 Extraction sabotage (Section 21): knock a rival system's extractor offline. Needs a
+    //     raider/privateer able to reach one of the target system's tunnel mouths, and enough
+    //     raid strength to beat its local defense plus a sabotage threshold.
+    for (const corp of this.corps) {
+      for (const order of ordersByCorp.get(corp.id) ?? []) {
+        if (order.kind !== "sabotage") continue;
+        const sys = this.galaxy.systems.get(order.systemId);
+        if (!sys || sys.owner === null || sys.owner === corp.id) continue;
+        const site = sys.sites.find((s) => s.key === order.siteKey);
+        if (!site || site.extractorLevel <= 0 || site.disabledUntil > this.turn) continue;
+        const eligible = sys.routeIds.some((rid) => {
+          const r = this.galaxy.routes.get(rid);
+          return r ? canRaidRoute(this.galaxy, corp, r) : false;
+        });
+        if (!eligible) continue;
+        const strength = raidStrength(corp);
+        const success = strength >= this.systemDefense(sys) + this.config.tuning.sabotage.minStrength;
+        if (success) site.disabledUntil = this.turn + this.config.tuning.sabotage.disableTurns;
+        this.addGrudge(sys.owner, corp.id, success ? 1.5 : 0.5);
+        this.events.push({
+          type: "sabotage",
+          attackerId: corp.id,
+          defenderId: sys.owner,
+          systemId: sys.id,
+          resource: site.resource,
+          success,
+        });
+        this.log(
+          `  sabotage: ${corp.name} → ${sys.name} ${site.resource} extractor ${success ? "offline" : "repelled"}`,
+        );
+      }
+    }
+
     // Drop fully destroyed/looted convoys.
     this.convoys = this.convoys.filter((c) => c.quantity > 0);
     return { convoysRaided, cargoValueLost, raidOutcomes: outcomes };
+  }
+
+  /** A system's standing raid defense (platforms, mining-rig fortification, depot, stationed ships). */
+  private systemDefense(sys: System): number {
+    const t = this.config.tuning;
+    let def = sys.defense;
+    def += sys.platforms * t.platformDefense;
+    def += sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+    for (const m of sys.megastructures) def += t.megastructures[m].defenseBonus;
+    if (sys.hasDepot) def += t.depotDefenseBonus;
+    if (sys.owner) def += this.stationedDefense(sys.id, sys.owner);
+    return def;
+  }
+
+  // ----- War & conquest (Section 23) -----
+
+  private name(corpId: string): string {
+    return this.corps.find((c) => c.id === corpId)?.name ?? corpId;
+  }
+
+  /** Record a grievance so the victim is biased toward retaliating against the offender (Section 23). */
+  private addGrudge(victimId: string, offenderId: string, weight: number): void {
+    if (victimId === offenderId) return;
+    const v = this.corps.find((c) => c.id === victimId);
+    if (v) v.grudges[offenderId] = (v.grudges[offenderId] ?? 0) + weight;
+  }
+
+  /** Two charters are allied iff each has pledged to defend the other (Section 23). */
+  private areAllied(a: string, b: string): boolean {
+    if (a === b) return false;
+    const ca = this.corps.find((c) => c.id === a);
+    const cb = this.corps.find((c) => c.id === b);
+    return !!ca && !!cb && ca.alliancePledges.includes(b) && cb.alliancePledges.includes(a);
+  }
+
+  /** True if the corp is the aggressor in any still-active war (→ barred from the Exchange). */
+  private isAggressorAtWar(corpId: string): boolean {
+    return this.wars.some((w) => w.aggressorId === corpId && w.endTurn > this.turn);
+  }
+
+  /** End wars whose ceasefire turn has arrived. */
+  private expireWars(): void {
+    for (const w of this.wars) {
+      if (w.endTurn <= this.turn) {
+        this.events.push({ type: "warEnded", aggressorId: w.aggressorId, defenderId: w.defenderId });
+        this.log(`  Ceasefire: ${this.name(w.aggressorId)} ↔ ${this.name(w.defenderId)}`);
+      }
+    }
+    this.wars = this.wars.filter((w) => w.endTurn > this.turn);
+  }
+
+  /**
+   * Declare a war (or extend an existing one) for an act of aggression. A *defensive*
+   * counter-invasion — the attacker is the defender of an existing war — only extends that war
+   * and does not make the counter-attacker an aggressor (so it keeps Exchange access).
+   */
+  private declareOrExtendWar(aggressorId: string, defenderId: string, silent = false): void {
+    const newEnd = this.turn + this.config.tuning.war.durationTurns;
+    const reverse = this.wars.find(
+      (w) => w.aggressorId === defenderId && w.defenderId === aggressorId && w.endTurn > this.turn,
+    );
+    if (reverse) {
+      reverse.endTurn = Math.max(reverse.endTurn, newEnd);
+      return;
+    }
+    const existing = this.wars.find(
+      (w) => w.aggressorId === aggressorId && w.defenderId === defenderId && w.endTurn > this.turn,
+    );
+    if (existing) {
+      existing.endTurn = Math.max(existing.endTurn, newEnd);
+      return;
+    }
+    this.wars.push({ aggressorId, defenderId, startTurn: this.turn, endTurn: newEnd });
+    if (!silent) {
+      this.events.push({ type: "warDeclared", aggressorId, defenderId });
+      this.log(`  WAR DECLARED: ${this.name(aggressorId)} invades ${this.name(defenderId)}'s territory`);
+    }
+  }
+
+  /** Combat strength an attacker can bring to bear on a target system (ships/privateers in range). */
+  private invasionAttackForce(attacker: Corporation, target: System): number {
+    let force = 0;
+    for (const ship of attacker.ships) {
+      if (ship.combat <= 0 || !ship.stationedAt) continue;
+      const route = this.galaxy.routeBetween(ship.stationedAt, target.id);
+      if (route && route.charted && route.requiredRange <= ship.rangeTier) force += ship.combat;
+    }
+    for (const p of attacker.privateers) {
+      const route = this.galaxy.routeBetween(p.basedAt, target.id);
+      if (route && route.charted && route.requiredRange <= attacker.rangeTier) force += p.strength;
+    }
+    return force;
+  }
+
+  /** A target system's total defensive strength, including allied reinforcement (Section 23). */
+  private invasionDefenseForce(target: System): number {
+    let def = this.systemDefense(target);
+    if (!target.owner) return def;
+    for (const ally of this.corps) {
+      if (!this.areAllied(target.owner, ally.id)) continue;
+      for (const ship of ally.ships) {
+        if (ship.combat <= 0 || !ship.stationedAt) continue;
+        const route = this.galaxy.routeBetween(ship.stationedAt, target.id);
+        if (route && route.charted) def += ship.combat;
+      }
+    }
+    return def;
+  }
+
+  /** Destroy `committed × frac` worth of an invader's combat (privateers first, then warships). */
+  private applyInvaderLosses(corp: Corporation, committed: number, frac: number): void {
+    let remaining = committed * frac;
+    for (const p of corp.privateers) {
+      if (remaining <= 0) break;
+      const a = Math.min(p.strength, remaining);
+      p.strength -= a;
+      remaining -= a;
+    }
+    corp.privateers = corp.privateers.filter((p) => p.strength > 0);
+    const destroyed = new Set<(typeof corp.ships)[number]>();
+    for (const ship of corp.ships) {
+      if (remaining <= 0) break;
+      if (ship.combat <= 0) continue;
+      const a = Math.min(ship.combat, remaining);
+      ship.combat -= a;
+      remaining -= a;
+      if (ship.combat <= 0) destroyed.add(ship);
+    }
+    corp.ships = corp.ships.filter((s) => !destroyed.has(s));
+  }
+
+  /**
+   * Resolve invasions (Section 23): each captures the target if the attacker's reachable fleet
+   * beats the defense (with allied reinforcement) by `captureRatio`, else is repelled. Every
+   * invasion declares/extends war; capture transfers the system (and may unseat a charter).
+   */
+  private resolveInvasions(ordersByCorp: Map<string, Order[]>): void {
+    for (const corp of this.corps) {
+      for (const order of ordersByCorp.get(corp.id) ?? []) {
+        if (order.kind !== "invade") continue;
+        const sys = this.galaxy.systems.get(order.systemId);
+        if (!sys || sys.owner === null || sys.owner === corp.id) continue;
+        if (sys.id === this.galaxy.hubId) continue; // the hub is Authority-protected
+        if (this.areAllied(corp.id, sys.owner)) continue; // allies don't invade each other
+        const attack = this.invasionAttackForce(corp, sys);
+        if (attack <= 0) continue; // no military able to reach the target
+        this.resolveBattle(corp, sys, attack, null);
+      }
+    }
+  }
+
+  /**
+   * Resolve a battle for a system (Section 23): declare/extend war, pull the defender's allies in,
+   * and capture the system if the attacker's committed force beats the defense by `captureRatio`,
+   * else repel it. Losses fall on `fleet` if given (a mobile fleet), otherwise on the attacker's
+   * stationed military. Returns whether the system was captured.
+   */
+  private resolveBattle(attacker: Corporation, sys: System, attackForce: number, fleet: Ship[] | null): boolean {
+    const t = this.config.tuning.war;
+    const defenderId = sys.owner!;
+    const defense = this.invasionDefenseForce(sys);
+    this.declareOrExtendWar(attacker.id, defenderId);
+    this.addGrudge(defenderId, attacker.id, 3); // invasion is the gravest grievance
+    // Defensive pact (Section 23): draw the defender's allies into the war against the aggressor.
+    for (const ally of this.corps) {
+      if (!this.areAllied(defenderId, ally.id)) continue;
+      this.declareOrExtendWar(attacker.id, ally.id, true);
+      this.addGrudge(ally.id, attacker.id, 3);
+      this.events.push({ type: "pactInvoked", protectorId: ally.id, aggressorId: attacker.id, allyId: defenderId });
+      this.log(`  PACT: ${this.name(ally.id)} joins the war against ${this.name(attacker.id)} to defend ${this.name(defenderId)}`);
+    }
+    const captured = attackForce >= Math.max(1, defense) * t.captureRatio;
+    if (captured) {
+      const prevOwner = this.corps.find((c) => c.id === defenderId);
+      if (prevOwner) {
+        prevOwner.ownedSystemIds = prevOwner.ownedSystemIds.filter((id) => id !== sys.id);
+        for (const ship of prevOwner.ships) if (ship.stationedAt === sys.id) ship.stationedAt = "";
+        if (prevOwner.ownedSystemIds.length === 0) {
+          prevOwner.hasCharter = false;
+          prevOwner.isFreeOperator = true;
+        }
+      }
+      sys.owner = attacker.id;
+      attacker.ownedSystemIds.push(sys.id);
+      this.grantStarterExtractor(sys);
+    }
+    const frac = captured ? t.captureLossFrac : t.repelLossFrac;
+    if (fleet) this.applyFleetLosses(attacker, fleet, attackForce, frac);
+    else this.applyInvaderLosses(attacker, attackForce, frac);
+    this.events.push({ type: "invasion", attackerId: attacker.id, defenderId, systemId: sys.id, captured });
+    this.log(`  INVASION: ${attacker.name} ${captured ? "captures" : "is repelled at"} ${sys.name}`);
+    return captured;
+  }
+
+  /** Destroy `committed × frac` of a specific fleet's combat (Section 23 mobile-fleet battle). */
+  private applyFleetLosses(corp: Corporation, fleet: Ship[], committed: number, frac: number): void {
+    let remaining = committed * frac;
+    const destroyed = new Set<Ship>();
+    for (const ship of fleet) {
+      if (remaining <= 0) break;
+      if (ship.combat <= 0) continue;
+      const a = Math.min(ship.combat, remaining);
+      ship.combat -= a;
+      remaining -= a;
+      if (ship.combat <= 0) destroyed.add(ship);
+    }
+    corp.ships = corp.ships.filter((s) => !destroyed.has(s));
+  }
+
+  /**
+   * Advance every ship in transit one turn (Section 23). On reaching its destination a fleet
+   * re-bases there — unless the destination is a non-allied rival system, in which case the
+   * arriving ships give battle: a win captures and occupies the system, a loss falls back.
+   */
+  private resolveFleetMovement(): void {
+    // Group ships that arrive at the same destination this turn so a fleet fights as one.
+    const arrivals = new Map<string, { corp: Corporation; sys: System; ships: Ship[]; attack: boolean }>();
+    for (const corp of this.corps) {
+      for (const ship of corp.ships) {
+        const tr = ship.transit;
+        if (!tr) continue;
+        if (tr.launchedTurn >= this.turn) continue; // ordered this turn — does not advance yet
+        tr.segmentTurnsLeft -= 1;
+        if (tr.segmentTurnsLeft > 0) continue;
+        tr.position += 1;
+        if (tr.position < tr.path.length - 1) {
+          const nextRoute = this.galaxy.routes.get(tr.routeIds[tr.position]!);
+          tr.segmentTurnsLeft = nextRoute ? nextRoute.transitTime : 1;
+          continue;
+        }
+        // Reached the destination.
+        const dest = tr.path[tr.path.length - 1]!;
+        const sys = this.galaxy.systems.get(dest);
+        const hostile = !!sys && sys.owner !== null && sys.owner !== corp.id && !this.areAllied(corp.id, sys.owner);
+        if (sys && hostile && tr.attack && dest !== this.galaxy.hubId) {
+          const key = `${corp.id}|${dest}`;
+          const g = arrivals.get(key) ?? { corp, sys, ships: [], attack: true };
+          g.ships.push(ship);
+          arrivals.set(key, g);
+          ship.stationedAt = ""; // resolved below
+          ship.transit = undefined;
+        } else {
+          // Peaceful arrival (own/allied/neutral) — re-base here. (A would-be attack on a system
+          // that is no longer hostile just becomes a peaceful move.)
+          ship.stationedAt = sys ? dest : tr.path[tr.position - 1] ?? dest;
+          ship.transit = undefined;
+        }
+      }
+    }
+    // Resolve each arriving fleet's battle.
+    for (const { corp, sys, ships } of arrivals.values()) {
+      if (sys.owner === null || sys.owner === corp.id) {
+        for (const s of ships) s.stationedAt = sys.id; // target changed hands first — just occupy
+        continue;
+      }
+      const force = ships.reduce((sum, s) => sum + s.combat, 0);
+      const fallback = sys.routeIds
+        .map((rid) => this.galaxy.route(rid))
+        .map((r) => (r.a === sys.id ? r.b : r.a))
+        .find((id) => {
+          const n = this.galaxy.systems.get(id);
+          return n && (n.owner === corp.id || n.owner === null || this.areAllied(corp.id, n.owner ?? ""));
+        }) ?? sys.id;
+      const captured = this.resolveBattle(corp, sys, force, ships);
+      // Survivors occupy on a win, fall back to a friendly/neutral neighbour on a loss.
+      for (const s of corp.ships) if (ships.includes(s)) s.stationedAt = captured ? sys.id : fallback;
+    }
   }
 
   private resolveArrivals(): void {
@@ -788,7 +1447,9 @@ export class Engine {
     for (const corp of this.corps) {
       for (const sysId of corp.ownedSystemIds) {
         const sys = this.galaxy.system(sysId);
-        corp.credits -= sys.upkeep;
+        // Mining Rig fortification lowers a system's upkeep (Section 07c).
+        const upkeepFrac = Math.max(0, 1 - sys.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
+        corp.credits -= sys.upkeep * upkeepFrac;
 
         // Life support (ice) and food demand scale with population (Section 08).
         const foodNeed = t.foodNeed[sys.populationStage];
@@ -799,11 +1460,21 @@ export class Engine {
         if (!fed) this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
         // Growth requires LOCAL food (garden/hydroponics/transfer), not emergency
         // imports: imports keep a colony alive but only local supply lets it thrive.
-        const thriving = fed && food.local;
+        // Habitability gate (Section 21): a population can only take root where there is a
+        // habitable world or an artificial habitat (hydroponics). Dead stars (white dwarf /
+        // neutron) and giant-only systems stay pure industrial outposts unless terraformed.
+        const habitable = systemHasHabitableBody(sys) || sys.hydroponics > 0;
+        const thriving = fed && food.local && habitable;
+
+        // Habitat upgrades raise both tax yield and growth speed (Section 07c); megastructures
+        // (space elevator / ringworld) accelerate growth further (Section 22).
+        const habitatTaxMult = 1 + sys.habitats * t.infrastructure.habitatTaxBonusPerLevel;
+        const megaGrowth = sys.megastructures.reduce((s, m) => s + t.megastructures[m].growthBonus, 0);
+        const habitatGrowthMult = 1 + sys.habitats * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
 
         // Tax: a fed, content population pays its charter holder (Sections 08/17).
         if (fed) {
-          const tax = t.taxPerStage[sys.populationStage] * (1 - sys.unrest);
+          const tax = t.taxPerStage[sys.populationStage] * (1 - sys.unrest) * habitatTaxMult;
           corp.credits += tax;
           taxLevied += tax;
         }
@@ -813,7 +1484,7 @@ export class Engine {
         else sys.unrest = Math.min(1, sys.unrest + t.unrestPerStarvedTurn);
 
         if (thriving) {
-          sys.populationProgress += t.growthRate[sys.populationStage];
+          sys.populationProgress += t.growthRate[sys.populationStage] * habitatGrowthMult;
           const idx = stages.indexOf(sys.populationStage);
           if (sys.populationProgress >= t.growthThreshold && idx < stages.length - 1) {
             sys.populationStage = stages[idx + 1]!;
@@ -824,6 +1495,15 @@ export class Engine {
         } else if (!fed) {
           sys.populationProgress = Math.max(0, sys.populationProgress - 20);
         }
+      }
+
+      // Fleet operation burns fuel each turn (Section 07b): a recurring sink that keeps the
+      // fuel market live. Drawn from the corp's stockpiles first, shortfall bought at market.
+      const fuelNeed = corp.ships.length * t.fuelPerShipPerTurn;
+      if (fuelNeed > 0) {
+        const fuelBill = this.strategicBill(corp, "fuel", fuelNeed);
+        this.consumeStrategic(corp, "fuel", fuelNeed);
+        if (corp.credits >= fuelBill) corp.credits -= fuelBill;
       }
 
       if (corp.debt > 0) corp.debt *= 1 + t.debtInterest;
@@ -875,12 +1555,21 @@ export class Engine {
       value += momentum;
       for (const sysId of corp.ownedSystemIds) {
         const sys = this.galaxy.system(sysId);
-        const yieldTotal = RESOURCES.reduce((s, r) => s + sys.yields[r], 0);
+        // Value the realised per-turn extraction (Section 21: worked sites, net of depletion +
+        // stellar), plus the extractor capital sunk into the system's sites.
+        const ey = effectiveYields(sys, this.turn, this.config.turns);
+        const yieldTotal = RESOURCES.reduce((s, r) => s + ey[r], 0);
         value += yieldTotal * v.perSystemYieldValue;
+        value += sys.sites.reduce((s, st) => s + st.extractorLevel, 0) * v.extractorValue;
         value += v.populationValue[sys.populationStage] * (1 - sys.unrest);
         if (sys.hasDepot) value += v.depotValue;
         value += sys.hydroponics * (v.depotValue * 0.25);
+        value += Object.values(sys.processors).reduce((s, n) => s + n, 0) * v.processorValue;
+        value += sys.reactors * v.reactorValue;
+        value += (sys.miningRigs + sys.habitats + sys.powerGrid) * v.infraLevelValue;
         value += sys.platforms * this.config.tuning.platformCost;
+        // Megastructures are prestige capital (Section 22).
+        for (const m of sys.megastructures) value += this.config.tuning.megastructures[m].valuation;
         for (const r of RESOURCES) {
           value += sys.stockpile[r] * this.config.tuning.basePrices[r] * v.stockpileFrac;
         }
@@ -1071,6 +1760,10 @@ export class Engine {
         def += sys.defense;
         // Stationary defense platforms harden the system's tunnel mouths (Section 15).
         def += sys.platforms * this.config.tuning.platformDefense;
+        // Mining Rig fortification hardens the system's tunnel mouths (Section 07c).
+        def += sys.miningRigs * this.config.tuning.infrastructure.miningDefenseBonusPerLevel;
+        // Megastructures (orbital station, etc.) harden the system's tunnel mouths (Section 22).
+        for (const m of sys.megastructures) def += this.config.tuning.megastructures[m].defenseBonus;
         // Depot patrols harden connected tunnels against raiders (Section 12).
         if (sys.hasDepot) def += this.config.tuning.depotDefenseBonus;
         // Warships stationed here defend the system's tunnel mouths.
@@ -1141,6 +1834,7 @@ export class Engine {
       me: corp,
       corporations: this.corps,
       convoys: this.convoys,
+      wars: this.wars,
       rng: this.rng,
     };
   }

@@ -9,13 +9,20 @@ import type { Bot, PlayerView } from "./bot.js";
 import {
   bidList,
   freeOperatorOrders,
+  maybeAlliance,
+  maybeDefendAlly,
   maybeBuildDepot,
+  maybeBuildExtractor,
   maybeBuildHydroponics,
+  maybeBuildMegastructure,
   maybeBuildPlatforms,
+  maybeBuildProcessor,
+  maybeBuildReactor,
   maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
   maybeResearchRange,
+  maybeUpgradeInfrastructure,
   sellSurplus,
   valueSystem,
   type BotState,
@@ -33,6 +40,8 @@ export class MinerBot implements Bot {
     if (view.me.isFreeOperator) return freeOperatorOrders(view, this.state);
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
+    // Develop deposits first (Section 21): an undeveloped claim produces nothing.
+    orders.push(...maybeBuildExtractor(view));
     // Grow the local economy, then keep climbing the range-tech ladder.
     orders.push(...maybeExpand(view));
     orders.push(...maybeResearchRange(view));
@@ -40,9 +49,19 @@ export class MinerBot implements Bot {
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeBuildHydroponics(view));
+    // Refine raw output into manufactured goods (Section 07b): power first, then a processor.
+    orders.push(...maybeBuildReactor(view));
+    orders.push(...maybeBuildProcessor(view));
+    // Sink overproduced raws into system upgrades (Section 07c) and grand construction (Section 22).
+    orders.push(...maybeUpgradeInfrastructure(view));
+    orders.push(...maybeBuildMegastructure(view));
     // Cheap stationary platforms first, then mobile escort fleets.
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
+    // Peaceful miners take a defensive alliance for protection — and honour it: if attacked or an
+    // ally is, they counter-attack the aggressor (Section 23).
+    orders.push(...maybeAlliance(view));
+    orders.push(...maybeDefendAlly(view, this.state));
     return orders;
   }
 }

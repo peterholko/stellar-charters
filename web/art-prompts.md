@@ -60,3 +60,39 @@ subject once per suffix to compare the three art directions the UI themes match.
 - `title-logo` (transparent) — *Wordmark glyph for "Stellar Charters": a wormhole spiral fused with a corporate charter seal.*
 - `corp-crest` ×8 (256², transparent) — *Eight distinct chartered-corporation crests, geometric heraldic-corporate, one per seat colour.*
 - `avatar-ceo` (square) — *A neutral silhouette CEO/operator avatar placeholder.*
+
+---
+
+## Star-system bodies (Section 21 — body-driven resource model)
+
+These are NEW slots for the per-body composition: a **star type** portrait, a **planet type**
+portrait, an asteroid belt, and small site-state status glyphs. Square 1:1 unless noted. Slot ids
+match the engine's `StarType` / `PlanetType` enum values exactly, so wiring is a direct
+`/assets/star-${starType}.png` / `planet-${planetType}.png` lookup (graceful gradient fallback).
+The set must be mutually distinct and instantly readable at ~48–96px.
+
+**Stars** (`star-<type>.png`) — a small luminous orb portrait of the star:
+- `star-mainSequence` — *A steady yellow-white main-sequence star, calm even glow; reads as normal, life-friendly.*
+- `star-redDwarf` — *A small dim deep-red dwarf with visible flare arcs off its edge; tiny and flare-prone.*
+- `star-redGiant` — *A huge bloated swollen orange-red giant, soft puffy surface; old, expanding, scorching.*
+- `star-blueGiant` — *A fierce blue-white giant, intense hot glow and radiant spikes; harsh and lethal.*
+- `star-whiteDwarf` — *A tiny dense brilliant blue-white stellar remnant, faint halo; burnt-out husk.*
+- `star-neutronStar` — *A minuscule super-dense remnant with twin polar jets and a blue-violet magnetic aura; exotic, the antimatter/rare-isotope prize.*
+
+**Planets** (`planet-<type>.png`) — a single world as a disc:
+- `planet-lava` — *A scorched molten lava world, cracked black crust with glowing magma rivers.*
+- `planet-rocky` — *A cratered grey-brown rocky terrestrial world, barren but mineral-rich.*
+- `planet-desert` — *A dry tan/ochre desert world, windswept dunes.*
+- `planet-ocean` — *A lush blue-and-green habitable ocean/garden world with white clouds; the prized living world.*
+- `planet-gasGiant` — *A banded gas giant (Jupiter-like) with helium-3 skimming haze.*
+- `planet-iceGiant` — *A pale cyan/teal ice giant (Neptune-like), cold methane haze.*
+- `planet-barren` — *A dead airless grey rock, heavily cratered, lifeless.*
+
+**Other bodies & site states:**
+- `body-asteroidBelt` — *A dense ring/field of tumbling asteroids with a few mining rigs; a mining belt.*
+- `site-extractor` — *A compact mining/extraction rig clamped to a surface; "deposit being worked."*
+- `site-offline` — *The same rig dark, sparking/damaged with a warning glow; "sabotaged / offline."*
+- `site-depleted` — *An exhausted mine over a hollowed spent deposit; "dry."*
+- `site-unsurveyed` — *A deposit obscured by a scanner/question haze and faint survey grid; "richness unknown until assayed."*
+- `infra-extractor` (matches `infra-depot` style) — *A standalone extraction/refinery module building for build menus.*
+- `status-stellar-event` — *A flaring star inside a hazard ring; flags a system whose output is spiking or browning out this turn.*

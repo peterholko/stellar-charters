@@ -28,6 +28,8 @@ npm run sim -- --games 200 --players 8 --turns 42
 # Single deterministic game with full turn-by-turn log (the "is it fun?" read):
 npm run sim -- --games 1 --players 8 --seed 0 --verbose
 # Flags: --games N --players N --turns N --seed N|random --scenario PATH --out DIR --verbose
+# --procedural: generate a fresh body-driven galaxy per game (Section 21) instead of a committed
+#   flat-yield map — use this to balance-test the real extractor/depletion economy.
 
 npm test                      # vitest unit tests (includes determinism + pathfinding)
 npx vitest run tests/market.test.ts   # a single test file

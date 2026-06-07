@@ -242,18 +242,75 @@ Claims become part of a corporation's valuation. If a corporation is acquired, i
 
 ## Resources & Production
 
-Keep the resource model small. The depth comes from scarcity, location, transit time, and price movement, not a giant crafting tree.
+Keep the chains **short but tightly coupled**, not a sprawling crafting tree. The depth comes from scarcity, location, transit time, price movement, and the fact that a few raw feedstocks each feed several manufactured goods — so a squeeze on one raw ripples across many markets.
 
-| Resource | Role | Strategic Notes |
+Commodities sit in three tiers. **Raw** commodities are extracted from a system's yields; **manufactured** commodities are produced by Processor buildings (see Section 07b). Antimatter remains the apex deep-frontier raw.
+
+| Resource | Tier | Role | Strategic Notes |
+| --- | --- | --- | --- |
+| ICE / WATER | raw | Life support; feedstock for food and fuel. | Common but constantly consumed; the broadly-coupled "water" of the economy. |
+| METALS | raw | Structural feedstock for alloys. | Often overproduced early, making price crashes likely. |
+| SILICATES | raw | Semiconductor/optical feedstock for polymers and components. | The newest raw; gates the advanced manufacturing tier. |
+| HELIUM-3 | raw | Energy feedstock: fuels reactors (power) and feeds fuel + alloys. | Double-duty energy backbone; energy producers can squeeze many markets at once. |
+| RARE ISOTOPES | raw | High-tech catalyst for components and advanced hulls. | Low-volume, high-value. Ideal raid target and monopoly resource. |
+| ANTIMATTER | raw | Premium input to capital (Range 4+) hulls. | Ultra-high value, abyss-only — the fattest raid target and monopoly prize. |
+| FOOD | mfg | Feeds growing colonies (`ice → food`, hydroponics). | Garden worlds and hydroponics make local food strategically important. |
+| FUEL | mfg | Burned by the fleet each turn; feeds polymers (`ice + helium3 → fuel`). | Recurring fleet demand keeps a live market. |
+| ALLOYS | mfg | Required to construct every building and ship hull (`metals + helium3 → alloys`). | The "steel bottleneck": construction stalls without alloys (or the credits to buy them). |
+| POLYMERS | mfg | Intermediate feeding components (`silicates + fuel → polymers`). | Couples the silicate and fuel chains into the advanced tier. |
+| COMPONENTS | mfg | Required for ships and advanced infrastructure (`alloys + polymers + rareIsotopes → components`). | The top of the tree; the deepest, most logistically demanding chain. |
+| CREDITS | — | Universal currency for claims, ships, debt, market buys, privateers. | Cash timing matters because exports pay only after arrival. |
+
+**Production location.** Resources are stored locally in the system that produced them. The player does not own one global pile of Ice; they own local stockpiles distributed across systems.
+
+`SECTION 07b`
+
+
+## Processing & Production Chains
+
+Extraction fills a system's stockpile with raws; **Processor** modules convert them into manufactured goods on the same system. A processor runs one **recipe** each turn — consuming inputs from the local stockpile and producing outputs into it — pro-rated by its limiting input (a half-fed processor makes half its output).
+
+```
+ice ──────┬──► food
+          └──► fuel ──────────► polymers ──┐
+helium3 ──┬──► fuel                        │
+          └──► alloys ─────────────────────┼──► components
+metals ───────► alloys                     │        ▲
+silicates ────► polymers ──────────────────┘        │
+rareIsotopes ───────────────────────────────────────┘
+```
+
+Recipes run in dependency order within a turn, so a tier-1 output (e.g. alloys) is available to a tier-2/3 recipe (e.g. components) the **same** turn — the same way hydroponics consumes ice extracted that turn. Because production resolves before market clearing (Section 20), processors always get first claim on a system's raws; only the leftover is sold.
+
+**Power (a non-tradable utility).** Power is never stored, shipped, or traded. Each turn a system's power is recomputed as capacity vs. draw: every processor draws power, **Reactor** modules supply it (burning helium3 as fuel) on top of a small free baseline. If draw exceeds capacity the whole system **browns out** — every processor throttles by the same `capacity / draw` factor until more reactors are built. So materials and credits gate *building* a factory; power gates *running* it.
+
+**Required inputs (demand sinks).** Manufactured goods are not optional exports — core actions consume them, drawn from the corp's stockpiles first with any shortfall **bought from the exchange at market price** (so production is never a hard wall, only a cost that rises with scarcity):
+
+- **Construction** (every building and ship hull) consumes **alloys**.
+- **Ships** consume **components** (and still rareIsotopes/antimatter for higher hulls).
+- **Trade Depots** additionally consume **components**.
+- **Fleet operation** burns **fuel** every turn.
+
+*Balance status:* recipe ratios, prices, power, and bill sizes are tuned via the headless simulator and treated as seeds. A known follow-up is routing required-input purchases through the order book so manufactured-good prices respond to that demand directly (today the bills buy at the current price without moving it), and giving bots the logistics to build the tier-3 components chain rather than market-sourcing it.
+
+`SECTION 07c`
+
+
+## System Infrastructure Upgrades
+
+The raw feedstocks — metals, silicates, helium3 — are extracted in bulk and tend to overproduce. Beyond feeding processors, each owned system can sink them into **upgrade tracks** (raw drawn from the corp's stockpiles first, market shortfall bought). Each track caps at a few levels; the cost scales with the level reached (level L→L+1 costs the base × (L+1)).
+
+| Track | Raw consumed | Effect per level |
 | --- | --- | --- |
-| ICE / WATER | Life support, fuel feedstock, basic frontier supply. | Common but constantly consumed. Close ice systems are safe income; distant ice systems support frontier clusters. |
-| METALS | Construction, hulls, depots, claims, basic infrastructure. | Often overproduced early, making price crashes likely. |
-| HELIUM-3 | Power, reactors, advanced industry, ship operation. | Strategic chokepoint. Energy producers can squeeze the market. |
-| RARE ISOTOPES | High-end technology, advanced ships, components, late-game leverage. | Low-volume, high-value exports. Ideal raid target and monopoly resource. |
-| FOOD | Feeds growing colonies and keeps populated systems stable. | Early food can be imported from humanity; midgame food production makes garden worlds and hydroponics strategically important. |
-| CREDITS | Universal currency for claims, ships, debt, licenses, market buys, and privateers. | Cash timing matters because exports pay only after arrival. |
+| **Mining Rigs** | metals | fortification: +raid defense and lower system upkeep |
+| **Habitats** | silicates | faster population growth + higher tax |
+| **Power Grid** | helium3 | +power capacity (a cheaper, permanent alternative to reactors) |
 
-**Production location**Resources are stored locally in the system that produced them. The player does not own one global pile of Ice; they own local stockpiles distributed across systems.
+All three are **pure sinks**: they consume a raw without adding raw supply. (An earlier design boosted extraction yields with Mining Rigs, but the sim showed that *increased* supply — working against the very raw-overproduction it was meant to absorb — and amplified the run-away leader, so the metals track was switched to fortification.)
+
+This gives the overproduced raws a use and a per-system progression layer.
+
+*Balance status:* upgrade costs/effects are seeds tuned via the headless simulator. The upgrades are a strong mid-game sink while systems have headroom; durably lifting the raw *market floor* across the whole game is a separate extraction-rate question.
 
 
 `SECTION 08`
@@ -780,6 +837,179 @@ Population should add strategic value, not routine chores. Keep food light early
 #### Risk — Free Operator Griefing
 
 Post-charter players need comeback tools, but not unlimited nuisance power. Port access, reputation, Authority enforcement, and operating costs should constrain them.
+
+`SECTION 21`
+
+
+## Star System Resource Model
+
+A star system is not a single number. Each system is a **star** orbited by **planets** and
+**asteroid belts**, and the resources a charter can pull come from the **deposits** on those
+bodies. Owning a system grants *potential*; the per-turn output is the sum of the deposits the
+owner has actually **worked** by building extractors. This replaces the earlier flat per-system
+yield: that flat vector is now just the degenerate case of a fully-developed system.
+
+### Bodies & deposits
+
+- **Star type** sets the system's character and habitable-zone geometry: *main-sequence*
+  (standard, life-friendly), *red dwarf* (tight zone, flare-prone), *red giant* (expanded zone
+  pushed outward, scorches its inner worlds), *blue giant* (hot, harsh, few habitables),
+  *white dwarf* (dead remnant, no habitable zone), *neutron star* (exotic remnant — the
+  antimatter / rare-isotope prize, no habitable zone). Exotic stars cluster toward the frontier
+  and abyss.
+- **Planet type** sets which deposits a world carries: *lava* (metals + volcanic rare isotopes),
+  *rocky* (metals + silicates), *desert* (silicates), *ocean* (**habitable** — food + ice),
+  *gas giant* (helium-3), *ice giant* (ice + helium-3), *barren* (sparse metals, dead rock).
+- **Asteroid belts** sit between the inner rocky zone and the outer giants and are rich mining
+  grounds (metals, silicates, sometimes rare isotopes).
+- Each **deposit** has a *richness* (units/turn when fully worked), *reserves* (finite for
+  ore/exotic, **renewable** for bio/gas/ice), and an *accessibility* (how costly it is to work).
+- Resource geography is preserved: rare isotopes are a frontier-and-deeper prize, antimatter is
+  abyss-only, the core carries only basics.
+
+### Extractors & depletion
+
+A deposit produces nothing until its owner builds an **extractor** on it; deepening the extractor
+raises output toward the deposit's richness. A fresh charter is granted a free starter extractor
+on its best deposit so a claimed system produces immediately. **Finite deposits deplete** as they
+are mined and eventually run dry, so the richest worlds are boom-and-bust and the frontier keeps
+pulling expansion outward; renewable deposits (ocean food, gas skimming, ice) sustain indefinitely.
+
+### Habitability
+
+A population can only take root where there is a **habitable world** (an ocean/garden world) or an
+artificial habitat (hydroponics). Dead stars and giant-only systems are pure **industrial**
+outposts — they extract and pay no population tax unless terraformed. Garden worlds are therefore
+a scarce, contested prize. Each charter's **home** system is guaranteed a habitat dome at founding
+so no one starts stranded; later expansion claims get no such guarantee.
+
+### Prospecting (fog of war)
+
+A deposit's true richness is hidden until it is **assayed** (surveyed) or worked; rivals never see
+a system's remaining reserves. Claiming a promising-looking system is therefore a speculation, and
+scouting/assay is an information-warfare lever.
+
+### Stellar dynamics & sabotage
+
+Star type drives deterministic, forecastable per-turn effects: neutron-star **pulses** spike
+rare-isotope/antimatter output, an aging **red giant** slowly scorches its ocean worlds (food
+declines late in a match), and **red-dwarf flares** brown out extractors on occasional turns.
+Economic warfare reaches the surface: a raider in range of a rival system can **sabotage** an
+extractor, knocking it offline for several turns.
+
+### Resolution placement
+
+Extractor and assay builds resolve in the administrative step; extraction (with depletion and
+stellar modifiers) is the Production step (2); sabotage resolves with raids (6); the habitability
+gate applies during population/upkeep (8) — all within the Section 20 order, with no same-turn
+chaining.
+
+
+`SECTION 22`
+
+
+## Grand Construction (Megastructures)
+
+Metal is the most abundant raw in the galaxy — rocky worlds, belts, and lava worlds all yield it —
+so without an equally enormous demand it collapses to the price floor. **Megastructures** are that
+demand floor: titanic constructs that swallow metal (and the refined alloys and capital hulls that
+metal feeds) on a scale nothing else in the game approaches, while turning a maturing charter into
+an end-game construction race.
+
+### The ladder
+
+Each is one-per-system, gated by the host's population stage, and consumes an enormous **metals**
+bill (drawn from the system's own stockpile first; any shortfall is bought at market, which lifts
+the price). The payoff is defense, faster growth, and a large valuation bump.
+
+- **Orbital Station** (Settlement+) — hardens the system's tunnel mouths and anchors prestige.
+- **Space Elevator** (Colony+) — cheap surface-to-orbit logistics accelerate population growth.
+- **Ringworld** (City+) — the apex artificial habitat: a vast growth and valuation engine, and the
+  single largest metal sink in the game.
+
+### Capital hulls
+
+Capital warships (the deepest range tiers) are themselves enormous steel sinks: their alloy demand
+dwarfs light hulls, so fielding a capital fleet pulls metal through the alloy-processing chain.
+Together with megastructures, this gives a metals-rich empire two huge places to pour its output —
+the market stays healthy, and "what do I build with all this metal?" becomes a real strategic
+question rather than a glut.
+
+
+`SECTION 23`
+
+
+## War & Conquest
+
+Up to now charters fought obliquely — raiding convoys, sabotaging extractors, buying each other
+out through equity. **War** adds the direct option: take a rival's *territory* by force. It is a
+high-stakes, costly act, deliberately hard and heavily penalised, so it stays a deliberate
+strategic choice rather than a constant state.
+
+### Invasion
+
+Fleets are **real objects on the galaxy map**. A charter orders a fleet to **move** from one system
+to another; it travels along charted warp routes over several turns (like a convoy), so a navy on
+campaign is a visible, intercept-able thing, and a fleet sent to the front leaves its home
+undefended. Passage through other charters' territory is **peaceful** — borders don't stop a fleet
+passing through — but **entering a non-allied rival's system is an act of war**: the arriving fleet
+gives battle. If its combat beats the system's defense (incl. allied reinforcement) by the capture
+ratio, it **captures and occupies** the world; otherwise it is repelled, takes heavy losses, and
+**falls back** to a neighbouring friendly/neutral system. A charter that loses its last system
+collapses into a Free Operator. The Wormhole Hub itself is Authority-protected and cannot be taken.
+
+Because fleets march, **reach is no longer limited to your neighbours** — you can project power
+(or come to a distant ally's aid) anywhere a charted path leads. A real conquest fleet is built
+from capital hulls, whose huge alloy cost (Section 22) makes a war fleet a serious investment only
+a strong charter can field. The defender's strength is the system's full standing defense — base,
+defense platforms, Mining-Rig fortification, megastructures, a Trade Depot's patrols, and any
+warships stationed there — **plus allied reinforcement** (below). If the attacker exceeds the
+defense by the capture ratio, the system is **captured** and its ownership transfers (a charter
+that loses its last system collapses into a Free Operator). Otherwise the assault is **repelled**
+and the attacker loses a large fraction of the force it committed. Either way, blood is spilled and
+war is declared. The Wormhole Hub itself remains Authority-protected and cannot be invaded.
+
+### Declared war & the aggressor tariff
+
+The first invasion of a non-hostile rival **declares war** between the two charters. The
+**aggressor pays a war tariff** on every Galactic Exchange trade — a fraction skimmed off each
+buy and sell at the hub — until the war ends. Trade still flows (internal transfers between the
+aggressor's own systems are untaxed entirely), but at a cost, so conquest must pay for itself in
+territory. A war lasts a fixed span after the latest act of aggression; once that passes, a
+**ceasefire** ends it and the tariff lifts. A defender striking back inside an existing war is
+acting defensively — it is *not* treated as a new aggressor and pays no tariff. The tariff is
+light enough that a committed **warlord can press several fronts at once**.
+
+### Grudges & coalitions
+
+War feeds on itself. Being **raided, sabotaged, or invaded** stokes a **grudge** against the
+attacker (grudges fade over time), and a wronged charter is biased toward retaliating — turning
+isolated raids into escalating feuds. And when one charter grows into a **hegemon** that towers
+over the field, the others stop trusting it and start **ganging up** — declining to ally with it
+and steering their conquests at *its* systems. Conquest is thus both a path to dominance and the
+galaxy's check on it: get too big and you become everyone's target.
+
+### Defensive alliances
+
+Charters may form **mutual defensive alliances** (both sides must pledge), and a pact is a real
+obligation, not a gesture. When an ally's system is invaded:
+
+- the ally's warships in range **reinforce the defense**, often turning a winnable assault into a
+  bloody repulse; and
+- **every ally is drawn into the war against the aggressor** — they become belligerents (paying no
+  tariff, since they are defenders) and their fleets **counter-attack the aggressor's territory**.
+  An attacker who overcommits its fleet to an invasion can find its own undefended worlds seized in
+  return. Even an otherwise-peaceful charter honours the pact and takes up arms in a defensive war.
+
+Allies cannot invade one another. An alliance is therefore genuine collective security: striking one
+member means going to war with the whole bloc — cheap insurance for smaller charters, and the
+galaxy's mechanism for ganging up on an over-mighty aggressor.
+
+### Resolution placement
+
+Alliance pledges resolve in the administrative step; invasions resolve in the combat phase (after
+raids, step ~6.7); war declaration, the Exchange lockout, and ceasefires all key off the Section 20
+turn order with no same-turn chaining.
 
 ### Prototype priority
 

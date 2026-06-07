@@ -25,7 +25,9 @@ const PROFILES: Profile[] = [
   { tag: "Metal", yields: { metals: 14, ice: 2 }, claimCost: 1100, upkeep: 40 },
   { tag: "Helium", yields: { helium3: 8, ice: 2 }, claimCost: 1800, upkeep: 55 },
   { tag: "Garden", yields: { food: 10, ice: 3 }, claimCost: 1500, upkeep: 50 },
-  { tag: "Mixed", yields: { ice: 4, metals: 4, helium3: 2 }, claimCost: 1400, upkeep: 45 },
+  // Silicates feed polymers + components (Section 07b), so a silicate raw appears in the ring.
+  { tag: "Silica", yields: { silicates: 12, metals: 2 }, claimCost: 1250, upkeep: 42 },
+  { tag: "Mixed", yields: { ice: 4, metals: 3, silicates: 3, helium3: 2 }, claimCost: 1400, upkeep: 45 },
 ];
 
 const NAMES = [

@@ -1,20 +1,25 @@
-import { canRaidRoute, raidStrength, type PlayerView } from "@engine";
+import { EXTRACTOR_CAP, MEGASTRUCTURE_KINDS, canRaidRoute, raidStrength, stellarOutputMult, systemSeed, type MegastructureKind, type PlayerView, type System } from "@engine";
 import { store, type Selection } from "../match/store";
 import {
   archetypeLabel,
   corpColor,
   formatCr,
+  megastructureLabel,
+  megastructureShort,
   populationLabel,
   resourceLabels,
   routeRisk,
   sizeBucket,
+  starTypeColor,
+  starTypeLabel,
+  stellarNote,
   stockpileValue,
-  sumYields,
+  sumPotential,
   systemArchetype,
 } from "../match/format";
 import { RESOURCES } from "@engine";
 import { Badge, Bar, Panel, PanelTitle, ActionButton } from "../ui/primitives";
-import { PlanetArt, ArtSlot } from "../theme/ArtSlot";
+import { PlanetArt, ArtSlot, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 
 export function Inspector({
@@ -165,22 +170,35 @@ export function Inspector({
         <p className="hint">The Wormhole Hub hosts the Galactic Exchange. It is Authority-protected — it cannot be claimed or raided.</p>
       ) : (
         <>
-          <p className="inspector__arch">{archetypeLabel[arch]}</p>
+          <p className="inspector__arch">
+            {archetypeLabel[arch]}
+            {sys.bodies?.starType && (
+              <>
+                {" · "}
+                <span style={{ color: starTypeColor[sys.bodies.starType] }}>
+                  {starTypeLabel[sys.bodies.starType]}
+                </span>
+              </>
+            )}
+          </p>
+          {sys.bodies?.starType && stellarNote(sys.bodies.starType) && (
+            <p className="hint">{stellarNote(sys.bodies.starType)}</p>
+          )}
           <dl className="kv">
-            <div><dt>Yield</dt><dd>{sumYields(sys.yields).toFixed(0)}/t</dd></div>
+            <div><dt>Potential</dt><dd>{sumPotential(sys).toFixed(0)}/t</dd></div>
             <div><dt>Upkeep</dt><dd>{formatCr(sys.upkeep)}/t</dd></div>
             {!open && <div><dt>Population</dt><dd>{populationLabel[sys.populationStage]}</dd></div>}
             <div><dt>Defense</dt><dd>{(sys.defense + sys.platforms * t.platformDefense + (sys.hasDepot ? t.depotDefenseBonus : 0)).toFixed(0)}</dd></div>
             {open && <div><dt>Claim cost</dt><dd>{formatCr(sys.claimCost)}</dd></div>}
           </dl>
 
-          <div className="yield-row">
-            {RESOURCES.filter((r) => sys.yields[r] > 0).map((r) => (
-              <span key={r} className="yield-pill">
-                <ResourceIcon resource={r} size={16} /> {resourceLabels[r]} +{sys.yields[r]}
-              </span>
-            ))}
-          </div>
+          <SystemComposition sys={sys} canBuild={mine && !view.me.isFreeOperator} turn={view.turn} totalTurns={view.config.turns} assayCost={t.assayCost} />
+          {!mine && sys.owner && (
+            <>
+              <RivalSabotage view={view} humanCorpId={humanCorpId} sys={sys} />
+              <WarControls view={view} sys={sys} />
+            </>
+          )}
 
           {mine && (
             <>
@@ -215,13 +233,18 @@ export function Inspector({
                 <Badge tone={sys.hasDepot ? "accent" : "neutral"}>Depot {sys.hasDepot ? "✓" : "—"}</Badge>
                 <Badge tone={sys.hydroponics ? "accent" : "neutral"}>Hydro ×{sys.hydroponics}</Badge>
                 <Badge tone={sys.platforms ? "accent" : "neutral"}>Platform ×{sys.platforms}/{t.platformCap}</Badge>
+                {sys.megastructures.map((m) => (
+                  <Badge key={m} tone="accent">{megastructureShort[m]}</Badge>
+                ))}
               </div>
               <div className="action-row">
                 <ActionButton icon="exchange" onClick={() => { store.select({ kind: "system", id: sys.id }); store.setNav("exchange"); }}>Trade</ActionButton>
                 {!sys.hasDepot && <ActionButton icon="systems" onClick={() => store.stage({ kind: "buildDepot", systemId: sys.id })}>Depot</ActionButton>}
                 <ActionButton icon="flask" onClick={() => store.stage({ kind: "buildHydroponics", systemId: sys.id })}>Hydro</ActionButton>
                 {sys.platforms < t.platformCap && <ActionButton icon="shield" onClick={() => store.stage({ kind: "buildPlatform", systemId: sys.id })}>Platform</ActionButton>}
+                <ReinforceButton view={view} sys={sys} />
               </div>
+              <MegastructureBuilds sys={sys} view={view} />
             </>
           )}
 
@@ -241,5 +264,219 @@ export function Inspector({
         </>
       )}
     </Panel>
+  );
+}
+
+/** Per-body deposit list (Section 21): what the system carries, what's worked, and the
+ *  extractor/assay actions to develop it. */
+function SystemComposition({ sys, canBuild, turn, totalTurns, assayCost }: { sys: System; canBuild: boolean; turn: number; totalTurns: number; assayCost: number }) {
+  if (sys.sites.length === 0) return null;
+  const sites = [...sys.sites].sort((a, b) => a.orbit - b.orbit || a.resource.localeCompare(b.resource));
+  const star = sys.bodies?.starType;
+  // Is a stellar event acting on output THIS turn? (a flare brownout or a pulse surge)
+  const stellar = star
+    ? sys.sites.reduce(
+        (acc, s) => {
+          const m = stellarOutputMult(star, s, systemSeed(sys), turn, totalTurns);
+          return { min: Math.min(acc.min, m), max: Math.max(acc.max, m) };
+        },
+        { min: 1, max: 1 },
+      )
+    : { min: 1, max: 1 };
+  const stellarBadge =
+    stellar.min <= 0 ? { tone: "negative" as const, label: "Flare — extractors offline" }
+    : stellar.max > 1.05 ? { tone: "accent" as const, label: "Output surge this turn" }
+    : stellar.min < 0.95 ? { tone: "warn" as const, label: "Output dampened" }
+    : null;
+  return (
+    <div className="composition">
+      <div className="composition__head">
+        {star && <StarArt starType={star} className="composition__star" />}
+        <h4 className="composition__title">System composition</h4>
+        {stellarBadge && <Badge tone={stellarBadge.tone}>{stellarBadge.label}</Badge>}
+      </div>
+      <div className="composition__list">
+        {sites.map((site) => {
+          const offline = site.disabledUntil > turn;
+          const dry = site.reservesRemaining !== null && site.reservesRemaining <= 0;
+          const worked = site.extractorLevel > 0;
+          // Reserves are fogged to null until surveyed, so only call a deposit "renewable" once
+          // it's actually been prospected — otherwise its reserves are simply unknown.
+          const reserveStr = !site.prospected
+            ? "reserves ?"
+            : site.reservesRemaining === null
+            ? "renewable"
+            : `${Math.round(site.reservesRemaining)} left`;
+          return (
+            <div key={site.key} className={`site-row${offline ? " site-row--offline" : ""}`}>
+              <div className="site-row__body">
+                <ResourceIcon resource={site.resource} size={16} />
+                <div className="site-row__text">
+                  <strong>{resourceLabels[site.resource]}</strong>
+                  <span className="site-row__sub">
+                    {site.bodyLabel} · {site.prospected ? `rich ${site.richness}` : "unsurveyed"} · {reserveStr}
+                  </span>
+                </div>
+                <span className="site-row__ext">
+                  {offline ? <Badge tone="negative">Offline</Badge>
+                    : dry ? <Badge tone="neutral">Depleted</Badge>
+                    : worked ? <Badge tone="accent">Lv {site.extractorLevel}/{EXTRACTOR_CAP}</Badge>
+                    : <Badge tone="neutral">Unworked</Badge>}
+                </span>
+              </div>
+              {canBuild && (
+                <div className="site-row__actions">
+                  {site.extractorLevel < EXTRACTOR_CAP && !dry && (
+                    <ActionButton
+                      icon="systems"
+                      onClick={() => store.stage({ kind: "buildExtractor", systemId: sys.id, siteKey: site.key })}
+                    >
+                      {worked ? "Deepen" : "Work"}
+                    </ActionButton>
+                  )}
+                  {!site.prospected && (
+                    <ActionButton
+                      icon="radar"
+                      title={`Assay · ${formatCr(assayCost)}`}
+                      onClick={() => store.stage({ kind: "assay", systemId: sys.id, siteKey: site.key })}
+                    >
+                      Assay
+                    </ActionButton>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Redeploy the strongest warship from another owned system to this one (Section 23 mobilisation) —
+ *  mass force at a staging border for an invasion, or reinforce a threatened world. */
+function ReinforceButton({ view, sys }: { view: PlayerView; sys: System }) {
+  const source = view.me.ownedSystemIds
+    .filter((id) => id !== sys.id)
+    .map((id) => ({ id, force: view.me.ships.filter((s) => s.combat > 0 && s.stationedAt === id).reduce((s, sh) => s + sh.combat, 0) }))
+    .filter((e) => e.force > 0)
+    .sort((a, b) => b.force - a.force)[0];
+  if (!source) return null;
+  return (
+    <ActionButton
+      icon="convoys"
+      title="Redeploy your strongest warship here to mass for an invasion or reinforce this system"
+      onClick={() => store.stage({ kind: "redeployShip", fromSystemId: source.id, toSystemId: sys.id })}
+    >
+      Reinforce
+    </ActionButton>
+  );
+}
+
+const STAGE_ORDER = ["outpost", "settlement", "colony", "city", "metropolis"];
+
+/** Megastructure build controls (Section 22) — the metal-hungry grand-construction ladder. */
+function MegastructureBuilds({ sys, view }: { sys: System; view: PlayerView }) {
+  if (view.me.isFreeOperator) return null;
+  const specs = view.config.tuning.megastructures;
+  const buildable = MEGASTRUCTURE_KINDS.filter(
+    (k) =>
+      !sys.megastructures.includes(k) &&
+      STAGE_ORDER.indexOf(sys.populationStage) >= STAGE_ORDER.indexOf(specs[k].requiresStage),
+  );
+  if (buildable.length === 0) return null;
+  // Local stock toward the metals/alloys bill (rough affordability hint).
+  const localMetals = sys.stockpile?.metals ?? 0;
+  return (
+    <div className="mega-builds">
+      <h4 className="composition__title">Grand construction</h4>
+      <div className="action-row">
+        {buildable.map((k) => {
+          const spec = specs[k];
+          const metalShort = Math.max(0, spec.metalsCost - localMetals);
+          const afford = view.me.credits >= spec.creditCost;
+          return (
+            <ActionButton
+              key={k}
+              icon="systems"
+              disabled={!afford}
+              title={`${megastructureLabel[k]} · ${spec.metalsCost} metals${spec.alloyCost ? ` + ${spec.alloyCost} alloys` : ""} + ${formatCr(spec.creditCost)}${metalShort > 0 ? ` (need ${Math.round(metalShort)} more metals here)` : ""}`}
+              onClick={() => store.stage({ kind: "buildMegastructure", systemId: sys.id, structure: k })}
+            >
+              {megastructureLabel[k]}
+            </ActionButton>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Sabotage controls shown on a rival-held system (Section 21 economic warfare). */
+function RivalSabotage({ view, humanCorpId, sys }: { view: PlayerView; humanCorpId: string; sys: System }) {
+  if (sys.owner === null || sys.owner === humanCorpId) return null;
+  const worked = sys.sites.filter((s) => s.extractorLevel > 0 && s.disabledUntil <= view.turn);
+  if (worked.length === 0) return null;
+  const hasForce = view.me.ships.some((s) => s.raider) || view.me.privateers.length > 0;
+  const target = [...worked].sort((a, b) => b.richness - a.richness)[0]!;
+  return (
+    <div className="action-row">
+      <ActionButton
+        icon="crosshair"
+        variant="danger"
+        disabled={!hasForce}
+        title={hasForce ? "Knock this system's top extractor offline" : "Need a raider or privateer in range"}
+        onClick={() => store.stage({ kind: "sabotage", systemId: sys.id, siteKey: target.key })}
+      >
+        Sabotage {resourceLabels[target.resource]}
+      </ActionButton>
+    </div>
+  );
+}
+
+/** War & diplomacy controls for a rival-held system (Section 23): invade, ally, war status. */
+function WarControls({ view, sys }: { view: PlayerView; sys: System }) {
+  const ownerId = sys.owner!;
+  const me = view.me;
+  if (ownerId === me.id || me.isFreeOperator) return null;
+  const owner = view.corporations.find((c) => c.id === ownerId);
+  const allied = !!owner && me.alliancePledges.includes(ownerId) && owner.alliancePledges.includes(me.id);
+  const iPledged = me.alliancePledges.includes(ownerId);
+  const atWar = view.wars.some(
+    (w) => w.endTurn > view.turn && ((w.aggressorId === me.id && w.defenderId === ownerId) || (w.aggressorId === ownerId && w.defenderId === me.id)),
+  );
+  // The owned system with our largest idle fleet, and whether it can reach this target by a
+  // charted path within range (mobile fleets march through neutral space — Section 23).
+  let base: { id: string; combat: number } | undefined;
+  for (const id of me.ownedSystemIds) {
+    const combat = me.ships.filter((s) => s.combat > 0 && !s.transit && s.stationedAt === id).reduce((a, s) => a + s.combat, 0);
+    if (combat > 0 && (!base || combat > base.combat)) base = { id, combat };
+  }
+  const canReach = !!base && !!view.galaxy.shortestWarpPath(base.id, sys.id, me.rangeTier);
+  return (
+    <div className="war-controls">
+      {atWar && <p className="hint hint--war">⚔ At war with {owner?.name ?? ownerId}.</p>}
+      {allied && <p className="hint">🤝 Defensive alliance with {owner?.name ?? ownerId}.</p>}
+      <div className="action-row">
+        {!allied && (
+          <ActionButton
+            icon="crosshair"
+            variant="danger"
+            disabled={!canReach}
+            title={canReach ? "March your fleet here to assault it — entering declares war; win to capture, lose to fall back" : "Need a fleet that can reach this system by a charted route"}
+            onClick={() => base && store.stage({ kind: "moveFleet", fromSystemId: base.id, toSystemId: sys.id })}
+          >
+            Assault
+          </ActionButton>
+        )}
+        {allied ? (
+          <ActionButton icon="systems" onClick={() => store.stage({ kind: "allianceBreak", targetId: ownerId })}>Break alliance</ActionButton>
+        ) : !atWar ? (
+          <ActionButton icon="systems" disabled={iPledged} title={iPledged ? "Pledge sent — awaiting their reciprocation" : "Pledge a mutual defensive alliance"} onClick={() => store.stage({ kind: "alliancePledge", targetId: ownerId })}>
+            {iPledged ? "Pledge sent" : "Pledge alliance"}
+          </ActionButton>
+        ) : null}
+      </div>
+    </div>
   );
 }

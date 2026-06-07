@@ -62,6 +62,43 @@ export type TurnEvent =
       systemId: string;
     }
   | {
+      type: "sabotage";
+      attackerId: string;
+      defenderId: string;
+      systemId: string;
+      resource: Resource;
+      success: boolean;
+    }
+  | {
+      type: "invasion";
+      attackerId: string;
+      defenderId: string;
+      systemId: string;
+      captured: boolean;
+    }
+  | {
+      type: "warDeclared";
+      aggressorId: string;
+      defenderId: string;
+    }
+  | {
+      type: "warEnded";
+      aggressorId: string;
+      defenderId: string;
+    }
+  | {
+      type: "alliance";
+      aId: string;
+      bId: string;
+    }
+  | {
+      type: "pactInvoked";
+      /** The ally drawn into the war to defend `allyId`. */
+      protectorId: string;
+      aggressorId: string;
+      allyId: string;
+    }
+  | {
       type: "acquisition";
       acquirerId: string;
       targetId: string;

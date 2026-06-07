@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { store, useApp, type ViewId } from "./match/store";
 import { formatCr } from "./match/format";
 import { Icon, type IconName } from "./ui/icons";
@@ -49,6 +49,22 @@ export function App() {
   useEffect(() => {
     store.init(user.id);
   }, [user.id]);
+
+  // On phones the inspector/order tray live in a slide-out drawer, so selecting a system,
+  // lane, or convoy would otherwise change nothing visible — the details render in the
+  // collapsed drawer. Surface the drawer whenever the selection changes on a selection
+  // screen (map/systems/convoys) so a tap reveals the details and actions.
+  const prevSelKey = useRef<string | null>(null);
+  useEffect(() => {
+    const key = selection ? `${selection.kind}:${selection.id}` : null;
+    const changed = key && key !== prevSelKey.current && prevSelKey.current !== null;
+    const onSelectScreen = nav === "map" || nav === "systems" || nav === "convoys";
+    if (changed && onSelectScreen && typeof window !== "undefined" &&
+        window.matchMedia("(max-width: 1180px)").matches) {
+      setDrawer(true);
+    }
+    prevSelKey.current = key;
+  }, [selection, nav]);
 
   if (status === "error") {
     return (

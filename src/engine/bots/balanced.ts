@@ -10,13 +10,21 @@ import {
   bidList,
   financierOrders,
   freeOperatorOrders,
+  maybeAlliance,
   maybeBuildDepot,
+  maybeConquest,
+  maybeDefendAlly,
+  maybeBuildExtractor,
   maybeBuildHydroponics,
+  maybeBuildMegastructure,
   maybeBuildPlatforms,
+  maybeBuildProcessor,
+  maybeBuildReactor,
   maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
   maybeResearchRange,
+  maybeUpgradeInfrastructure,
   planRaid,
   sellSurplus,
   valueSystem,
@@ -35,11 +43,18 @@ export class BalancedBot implements Bot {
     if (view.me.isFreeOperator) return freeOperatorOrders(view, this.state);
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
+    orders.push(...maybeBuildExtractor(view));
     orders.push(...maybeExpand(view));
     orders.push(...maybeResearchRange(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildHydroponics(view));
+    // Production chains (Section 07b): add power, then a processor that can be fed locally.
+    orders.push(...maybeBuildReactor(view));
+    orders.push(...maybeBuildProcessor(view));
+    // Sink overproduced raws into system upgrades (Section 07c) and grand construction (Section 22).
+    orders.push(...maybeUpgradeInfrastructure(view));
+    orders.push(...maybeBuildMegastructure(view));
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
 
@@ -49,8 +64,12 @@ export class BalancedBot implements Bot {
       orders.push(...planRaid(view, { minTraffic: 2, fundFactor: 4 }));
     }
 
-    // Late game: pursue a hostile takeover of the weakest charter (Section 17).
+    // Late game: pursue a hostile takeover of the weakest charter (Section 17), and — with an
+    // ally for cover — opportunistic conquest of a weak neighbour (Section 23).
     orders.push(...financierOrders(view, this.state, { sinceTurn: 24 }));
+    orders.push(...maybeAlliance(view));
+    orders.push(...maybeDefendAlly(view, this.state)); // honour pacts even before going offensive
+    if (view.turn >= 16) orders.push(...maybeConquest(view, this.state));
 
     return orders;
   }

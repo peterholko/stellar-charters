@@ -3,9 +3,10 @@ import {
   formatCr,
   populationLabel,
   resourceLabels,
+  starTypeLabel,
   stockpileValue,
   systemArchetype,
-  sumYields,
+  sumPotential,
 } from "../match/format";
 import { RESOURCES } from "@engine";
 import { PlanetArt } from "../theme/ArtSlot";
@@ -41,10 +42,15 @@ export function Systems() {
                       <Badge tone="neutral">{populationLabel[s.populationStage]}</Badge>
                     </div>
                     <div className="sys-card__meta">
-                      <span>{sumYields(s.yields).toFixed(0)} yield/t</span>
+                      <span>{sumPotential(s).toFixed(0)} yield/t</span>
+                      <span>·</span>
+                      <span>{s.sites.filter((x) => x.extractorLevel > 0).length}/{s.sites.length} worked</span>
                       <span>·</span>
                       <span>{formatCr(stockpileValue(s.stockpile, prices))} stock</span>
                     </div>
+                    {s.bodies?.starType && (
+                      <div className="sys-card__star">{starTypeLabel[s.bodies.starType]}</div>
+                    )}
                     <Bar value={s.populationProgress} max={t.growthThreshold} tone={s.unrest > 0.01 ? "warn" : "positive"} />
                     <div className="sys-card__stock">
                       {RESOURCES.filter((r) => s.stockpile[r] >= 1).map((r) => (
@@ -76,7 +82,7 @@ export function Systems() {
                 <PlanetArt archetype={arch} className="claim-row__planet" />
                 <div className="claim-row__info">
                   <strong>{s.name}</strong>
-                  <span>{RESOURCES.filter((r) => s.yields[r] > 0).map((r) => `${resourceLabels[r]} +${s.yields[r]}`).join(" · ")}</span>
+                  <span>{[...new Set(s.sites.map((x) => x.resource))].map((r) => resourceLabels[r]).join(" · ")}</span>
                 </div>
                 <button
                   type="button"

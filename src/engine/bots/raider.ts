@@ -11,9 +11,14 @@ import {
   bidList,
   financierOrders,
   freeOperatorOrders,
+  maybeAlliance,
+  maybeBuildExtractor,
   maybeBuildPlatforms,
   maybeBuildWarships,
+  maybeConquest,
+  maybeDefendAlly,
   maybeResearchRange,
+  maybeSabotage,
   planRaid,
   routeExposureScore,
   sellSurplus,
@@ -42,8 +47,16 @@ export class RaiderBot implements Bot {
     const orders: Order[] = [];
     // Raiders still export their own modest output to stay solvent.
     orders.push(...sellSurplus(view, 0));
+    orders.push(...maybeBuildExtractor(view));
     // Aggressively haunt the busiest export lane from turn 5 onward.
     if (view.turn >= 5) orders.push(...planRaid(view, { fundFactor: 1.2 }));
+    // Sabotage a reachable rival's production as well as its convoys (Section 21).
+    if (view.turn >= 8) orders.push(...maybeSabotage(view));
+    // Diplomacy & conquest (Section 23): take an ally for cover, then mass a warfleet and seize
+    // a rival's most valuable reachable system (accepting the Exchange lockout for the territory).
+    orders.push(...maybeAlliance(view));
+    orders.push(...maybeDefendAlly(view, this.state));
+    orders.push(...maybeConquest(view, this.state));
     // Advance range tech, then defend its home system and convoys.
     orders.push(...maybeResearchRange(view));
     orders.push(...maybeBuildPlatforms(view));

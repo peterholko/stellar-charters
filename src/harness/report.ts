@@ -5,7 +5,7 @@
 import type { GameConfig } from "../engine/config.js";
 import { coefficientOfVariation, gini, type GameMetrics } from "../engine/metrics.js";
 import type { RaidOutcome } from "../engine/raiding.js";
-import { RESOURCES, type Resource } from "../engine/types.js";
+import { emptyStockpile, RESOURCES, type Resource } from "../engine/types.js";
 
 type RaidOutcomeKey = RaidOutcome;
 
@@ -313,7 +313,7 @@ function fmtTurn(t: number): string {
 }
 
 function zeroRes(): Record<Resource, number> {
-  return { ice: 0, metals: 0, helium3: 0, rareIsotopes: 0, food: 0, antimatter: 0 };
+  return emptyStockpile();
 }
 
 function round2(x: number): number {

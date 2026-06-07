@@ -9,23 +9,16 @@
  * rest of the UI stay unchanged.
  */
 import { useEffect, useRef } from "react";
-import {
-  Application,
-  Circle,
-  Container,
-  Graphics,
-  Polygon,
-  Text,
-  type FederatedPointerEvent,
-} from "pixi.js";
+import { Application, Container, Graphics, Text } from "pixi.js";
 import type { PlayerView } from "@engine";
 import { computeLayout } from "../match/layout";
 import {
   corpColor,
-  dominantResource,
   resourceColors,
   routeRisk,
+  starTypeColor,
   systemArchetype,
+  systemDominant,
 } from "../match/format";
 import type { Selection } from "../match/store";
 
@@ -186,7 +179,6 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     const pal = readPalette(host);
     bg.clear();
     bg.rect(0, 0, W, H).fill({ color: pal.bg, alpha: 1 });
-    bg.hitArea = new Polygon([0, 0, W, 0, W, H, 0, H]);
   }
 
   function fitCamera(): void {
@@ -207,52 +199,154 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   }
 
   // ----- interaction -----
-  // Selection runs through Pixi object taps (verified by the event boundary). Pan/zoom run
-  // through DOM events on the canvas — robust against Pixi's pointermove bubbling rules. A
-  // tap (press + release in place) still selects; a press + drag pans without selecting.
-  app.stage.eventMode = "static";
-  app.stage.hitArea = { contains: () => true };
+  // All input runs through DOM pointer events tracked per-pointer, so the same code handles
+  // mouse, trackpad and touch (incl. iOS): one pointer pans, two pinch-zoom around their
+  // midpoint, a tap selects (see `pickAt`), and a double-tap zooms in. `touch-action: none`
+  // on the canvas stops iOS from hijacking the gesture. We do our own hit testing rather than
+  // rely on Pixi's object events, whose touch `pointertap` is unreliable on iOS Safari.
+  app.canvas.style.touchAction = "none";
 
-  let panning = false;
+  // A press that stays within TAP_SLOP px counts as a tap (select), not a drag (pan). Touch
+  // taps always jitter a few px between down and up, so this must be well above zero.
+  const TAP_SLOP = 10;
+  const pointers = new Map<number, { x: number; y: number }>();
   let panStart = { mx: 0, my: 0, cx: 0, cy: 0 };
+  let pinchPrev: { dist: number; mx: number; my: number } | null = null;
+  let gestureMoved = false;
+  let lastTapTime = 0;
+  let lastTapPos = { x: 0, y: 0 };
+
   const localPoint = (ev: PointerEvent) => {
     const rect = app.canvas.getBoundingClientRect();
     return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
   };
-  const onPointerDown = (ev: PointerEvent) => {
-    if (ev.button !== 0) return;
-    panning = true;
-    const p = localPoint(ev);
+  const beginPan = () => {
+    const p = pointers.values().next().value!;
     panStart = { mx: p.x, my: p.y, cx: camera.x, cy: camera.y };
   };
+
+  const onPointerDown = (ev: PointerEvent) => {
+    if (ev.pointerType === "mouse" && ev.button !== 0) return;
+    pointers.set(ev.pointerId, localPoint(ev));
+    gestureMoved = false;
+    pinchPrev = null;
+    if (pointers.size === 1) beginPan();
+  };
   const onPointerMove = (ev: PointerEvent) => {
-    if (!panning) return;
-    const p = localPoint(ev);
-    if (p.x !== panStart.mx || p.y !== panStart.my) userAdjusted = true;
-    camera.x = panStart.cx + (p.x - panStart.mx);
-    camera.y = panStart.cy + (p.y - panStart.my);
-    applyCamera();
+    if (!pointers.has(ev.pointerId)) return;
+    pointers.set(ev.pointerId, localPoint(ev));
+    const pts = [...pointers.values()];
+    if (pts.length >= 2) {
+      const a = pts[0]!;
+      const b = pts[1]!;
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      if (pinchPrev && pinchPrev.dist > 0) {
+        // Keep the world point under the previous midpoint pinned under the new one,
+        // while scaling — gives natural two-finger pinch-zoom + pan together.
+        const worldX = (pinchPrev.mx - camera.x) / camera.zoom;
+        const worldY = (pinchPrev.my - camera.y) / camera.zoom;
+        const z = clampZoom(camera.zoom * (dist / pinchPrev.dist));
+        camera.x = mx - worldX * z;
+        camera.y = my - worldY * z;
+        camera.zoom = z;
+        applyCamera();
+      }
+      pinchPrev = { dist, mx, my };
+      gestureMoved = true;
+      userAdjusted = true;
+    } else {
+      const p = pts[0]!;
+      // Only treat it as a pan once the finger leaves the tap-slop radius; until then a tiny
+      // jitter leaves the camera untouched so the gesture can still resolve to a tap-select.
+      if (!gestureMoved && Math.hypot(p.x - panStart.mx, p.y - panStart.my) > TAP_SLOP) {
+        gestureMoved = true;
+        userAdjusted = true;
+      }
+      if (gestureMoved) {
+        camera.x = panStart.cx + (p.x - panStart.mx);
+        camera.y = panStart.cy + (p.y - panStart.my);
+        applyCamera();
+      }
+    }
   };
-  const onPointerUp = () => {
-    panning = false;
+  const onPointerUp = (ev: PointerEvent) => {
+    if (!pointers.has(ev.pointerId)) return;
+    const released = pointers.get(ev.pointerId)!;
+    pointers.delete(ev.pointerId);
+    pinchPrev = null;
+    if (pointers.size === 1) {
+      beginPan(); // resume single-pointer pan with the remaining touch
+    } else if (pointers.size === 0 && !gestureMoved) {
+      // A tap selects whatever is under the pointer — handled here so it works identically
+      // for mouse and touch (Pixi's own touch `pointertap` is unreliable on iOS).
+      const sel = pickAt(released.x, released.y);
+      if (sel) getProps().onSelect(sel);
+      // A second quick tap in the same place also zooms in (touch has no wheel).
+      const now = performance.now();
+      if (now - lastTapTime < 300 && Math.hypot(released.x - lastTapPos.x, released.y - lastTapPos.y) < 30) {
+        zoomAt(released.x, released.y, 1.9);
+        lastTapTime = 0;
+      } else {
+        lastTapTime = now;
+        lastTapPos = released;
+      }
+    }
   };
+
+  // Unified pick: returns the Selection under a canvas-local point, testing convoys, then
+  // systems, then lanes (matching the visual stacking order). Pure world-space geometry, so
+  // it is independent of Pixi's event system and behaves the same for mouse and touch.
+  function pickAt(lx: number, ly: number): Selection {
+    const { view } = getProps();
+    const galaxy = view.galaxy;
+    const wx = (lx - camera.x) / camera.zoom;
+    const wy = (ly - camera.y) / camera.zoom;
+
+    for (const c of view.convoys) {
+      const route = galaxy.routes.get(c.routeIds[c.position] ?? "");
+      const a = route && points.get(route.a);
+      const b = route && points.get(route.b);
+      if (!a || !b) continue;
+      const frac = c.launchedTurn >= view.turn ? 0.18 : 0.5;
+      const cx = a.x + (b.x - a.x) * frac;
+      const cy = a.y + (b.y - a.y) * frac;
+      if (Math.hypot(wx - cx, wy - cy) <= unit * 2.4) return { kind: "convoy", id: c.id };
+    }
+    for (const s of galaxy.allSystems()) {
+      const p = points.get(s.id);
+      if (!p) continue;
+      const region = s.position?.region ?? (s.id === galaxy.hubId ? "hub" : "core");
+      if (Math.hypot(wx - p.x, wy - p.y) <= nodeRadius(region, unit) * 2.2) {
+        return { kind: "system", id: s.id };
+      }
+    }
+    let best: Selection = null;
+    let bestDist = unit * 3.5;
+    for (const route of galaxy.routes.values()) {
+      const a = points.get(route.a);
+      const b = points.get(route.b);
+      if (!a || !b) continue;
+      const d = distToSegment(wx, wy, a.x, a.y, b.x, b.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { kind: "route", id: route.id };
+      }
+    }
+    return best;
+  }
   app.canvas.addEventListener("pointerdown", onPointerDown);
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerUp);
 
   const onWheel = (ev: WheelEvent) => {
     ev.preventDefault();
     const rect = app.canvas.getBoundingClientRect();
-    const mx = ev.clientX - rect.left;
-    const my = ev.clientY - rect.top;
-    zoomAt(mx, my, Math.exp(-ev.deltaY * 0.0015));
-  };
-  const onDblClick = (ev: MouseEvent) => {
-    const rect = app.canvas.getBoundingClientRect();
-    zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, 1.9);
+    zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, Math.exp(-ev.deltaY * 0.0015));
   };
   app.canvas.addEventListener("wheel", onWheel, { passive: false });
-  app.canvas.addEventListener("dblclick", onDblClick);
 
   function zoomAt(mx: number, my: number, factor: number): void {
     userAdjusted = true;
@@ -349,7 +443,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   }
 
   function draw(): void {
-    const { view, humanCorpId, selection, onSelect } = getProps();
+    const { view, humanCorpId, selection } = getProps();
     const galaxy = view.galaxy;
     const pal = readPalette(host);
 
@@ -360,7 +454,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       signature = sig;
       points = layoutPoints(galaxy);
       bounds = computeBounds(points);
-      unit = Math.max(1, Math.hypot(bounds.w, bounds.h) / 100);
+      unit = Math.max(1, Math.hypot(bounds.w, bounds.h) / 125);
       resizeBg();
       rebuildBackground(pal);
       fitCamera();
@@ -402,12 +496,6 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
         g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width, color, alpha: selected ? 0.95 : baseAlpha, cap: "round" });
       }
 
-      // Clickable band around the lane.
-      g.label = `route:${r.id}`;
-      g.eventMode = "static";
-      g.cursor = "pointer";
-      g.hitArea = lanePolygon(a, b, unit * 3);
-      g.on("pointertap", () => onSelect({ kind: "route", id: r.id }));
       layers.lanes.addChild(g);
 
       // Recent traffic → animated pulses (charted lanes only).
@@ -452,15 +540,6 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       if (selected) body.stroke({ width: unit * 0.35, color: pal.ink, alpha: 0.9 });
       cont.addChild(body);
 
-      cont.label = `convoy:${c.id}`;
-      cont.eventMode = "static";
-      cont.cursor = "pointer";
-      cont.hitArea = new Circle(0, 0, unit * 2);
-      cont.on("pointerdown", (e: FederatedPointerEvent) => e.stopPropagation());
-      cont.on("pointertap", (e: FederatedPointerEvent) => {
-        e.stopPropagation();
-        onSelect({ kind: "convoy", id: c.id });
-      });
       layers.convoys.addChild(cont);
     }
 
@@ -479,7 +558,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
         ? mine
           ? pal.accent
           : cssNum(corpColor(s.owner))
-        : cssNum(resourceColors[dominantResource(s.yields)]);
+        : cssNum(resourceColors[systemDominant(s)]);
 
       const cont = new Container();
       cont.position.set(p.x, p.y);
@@ -497,9 +576,18 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       const r = nodeRadius(region, unit);
       // Soft halo + luminous core, with a region-specific accent so worlds aren't identical dots.
       const glyph = new Graphics();
-      glyph.circle(0, 0, r * 2).fill({ color: fill, alpha: 0.12 });
+      glyph.circle(0, 0, r * 1.35).fill({ color: fill, alpha: 0.1 });
       glyph.blendMode = "normal";
       cont.addChild(glyph);
+      // Star-type aura (Section 21): a faint additive ring in the star's colour so a red giant,
+      // white dwarf, neutron star, etc. read distinctly at a glance without changing the
+      // resource/owner-coloured core.
+      if (!isHub && s.bodies?.starType) {
+        const starGlow = new Graphics();
+        starGlow.circle(0, 0, r * 1.55).stroke({ width: unit * 0.45, color: cssNum(starTypeColor[s.bodies.starType]), alpha: 0.5 });
+        starGlow.blendMode = "add";
+        cont.addChild(starGlow);
+      }
       drawGlyph(cont, region, arch, r, fill, open, pal);
 
       if (mine && !isHub) {
@@ -508,15 +596,6 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
         cont.addChild(ownRing);
       }
 
-      cont.label = `system:${s.id}`;
-      cont.eventMode = "static";
-      cont.cursor = "pointer";
-      cont.hitArea = new Circle(0, 0, r * 2.1);
-      cont.on("pointerdown", (e: FederatedPointerEvent) => e.stopPropagation());
-      cont.on("pointertap", (e: FederatedPointerEvent) => {
-        e.stopPropagation();
-        onSelect({ kind: "system", id: s.id });
-      });
       layers.systems.addChild(cont);
 
       // Selection ring.
@@ -571,10 +650,10 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       ro.disconnect();
       themeObserver.disconnect();
       app.canvas.removeEventListener("wheel", onWheel);
-      app.canvas.removeEventListener("dblclick", onDblClick);
       app.canvas.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       app.destroy(true, { children: true });
     },
   };
@@ -660,19 +739,15 @@ function drawGlyph(
   cont.addChild(g);
 }
 
-/** A rotated rectangle (as a polygon) covering a lane segment, for generous hit testing. */
-function lanePolygon(a: { x: number; y: number }, b: { x: number; y: number }, halfWidth: number): Polygon {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len = Math.max(0.0001, Math.hypot(dx, dy));
-  const nx = (-dy / len) * halfWidth;
-  const ny = (dx / len) * halfWidth;
-  return new Polygon([
-    a.x + nx, a.y + ny,
-    b.x + nx, b.y + ny,
-    b.x - nx, b.y - ny,
-    a.x - nx, a.y - ny,
-  ]);
+/** Shortest distance from a point to a line segment (world space), for lane hit testing. */
+function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
 /** Emulated dashed line (Pixi v8 Graphics has no native dash) for uncharted scan traces. */

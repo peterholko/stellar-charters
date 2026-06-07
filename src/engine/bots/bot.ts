@@ -9,7 +9,7 @@ import type { GameConfig } from "../config.js";
 import type { Galaxy } from "../galaxy.js";
 import type { Market } from "../market.js";
 import type { Rng } from "../rng.js";
-import type { BidOrder, Convoy, Corporation, Order } from "../types.js";
+import type { BidOrder, Convoy, Corporation, Order, War } from "../types.js";
 
 export interface PlayerView {
   turn: number;
@@ -22,6 +22,8 @@ export interface PlayerView {
   corporations: Corporation[];
   /** Convoys currently visible on the map (public fields). */
   convoys: Convoy[];
+  /** Active wars between charters (Section 23). */
+  wars: readonly War[];
   rng: Rng;
 }
 

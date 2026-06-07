@@ -4,17 +4,38 @@
  * These are greedy, expected-value style helpers — enough varied behaviour to
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
-import { MAX_RANGE_TIER, RESOURCES, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
+import { MAX_RANGE_TIER, MEGASTRUCTURE_KINDS, RESOURCES, type MegastructureKind, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
+import { EXTRACTOR_CAP, effectiveYields, potentialYields } from "../bodies.js";
 import type { PlayerView } from "./bot.js";
 
-/** Resources a corporation exports. Outpost-stage systems consume no food, so a
- *  garden world's food is sold to the exchange like any other commodity. */
-const EXPORT_RESOURCES: readonly Resource[] = ["ice", "metals", "helium3", "rareIsotopes", "food", "antimatter"];
+/** Current per-turn output of a system (worked sites, net of depletion/stellar). */
+function liveYields(view: PlayerView, sys: System) {
+  return effectiveYields(sys, view.turn, view.config.turns);
+}
 
-/** Rough commercial value of a system: per-turn yield priced at base, minus claim cost. */
+/** Resources a corporation exports. Outpost-stage systems consume no food, so a
+ *  garden world's food is sold to the exchange like any other commodity. Manufactured
+ *  goods (fuel/alloys/polymers/components) are sold too, with reserves kept below. */
+const EXPORT_RESOURCES: readonly Resource[] = [
+  "ice", "metals", "silicates", "helium3", "rareIsotopes", "food",
+  "fuel", "alloys", "polymers", "components", "antimatter",
+];
+
+/** Raw (extractable) commodities — the rest are manufactured by Processor modules. */
+const RAW_RESOURCES: ReadonlySet<Resource> = new Set<Resource>([
+  "ice", "metals", "silicates", "helium3", "rareIsotopes", "antimatter",
+]);
+
+/** Cap on Processor modules of a given recipe per system (bot self-restraint). */
+const PROCESSOR_CAP_PER_RECIPE = 3;
+
+/** Rough commercial value of a system: full-development yield priced at base, minus claim cost.
+ *  Uses *potential* output so an unclaimed system (whose deposits aren't worked yet) is valued
+ *  by what it could produce, not its current zero. */
 export function valueSystem(view: PlayerView, sys: System): number {
+  const pot = potentialYields(sys);
   const yieldValue = RESOURCES.reduce(
-    (s, r) => s + sys.yields[r] * view.config.tuning.basePrices[r],
+    (s, r) => s + pot[r] * view.config.tuning.basePrices[r],
     0,
   );
   return yieldValue * 6 - sys.claimCost;
@@ -65,6 +86,19 @@ export function bidList(
 /** Sell extractable surplus, reserving food/ice a populated system needs for upkeep. */
 export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
   const t = view.config.tuning;
+  const inf = t.infrastructure;
+  // Hold a little of each upgrade feedstock back (while the corp can still upgrade somewhere) so
+  // the raws are carried into next turn's upgrade phase instead of dumped on the market. This is
+  // what lets the upgrade sink actually fire — and selling less also lifts the raw's price.
+  const owned = view.me.ownedSystemIds.map((id) => view.galaxy.system(id));
+  const miningHeadroom = owned.some((s) => s.miningRigs < inf.cap);
+  const habitatHeadroom = owned.some((s) => s.populationStage !== "outpost" && s.habitats < inf.cap);
+  const powerHeadroom = owned.some((s) => Object.values(s.processors).some((n) => n > 0) && s.powerGrid < inf.cap);
+  // Megastructures (Section 22) are huge metal sinks: once a system can host one, hold a large
+  // metals reserve back from the exchange to fund construction instead of dumping at the floor.
+  const megaHeadroom =
+    view.turn >= 12 &&
+    owned.some((s) => s.populationStage !== "outpost" && s.megastructures.length < 3);
   const orders: MarketOrder[] = [];
   for (const sysId of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(sysId);
@@ -78,6 +112,16 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
       // Keep a few rare isotopes back to build higher-tier warships once Range 2+,
       // but still sell the surplus (frontier income funds those hulls).
       if (r === "rareIsotopes" && view.me.rangeTier >= 2) reserve = Math.max(buffer, 4);
+      // Keep manufactured goods the corp consumes itself (Section 07b): fuel for the fleet,
+      // alloys for construction, components for hulls. Surplus above the reserve is exported.
+      if (r === "fuel") reserve = Math.max(buffer, view.me.ships.length * t.fuelPerShipPerTurn * 3);
+      if (r === "alloys") reserve = Math.max(buffer, t.buildAlloyCost * 4);
+      if (r === "components") reserve = Math.max(buffer, 6);
+      // Reserve upgrade feedstocks (Section 07c) so they fund system upgrades, not the exchange.
+      if (r === "metals" && miningHeadroom) reserve = Math.max(reserve, inf.miningMetalsCost * 2);
+      if (r === "metals" && megaHeadroom) reserve = Math.max(reserve, 450);
+      if (r === "silicates" && habitatHeadroom) reserve = Math.max(reserve, inf.habitatSilicatesCost * 2);
+      if (r === "helium3" && powerHeadroom) reserve = Math.max(reserve, inf.powerHelium3Cost * 2);
       const qty = sys.stockpile[r] - reserve;
       if (qty <= 0) continue;
       orders.push({
@@ -115,7 +159,7 @@ export function maybeBuildHydroponics(view: PlayerView): Order[] {
     const sys = view.galaxy.system(id);
     if (sys.hydroponics >= 4) continue; // cap modules per system
     const need = view.config.tuning.foodNeed[sys.populationStage];
-    const localFood = sys.yields.food + sys.hydroponics * view.config.tuning.hydroponicsFoodOutput;
+    const localFood = liveYields(view, sys).food + sys.hydroponics * view.config.tuning.hydroponicsFoodOutput;
     // A colony that can't feed itself locally — local food is what unlocks growth now.
     if (need > 0 && localFood < need) {
       return [{ kind: "buildHydroponics", systemId: id }];
@@ -124,9 +168,486 @@ export function maybeBuildHydroponics(view: PlayerView): Order[] {
   return [];
 }
 
+/** The recipe (if any) whose output is `res` — used to find a manufactured good's producer. */
+function recipeProducing(view: PlayerView, res: Resource) {
+  return view.config.tuning.recipes.find((r) => (r.outputs[res] ?? 0) > 0);
+}
+
+/**
+ * Can this system locally feed `recipe`? Processors consume from the LOCAL stockpile, so raw
+ * inputs must be extracted here and manufactured inputs must be produced by a processor on this
+ * same system. This keeps the bot building chains bottom-up on integrated "factory worlds"
+ * (e.g. fuel → polymers on a silicate-bearing mixed world) rather than starving a processor.
+ */
+function systemCanFeed(view: PlayerView, sys: System, recipe: { inputs: Partial<Record<Resource, number>> }): boolean {
+  const live = liveYields(view, sys);
+  for (const res of Object.keys(recipe.inputs) as Resource[]) {
+    if (RAW_RESOURCES.has(res)) {
+      if ((live[res] ?? 0) <= 0) return false;
+    } else {
+      const producer = recipeProducing(view, res);
+      if (!producer || (sys.processors[producer.id] ?? 0) <= 0) return false;
+    }
+  }
+  return true;
+}
+
+/** Build a Processor where its chain can be fed locally, climbing tiers as upstream comes online. */
+export function maybeBuildProcessor(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.turn < 4) return []; // let the opening economy settle first
+  for (const recipe of t.recipes) {
+    if (view.me.credits < recipe.buildCost * 1.4) continue;
+    for (const id of view.me.ownedSystemIds) {
+      const sys = view.galaxy.system(id);
+      if ((sys.processors[recipe.id] ?? 0) >= PROCESSOR_CAP_PER_RECIPE) continue;
+      if (!systemCanFeed(view, sys, recipe)) continue;
+      return [{ kind: "buildProcessor", systemId: id, recipeId: recipe.id }];
+    }
+  }
+  return [];
+}
+
+/** Add reactor capacity to any owned system whose processors out-draw its current power. */
+export function maybeBuildReactor(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.me.credits < t.reactorCost * 1.4) return [];
+  for (const id of view.me.ownedSystemIds) {
+    const sys = view.galaxy.system(id);
+    let draw = 0;
+    for (const recipe of t.recipes) draw += (sys.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    if (draw <= 0) continue;
+    const capacity = t.basePowerPerSystem + sys.reactors * t.reactorPowerOutput;
+    if (capacity < draw) return [{ kind: "buildReactor", systemId: id }];
+  }
+  return [];
+}
+
+/**
+ * A forward-looking quality multiplier for investing in a deposit (Section 21):
+ *  - renewable deposits (bio/gas/ice) earn a premium — they never run dry, so the capital keeps
+ *    paying; finite deposits are discounted as their reserves shrink toward exhaustion;
+ *  - star type matters: a neutron star's rare-isotope/antimatter sites pulse high, while an aging
+ *    red giant's ocean (food) worlds are scorched late in the match, so don't over-invest there.
+ */
+function depositInvestmentFactor(view: PlayerView, sys: System, site: System["sites"][number]): number {
+  let f = 1;
+  if (site.reservesRemaining === null) {
+    f *= 1.2; // renewable: sustained income
+  } else {
+    // Discount toward 0 as a finite deposit nears exhaustion (relative to its richness).
+    const turnsLeft = site.reservesRemaining / Math.max(0.01, site.richness);
+    f *= Math.max(0.2, Math.min(1, turnsLeft / 12));
+  }
+  const star = sys.bodies?.starType;
+  if (star === "neutronStar" && (site.resource === "rareIsotopes" || site.resource === "antimatter")) {
+    f *= 1.25; // periodic output pulses
+  }
+  if (star === "redGiant" && site.resource === "food") {
+    const turnsLeft = view.config.turns - view.turn;
+    if (turnsLeft < view.config.turns * 0.45) f *= 0.4; // ocean worlds scorch late
+  }
+  return f;
+}
+
+/**
+ * Develop the corp's deposits (Section 21): build extractors on the highest-value workable
+ * sites across owned systems, climbing toward the cap. This is the core mid-game build loop —
+ * a claimed system only pays out once its deposits are worked, so this runs early and often.
+ * Bots see true geology (the fog is only for human clients), so they don't assay — they weigh
+ * richness, accessibility, depletion, and stellar dynamics directly.
+ */
+export function maybeBuildExtractor(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.me.ownedSystemIds.length === 0) return [];
+  let budget = view.me.credits * 0.5;
+  const cands: { sysId: string; siteKey: string; score: number; cost: number }[] = [];
+  for (const id of view.me.ownedSystemIds) {
+    const sys = view.galaxy.system(id);
+    for (const site of sys.sites) {
+      if (site.extractorLevel >= EXTRACTOR_CAP) continue;
+      // Skip a finite deposit that is nearly exhausted — not worth fresh capital.
+      if (site.reservesRemaining !== null && site.reservesRemaining < site.richness * 3) continue;
+      const price = t.basePrices[site.resource];
+      const score = site.richness * price * site.accessibility * depositInvestmentFactor(view, sys, site);
+      const factor =
+        (site.extractorLevel + 1) * (1 + (1 - site.accessibility) * t.extractor.accessibilityMult);
+      const cost = Math.round(t.extractor.buildCost * factor);
+      cands.push({ sysId: id, siteKey: site.key, score, cost });
+    }
+  }
+  cands.sort((a, b) => b.score - a.score);
+  const orders: Order[] = [];
+  for (const c of cands) {
+    if (orders.length >= 3) break; // a few extractors per turn keeps cash for everything else
+    if (budget < c.cost * 1.2) continue;
+    budget -= c.cost;
+    orders.push({ kind: "buildExtractor", systemId: c.sysId, siteKey: c.siteKey });
+  }
+  return orders;
+}
+
+/**
+ * Knock a reachable rival's best extractor offline (Section 21). Raiders/Free Operators with a
+ * raider hull or privateer near a rival system can sabotage its production, not just its convoys.
+ */
+export function maybeSabotage(view: PlayerView): Order[] {
+  if (!view.me.ships.some((s) => s.raider) && view.me.privateers.length === 0) return [];
+  for (const sys of view.galaxy.allSystems()) {
+    if (sys.owner === null || sys.owner === view.me.id) continue;
+    const reachable =
+      view.me.privateers.some(
+        (p) => p.basedAt === sys.id || view.galaxy.routeBetween(p.basedAt, sys.id) !== undefined,
+      ) ||
+      (view.me.ships.some((s) => s.raider) &&
+        view.me.ownedSystemIds.some(
+          (o) => o === sys.id || view.galaxy.routeBetween(o, sys.id) !== undefined,
+        ));
+    if (!reachable) continue;
+    const worked = sys.sites
+      .filter((s) => s.extractorLevel > 0 && s.disabledUntil <= view.turn)
+      .sort((a, b) => b.richness - a.richness)[0];
+    if (!worked) continue;
+    return [{ kind: "sabotage", systemId: sys.id, siteKey: worked.key }];
+  }
+  return [];
+}
+
+const STAGE_ORDER = ["outpost", "settlement", "colony", "city", "metropolis"];
+
+/**
+ * Sink overproduced metal into grand construction (Section 22): build the largest megastructure
+ * an owned system qualifies for and the corp can afford, biggest sink first. This is the main
+ * demand floor that keeps metal off the price floor, plus a late-game valuation play.
+ */
+export function maybeBuildMegastructure(view: PlayerView): Order[] {
+  const t = view.config.tuning;
+  if (view.turn < 12) return [];
+  const metalsStock = corpStock(view, "metals");
+  const alloysStock = corpStock(view, "alloys");
+  // Richest/most-developed systems first.
+  const systems = view.me.ownedSystemIds
+    .map((id) => view.galaxy.system(id))
+    .sort((a, b) => STAGE_ORDER.indexOf(b.populationStage) - STAGE_ORDER.indexOf(a.populationStage));
+  // Prefer the biggest metal sink the system qualifies for.
+  const byCost = [...MEGASTRUCTURE_KINDS].sort((a, b) => t.megastructures[b].metalsCost - t.megastructures[a].metalsCost);
+  for (const sys of systems) {
+    for (const kind of byCost) {
+      if (sys.megastructures.includes(kind)) continue;
+      const spec = t.megastructures[kind];
+      if (STAGE_ORDER.indexOf(sys.populationStage) < STAGE_ORDER.indexOf(spec.requiresStage)) continue;
+      const metalsBill = Math.max(0, spec.metalsCost - metalsStock) * view.market.prices.metals;
+      const alloyBill = Math.max(0, spec.alloyCost - alloysStock) * view.market.prices.alloys;
+      const total = spec.creditCost + metalsBill + alloyBill;
+      if (view.me.credits > total * 1.05) {
+        return [{ kind: "buildMegastructure", systemId: sys.id, structure: kind }];
+      }
+    }
+  }
+  return [];
+}
+
+// ----- War & diplomacy (Section 23) -----
+
+/** Two charters are allied iff each has pledged the other. */
+function areAlliedView(view: PlayerView, a: string, b: string): boolean {
+  const ca = view.corporations.find((c) => c.id === a);
+  const cb = view.corporations.find((c) => c.id === b);
+  return !!ca && !!cb && ca.alliancePledges.includes(b) && cb.alliancePledges.includes(a);
+}
+
+function atWarView(view: PlayerView, a: string, b: string): boolean {
+  return view.wars.some(
+    (w) =>
+      w.endTurn > view.turn &&
+      ((w.aggressorId === a && w.defenderId === b) || (w.aggressorId === b && w.defenderId === a)),
+  );
+}
+
+function isLockedOutAggressor(view: PlayerView): boolean {
+  return view.wars.some((w) => w.aggressorId === view.me.id && w.endTurn > view.turn);
+}
+
+/** Aggressors currently at war with us as the defender (directly invaded, or via a defensive pact). */
+function warEnemies(view: PlayerView): Set<string> {
+  return new Set(view.wars.filter((w) => w.endTurn > view.turn && w.defenderId === view.me.id).map((w) => w.aggressorId));
+}
+
+/** The owned system holding our largest idle combat fleet — the natural staging base for a campaign. */
+function fleetBase(view: PlayerView): { sysId: string; combat: number } | undefined {
+  let best: { sysId: string; combat: number } | undefined;
+  for (const id of view.me.ownedSystemIds) {
+    const combat = view.me.ships
+      .filter((s) => s.combat > 0 && !s.transit && s.stationedAt === id)
+      .reduce((a, s) => a + s.combat, 0);
+    if (combat > 0 && (!best || combat > best.combat)) best = { sysId: id, combat };
+  }
+  return best;
+}
+
+/** A charted path within our range exists between two systems (mobile fleets can pass peacefully). */
+function pathExists(view: PlayerView, from: string, to: string): boolean {
+  return !!view.galaxy.shortestWarpPath(from, to, view.me.rangeTier);
+}
+
+/** True if we already have a fleet committed to an assault (don't open a second front mid-march). */
+function fleetOnCampaign(view: PlayerView): boolean {
+  return view.me.ships.some((s) => s.transit?.attack);
+}
+
+/** A target is reachable if any of our systems connects to it by charted routes within range. */
+function reachableFromTerritory(view: PlayerView, sys: System): boolean {
+  return view.me.ownedSystemIds.some((id) => pathExists(view, id, sys.id));
+}
+
+/** Send our staging fleet to seize/relieve `target` if it's strong enough, else grow the fleet. */
+function campaignAgainst(view: PlayerView, target: System, marginBonus: number): Order[] {
+  if (fleetOnCampaign(view)) return [];
+  const base = fleetBase(view);
+  const need = systemDefenseEstimate(view, target) * (view.config.tuning.war.captureRatio + marginBonus);
+  if (base && base.combat >= need && pathExists(view, base.sysId, target.id)) {
+    return [{ kind: "moveFleet", fromSystemId: base.sysId, toSystemId: target.id }];
+  }
+  // Not strong enough yet (or no fleet): build the warfleet up at the base.
+  const buildAt = base?.sysId ?? view.me.ownedSystemIds[0];
+  return buildAt ? buildWarshipAt(view, buildAt) : [];
+}
+
+/** Combat strength this corp can bring against a target system (ships/privateers in range). */
+function attackForceOn(view: PlayerView, sys: System): number {
+  let f = 0;
+  for (const ship of view.me.ships) {
+    if (ship.combat <= 0 || !ship.stationedAt) continue;
+    const r = view.galaxy.routeBetween(ship.stationedAt, sys.id);
+    if (r && r.charted && r.requiredRange <= ship.rangeTier) f += ship.combat;
+  }
+  for (const p of view.me.privateers) {
+    const r = view.galaxy.routeBetween(p.basedAt, sys.id);
+    if (r && r.charted && r.requiredRange <= view.me.rangeTier) f += p.strength;
+  }
+  return f;
+}
+
+/** Estimate a system's defensive strength (mirrors the engine, incl. allied reinforcement). */
+function systemDefenseEstimate(view: PlayerView, sys: System): number {
+  const t = view.config.tuning;
+  let d = sys.defense + sys.platforms * t.platformDefense + sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+  for (const m of sys.megastructures) d += t.megastructures[m].defenseBonus;
+  if (sys.hasDepot) d += t.depotDefenseBonus;
+  for (const owner of view.corporations) {
+    const allied = sys.owner === owner.id || areAlliedView(view, sys.owner ?? "", owner.id);
+    if (!allied) continue;
+    for (const sh of owner.ships) if (sh.combat > 0 && sh.stationedAt === sys.id) d += sh.combat;
+  }
+  return d;
+}
+
+/**
+ * Conquer a weak, reachable rival system (Section 23). Invading declares war and locks the
+ * aggressor out of the Exchange, so a bot only does it when it is militarily dominant, already
+ * established, and not already fighting a war it started — the prize must clearly outweigh the
+ * lost trade access.
+ */
+export function maybeInvade(view: PlayerView): Order[] {
+  if (view.turn < 16 || view.me.ownedSystemIds.length === 0 || !view.me.hasCharter) return [];
+  if (isLockedOutAggressor(view)) return []; // already paying the aggressor penalty
+  const myCombat = view.me.ships.reduce((s, sh) => s + sh.combat, 0);
+  if (myCombat < 6) return []; // need a real fleet to commit to conquest
+  const ratio = view.config.tuning.war.captureRatio + 0.25; // require clear superiority
+  let best: { id: string; gain: number } | null = null;
+  for (const sys of view.galaxy.allSystems()) {
+    if (sys.owner === null || sys.owner === view.me.id || sys.id === view.galaxy.hubId) continue;
+    if (areAlliedView(view, view.me.id, sys.owner)) continue;
+    const attack = attackForceOn(view, sys);
+    if (attack <= 0) continue;
+    if (attack < systemDefenseEstimate(view, sys) * ratio) continue;
+    const gain = grossYieldValue(view, sys) + 250;
+    if (!best || gain > best.gain) best = { id: sys.id, gain };
+  }
+  return best ? [{ kind: "invade", systemId: best.id }] : [];
+}
+
+/** An owned system adjacent to the target on a traversable charted lane (an invasion staging point). */
+function stagingFor(view: PlayerView, target: System): System | undefined {
+  let best: System | undefined;
+  let bestForce = -1;
+  for (const id of view.me.ownedSystemIds) {
+    const r = view.galaxy.routeBetween(id, target.id);
+    if (!r || !r.charted || r.requiredRange > view.me.rangeTier) continue;
+    const sys = view.galaxy.system(id);
+    const force = view.me.ships.filter((s) => s.combat > 0 && s.stationedAt === id).reduce((s, sh) => s + sh.combat, 0);
+    if (force > bestForce) { bestForce = force; best = sys; }
+  }
+  return best;
+}
+
+/** Build the best non-raider warship the corp can afford, stationed at `systemId` (war fleet). */
+function buildWarshipAt(view: PlayerView, systemId: string): Order[] {
+  const t = view.config.tuning;
+  const localIso = corpStock(view, "rareIsotopes");
+  const localAlloys = corpStock(view, "alloys");
+  for (let cand = view.me.rangeTier; cand >= 1; cand--) {
+    const tier = cand as RangeTier;
+    const isoBill = Math.max(0, t.shipIsotopeCost[tier] - localIso) * view.market.prices.rareIsotopes;
+    const alloyBill = Math.max(0, t.shipAlloyCost[tier] - localAlloys) * view.market.prices.alloys;
+    // Commit to the war effort — build as soon as the hull is just affordable.
+    if (view.me.credits >= t.shipCost[tier] + isoBill + alloyBill) {
+      return [{ kind: "buildShip", rangeTier: tier, raider: false, systemId }];
+    }
+  }
+  return [];
+}
+
+/** The dominant rival (the hegemon) the galaxy should gang up on, if one stands clearly above. */
+function hegemonId(view: PlayerView): string | undefined {
+  const charters = view.corporations.filter((c) => c.hasCharter && c.ownedSystemIds.length > 0);
+  if (charters.length < 3) return undefined;
+  const vals = charters.map((c) => c.valuation).sort((a, b) => a - b);
+  const median = vals[Math.floor(vals.length / 2)] ?? 0;
+  const top = charters.reduce((m, c) => (c.valuation > m.valuation ? c : m));
+  return top.id !== view.me.id && top.valuation > Math.max(1, median) * 1.6 ? top.id : undefined;
+}
+
+/** Pick (and persist) a valuable, reachable rival system worth conquering — favouring grudges
+ *  (retaliation) and the over-mighty hegemon (coalition warfare). */
+function resolveConquestTarget(view: PlayerView, state: BotState): System | undefined {
+  const valid = (sys: System | undefined): sys is System =>
+    !!sys && sys.owner !== null && sys.owner !== view.me.id && sys.id !== view.galaxy.hubId &&
+    !areAlliedView(view, view.me.id, sys.owner) && reachableFromTerritory(view, sys);
+  const current = state.conquestTarget ? view.galaxy.systems.get(state.conquestTarget) : undefined;
+  if (valid(current)) return current;
+  const cap = view.config.tuning.shipCombat[view.me.rangeTier] * 5 + 50; // willing to mass for a defended prize
+  const hegemon = hegemonId(view);
+  const grudge = view.me.grudges ?? {};
+  const enemies = warEnemies(view); // aggressors at war with us / our allies — counter-attack first
+  const score = (s: System): number => {
+    let v = grossYieldValue(view, s);
+    if (s.owner && enemies.has(s.owner)) v += 6000; // honour the pact: hit those warring on us
+    if (s.owner === hegemon) v += 4000; // dogpile the runaway leader
+    v += (grudge[s.owner ?? ""] ?? 0) * 300; // settle scores with those who wronged us
+    return v;
+  };
+  const candidates = view.galaxy.allSystems()
+    .filter((s): s is System => valid(s) && systemDefenseEstimate(view, s) <= cap)
+    .sort((a, b) => score(b) - score(a));
+  state.conquestTarget = candidates[0]?.id;
+  return candidates[0];
+}
+
+/**
+ * Conquest doctrine (Section 23): striving to dominate, mass a warfleet and seize a rival's most
+ * valuable reachable system. Concentrates force at a staging system (redeploying scattered
+ * warships + building capital hulls), then invades once clearly superior. The Exchange lockout is
+ * the price of empire — only a corp that can fund a real fleet pursues this.
+ */
+export function maybeConquest(view: PlayerView, state: BotState): Order[] {
+  if (view.turn < 11 || !view.me.hasCharter || view.me.isFreeOperator) return [];
+  // (No one-war limit: with only a trade tariff rather than a full lockout, a warlord can press
+  // multiple fronts — Section 23.)
+  const target = resolveConquestTarget(view, state);
+  if (!target) return [];
+  return campaignAgainst(view, target, 0.05);
+}
+
+/**
+ * Honour a defensive pact (Section 23): when we are at war as a defender — whether we were invaded
+ * directly or drawn in to defend an ally — counter-attack the aggressor's nearest reachable system.
+ * This runs for *every* archetype (even peaceful miners), since a defensive war is justified, and
+ * it carries no aggressor tariff (counter-invasion is defensive). Masses a fleet if not yet strong.
+ */
+export function maybeDefendAlly(view: PlayerView, state: BotState): Order[] {
+  if (!view.me.hasCharter || view.me.isFreeOperator) return [];
+  const enemies = warEnemies(view);
+  if (enemies.size === 0) return [];
+  const targets = view.galaxy.allSystems().filter(
+    (s): s is System => s.owner !== null && enemies.has(s.owner) && reachableFromTerritory(view, s),
+  );
+  if (targets.length === 0) return [];
+  const target = targets.sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a))[0]!;
+  return campaignAgainst(view, target, 0);
+}
+
+/**
+ * Take out a mutual defensive alliance with a comparable charter (Section 23) — cheap insurance
+ * that deters invasion. One ally is plenty; never ally with a charter we're at war with.
+ */
+export function maybeAlliance(view: PlayerView): Order[] {
+  if (view.turn < 8 || !view.me.hasCharter) return [];
+  if (view.corporations.some((c) => c.id !== view.me.id && areAlliedView(view, view.me.id, c.id))) return [];
+  const hegemon = hegemonId(view); // never ally with the corp the galaxy should be ganging up on
+  const peers = view.corporations
+    .filter((c) => c.id !== view.me.id && c.id !== hegemon && c.hasCharter && c.ownedSystemIds.length > 0 && !atWarView(view, view.me.id, c.id))
+    .sort((a, b) => Math.abs(a.valuation - view.me.valuation) - Math.abs(b.valuation - view.me.valuation));
+  return peers[0] ? [{ kind: "alliancePledge", targetId: peers[0].id }] : [];
+}
+
+/** Total of a resource across all of a corp's owned-system stockpiles. */
+function corpStock(view: PlayerView, res: Resource): number {
+  let n = 0;
+  for (const id of view.me.ownedSystemIds) n += view.galaxy.system(id).stockpile[res];
+  return n;
+}
+
+/**
+ * Spend the corp's overproduced raws on system upgrades (Section 07c): Mining Rigs (metals) on
+ * the richest worlds, Habitats (silicates) on populated worlds, Power Grids (helium3) on worlds
+ * running processors. Each upgrade is only taken when the raw is already in the corp's
+ * stockpiles — so it drains owned overproduction rather than buying from the market — and at
+ * most half of cash is committed per turn. This is the main sink that keeps raw prices off the floor.
+ */
+export function maybeUpgradeInfrastructure(view: PlayerView): Order[] {
+  const inf = view.config.tuning.infrastructure;
+  if (view.turn < 5) return [];
+  const stock: Record<"metals" | "silicates" | "helium3", number> = {
+    metals: corpStock(view, "metals"),
+    silicates: corpStock(view, "silicates"),
+    helium3: corpStock(view, "helium3"),
+  };
+  let budget = view.me.credits * 0.5;
+  const orders: Order[] = [];
+
+  const systems = view.me.ownedSystemIds
+    .map((id) => view.galaxy.system(id))
+    .sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a));
+
+  const tryUpgrade = (
+    sys: System,
+    track: "mining" | "habitat" | "power",
+    level: number,
+    raw: "metals" | "silicates" | "helium3",
+    creditBase: number,
+    rawBase: number,
+  ): void => {
+    if (level >= inf.cap) return;
+    const factor = level + 1; // cost scales with the level being reached
+    const cost = creditBase * factor;
+    const need = rawBase * factor;
+    if (budget < cost || stock[raw] < need) return;
+    budget -= cost;
+    stock[raw] -= need;
+    orders.push({ kind: "upgradeInfrastructure", systemId: sys.id, track });
+  };
+
+  for (const sys of systems) {
+    if (orders.length >= 5) break; // a handful of upgrades per turn is plenty
+    if (grossYieldValue(view, sys) > 0) {
+      tryUpgrade(sys, "mining", sys.miningRigs, "metals", inf.miningCreditCost, inf.miningMetalsCost);
+    }
+    if (sys.populationStage !== "outpost") {
+      tryUpgrade(sys, "habitat", sys.habitats, "silicates", inf.habitatCreditCost, inf.habitatSilicatesCost);
+    }
+    if (Object.values(sys.processors).some((n) => n > 0)) {
+      tryUpgrade(sys, "power", sys.powerGrid, "helium3", inf.powerCreditCost, inf.powerHelium3Cost);
+    }
+  }
+  return orders;
+}
+
 /** Mutable per-bot memory so a financier locks onto one acquisition target. */
 export interface BotState {
   acqTarget?: string;
+  /** A reachable rival system this corp is massing a warfleet to conquer (Section 23). */
+  conquestTarget?: string;
 }
 
 /** Resolve (and persist) which charter rival this corp is trying to take over. */
@@ -195,8 +716,9 @@ function weakestRival(view: PlayerView): PlayerView["corporations"][number] | un
  */
 export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
   const orders: Order[] = [];
-  // Merchant/privateer income: haunt the busiest lane.
+  // Merchant/privateer income: haunt the busiest lane, and sabotage rival production.
   orders.push(...planRaid(view, { fundFactor: 1.1 }));
+  orders.push(...maybeSabotage(view));
   // Comeback: buy toward control of a locked target charter when flush.
   const target = lockTarget(view, state);
   if (target && view.me.credits > target.sharePrice * 5) {
@@ -235,9 +757,10 @@ export function maybeResearchRange(view: PlayerView): Order[] {
   return [];
 }
 
-/** Gross per-turn export value of a system priced at base. */
+/** Gross full-development export value of a system priced at base (potential, not current). */
 function grossYieldValue(view: PlayerView, sys: System): number {
-  return RESOURCES.reduce((s, r) => s + sys.yields[r] * view.config.tuning.basePrices[r], 0);
+  const pot = potentialYields(sys);
+  return RESOURCES.reduce((s, r) => s + pot[r] * view.config.tuning.basePrices[r], 0);
 }
 
 /** Claim the best unclaimed inner-ring system if affordable (second/third claim). */
@@ -379,7 +902,7 @@ export function maybeBuildPlatforms(view: PlayerView): Order[] {
   const ranked = view.me.ownedSystemIds
     .map((id) => view.galaxy.system(id))
     // Baseline guard: one platform per system, two on exposed frontier worlds.
-    .map((s) => ({ sys: s, want: s.yields.rareIsotopes > 0 ? 2 : 1 }))
+    .map((s) => ({ sys: s, want: potentialYields(s).rareIsotopes > 0 ? 2 : 1 }))
     .filter((e) => e.sys.platforms < Math.min(e.want, view.config.tuning.platformCap))
     .map((e) => ({ sys: e.sys, score: routeExposureScore(view, e.sys) + grossYieldValue(view, e.sys) / 50 }))
     .sort((a, b) => b.score - a.score);
@@ -429,7 +952,7 @@ export function maybeBuildWarships(view: PlayerView): Order[] {
         value: grossYieldValue(view, s),
         count: escorts.length,
         bestTier,
-        desired: s.yields.rareIsotopes > 0 ? 3 : 2,
+        desired: potentialYields(s).rareIsotopes > 0 ? 3 : 2,
       };
     })
     .filter((e) => e.value > 0 && (e.count < e.desired || e.bestTier < tier))

@@ -102,8 +102,12 @@ export function Fleet() {
                 <div key={i} className="roster__row">
                   <Icon name={s.raider ? "skull" : "shield"} size={15} />
                   <span>Range {s.rangeTier} {s.raider ? "raider" : "escort"}</span>
-                  <span className="roster__sub">{s.stationedAt ? view.galaxy.system(s.stationedAt).name : "unstationed"}</span>
-                  <Badge tone="neutral">cbt {s.combat}</Badge>
+                  <span className="roster__sub">
+                    {s.transit
+                      ? `→ ${view.galaxy.system(s.transit.path[s.transit.path.length - 1]!).name}${s.transit.attack ? " (assault)" : ""}`
+                      : s.stationedAt ? view.galaxy.system(s.stationedAt).name : "unstationed"}
+                  </span>
+                  <Badge tone={s.transit ? "warn" : "neutral"}>{s.transit ? "in transit" : `cbt ${s.combat}`}</Badge>
                 </div>
               ))}
               {me.privateers.map((p, i) => (
