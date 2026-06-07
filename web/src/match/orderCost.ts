@@ -136,6 +136,28 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
     }
     case "buildPlatform":
       return { label: "Build defense platform", detail: `at ${name(order.systemId)}`, cost: t.platformCost, tone: "build" };
+    case "assay": {
+      const site = g.systems.get(order.systemId)?.sites.find((s) => s.key === order.siteKey);
+      const res = site ? resourceLabels[site.resource] : "deposit";
+      return {
+        label: `Assay ${res} deposit`,
+        detail: `survey at ${name(order.systemId)} — reveals its richness & reserves`,
+        cost: t.assayCost,
+        tone: "build",
+      };
+    }
+    case "buildExtractor": {
+      const site = g.systems.get(order.systemId)?.sites.find((s) => s.key === order.siteKey);
+      const res = site ? resourceLabels[site.resource] : "deposit";
+      const lvl = site?.extractorLevel ?? 0;
+      const factor = (lvl + 1) * (1 + (1 - (site?.accessibility ?? 1)) * t.extractor.accessibilityMult);
+      return {
+        label: lvl > 0 ? `Deepen ${res} extractor` : `Build ${res} extractor`,
+        detail: `at ${name(order.systemId)} · Lv ${lvl}→${lvl + 1} · ${t.extractor.alloyCost} alloys`,
+        cost: Math.round(t.extractor.buildCost * factor),
+        tone: "build",
+      };
+    }
     case "buyShares": {
       const target = view.corporations.find((c) => c.id === order.targetId);
       const price = target?.sharePrice ?? 0;

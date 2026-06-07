@@ -128,6 +128,10 @@ function ColonyCard({
           : null;
 
   const sites = [...colony.sites].sort((a, b) => a.resource.localeCompare(b.resource));
+  // Reflect orders already staged this turn so a click gives immediate feedback (these resolve next turn).
+  const staged = store.state.staged;
+  const assayStaged = (key: string) => staged.some((s) => s.order.kind === "assay" && s.order.siteKey === key);
+  const workStaged = (key: string) => staged.some((s) => s.order.kind === "buildExtractor" && s.order.siteKey === key);
   // World type → shown as the subtitle now that the title carries the planet's designation.
   const typeLabel =
     colony.kind === "belt"
@@ -207,22 +211,29 @@ function ColonyCard({
               {canBuild && (
                 <div className="site-row__actions">
                   {site.extractorLevel < EXTRACTOR_CAP && !dry && (
-                    <ActionButton
-                      icon="systems"
-                      onClick={() => store.stage({ kind: "buildExtractor", systemId: sys.id, siteKey: site.key })}
-                    >
-                      {worked ? "Deepen" : "Work"}
-                    </ActionButton>
+                    workStaged(site.key) ? (
+                      <Badge tone="accent">{worked ? "Deepen queued" : "Work queued"}</Badge>
+                    ) : (
+                      <ActionButton
+                        icon="systems"
+                        onClick={() => store.stage({ kind: "buildExtractor", systemId: sys.id, siteKey: site.key })}
+                      >
+                        {worked ? "Deepen" : "Work"}
+                      </ActionButton>
+                    )
                   )}
-                  {!site.prospected && (
-                    <ActionButton
-                      icon="radar"
-                      title={`Assay · ${formatCr(view.config.tuning.assayCost)}`}
-                      onClick={() => store.stage({ kind: "assay", systemId: sys.id, siteKey: site.key })}
-                    >
-                      Assay
-                    </ActionButton>
-                  )}
+                  {!site.prospected &&
+                    (assayStaged(site.key) ? (
+                      <Badge tone="accent">Survey queued</Badge>
+                    ) : (
+                      <ActionButton
+                        icon="radar"
+                        title={`Assay · ${formatCr(view.config.tuning.assayCost)} — reveals this deposit's richness & reserves next turn`}
+                        onClick={() => store.stage({ kind: "assay", systemId: sys.id, siteKey: site.key })}
+                      >
+                        Assay
+                      </ActionButton>
+                    ))}
                 </div>
               )}
             </div>
