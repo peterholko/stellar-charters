@@ -92,6 +92,35 @@ describe("research (Section 28)", () => {
     expect(canResearch(fork, ["pro-extractors", "pro-hydrofrac"])).toBe(false);
   });
 
+  it("a secret project is galaxy-unique: once a rival claims it, you can't research it", () => {
+    const eng = new Engine(loadScenario(scenario(2, 1)), 0, reg());
+    const [a, b] = eng.corps;
+    const sys = eng.galaxy.system("s0");
+    sys.owner = a!.id; a!.ownedSystemIds = ["s0"]; a!.hasCharter = true; a!.isFreeOperator = false;
+    // Rival B already finished Antimatter Containment (a secret project).
+    b!.research.completed = ["pro-extractors", "pro-antimatter"];
+    // A meets the prereq and pours RP at it, but the race is already lost.
+    a!.research.completed = ["pro-extractors"];
+    getBodyBuildings(sys, primaryBodyKey(sys)).labs = 40; // plenty of RP
+    a!.research.queue = ["pro-antimatter"];
+    for (let i = 0; i < 5; i++) eng.stepTurn();
+    expect(a!.research.completed).not.toContain("pro-antimatter"); // can't claim a taken secret
+  });
+
+  it("Industrial Espionage steals a rival tech the spy lacks", () => {
+    const eng = new Engine(loadScenario(scenario(2, 1)), 0, reg());
+    const [a, b] = eng.corps;
+    const sys = eng.galaxy.system("s0");
+    sys.owner = a!.id; a!.ownedSystemIds = ["s0"]; a!.hasCharter = true; a!.isFreeOperator = false;
+    a!.research.completed = ["acq-algorithms", "acq-takeover", "acq-espionage"]; // spy network live
+    b!.research.completed = ["fab-assembly", "col-habitat", "sec-plating"]; // juicy targets
+    const before = a!.research.completed.length;
+    for (let i = 0; i < eng.config.tuning.espionageInterval; i++) eng.stepTurn();
+    expect(a!.research.completed.length).toBeGreaterThan(before); // stole at least one
+    const stolen = a!.research.completed.filter((id) => b!.research.completed.includes(id));
+    expect(stolen.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("conquering a charter seizes 1–3 of its techs", () => {
     const eng = new Engine(loadScenario(scenario(2, 2)), 1, reg());
     const [a, d] = eng.corps;

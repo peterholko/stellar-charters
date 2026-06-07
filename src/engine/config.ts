@@ -254,6 +254,8 @@ export interface Tuning {
   researchPopBase: Record<PopulationStage, number>;
   /** Credits to terraform a world habitable once the Terraforming research is unlocked (Section 28). */
   terraformCost: number;
+  /** Industrial Espionage steals one rival tech every this-many turns (Section 28, Phase 3). */
+  espionageInterval: number;
   /**
    * Per-body extractor economy (Section 21). Building an extractor on a deposit raises its
    * level; the credit cost scales with the level reached and the deposit's accessibility (harder
@@ -445,6 +447,7 @@ export const DEFAULT_TUNING: Tuning = {
   labRpOutput: 24,
   researchPopBase: { outpost: 0, settlement: 3, colony: 6, city: 11, metropolis: 18 },
   terraformCost: 1400,
+  espionageInterval: 4,
   extractor: {
     buildCost: 300,
     alloyCost: 2,

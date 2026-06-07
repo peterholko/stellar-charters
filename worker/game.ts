@@ -204,6 +204,7 @@ function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn
     corps: [],
     convoys: [],
     wars: [],
+    claimedSecrets: {},
     warTariff: 0,
     reports: [],
     mySeat: null,

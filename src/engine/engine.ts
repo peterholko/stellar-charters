@@ -10,7 +10,7 @@
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
 import { constructionCpCost, type GameConfig } from "./config.js";
-import { RESEARCH_TREE, canResearch, researchMods, techById, type ResearchMods } from "./research.js";
+import { RESEARCH_TREE, SECRET_TECH_IDS, canResearch, researchMods, techById, type ResearchMods } from "./research.js";
 import {
   EXTRACTOR_CAP,
   agriFoodMult,
@@ -778,6 +778,8 @@ export class Engine {
               const tech = techById(id);
               if (!tech || seen.has(id) || done.includes(id)) continue;
               if (!tech.prereqs.every((p) => willHave.includes(p))) continue;
+              // A galaxy-unique secret project a rival already finished can't be queued (Phase 3).
+              if (tech.secret) { const o = this.secretOwner(id); if (o !== null && o !== corp.id) continue; }
               seen.add(id);
               queue.push(id);
               willHave.push(id);
@@ -1528,7 +1530,8 @@ export class Engine {
       this.events.push({ type: "pactInvoked", protectorId: ally.id, aggressorId: attacker.id, allyId: defenderId });
       this.log(`  PACT: ${this.name(ally.id)} joins the war against ${this.name(attacker.id)} to defend ${this.name(defenderId)}`);
     }
-    const captured = attackForce >= Math.max(1, defense) * t.captureRatio;
+    // Orbital Dominance research (Section 28, Phase 3) lowers the attacker's capture threshold.
+    const captured = attackForce >= Math.max(1, defense) * t.captureRatio * this.mods(attacker).captureRatioMult;
     if (captured) {
       const prevOwner = this.corps.find((c) => c.id === defenderId);
       if (prevOwner) {
@@ -1712,7 +1715,8 @@ export class Engine {
   /** Seize 1–3 random techs the conquered charter holds that the conqueror lacks (Section 28). A
    *  pillaged tech bypasses choice-group lockouts — you can end up holding both sides of a fork. */
   private transferTech(from: Corporation, to: Corporation): void {
-    const pool = from.research.completed.filter((id) => !to.research.completed.includes(id));
+    // Secret projects are galaxy-unique and can't be seized or inherited — they stay with their maker.
+    const pool = from.research.completed.filter((id) => !to.research.completed.includes(id) && !SECRET_TECH_IDS.includes(id));
     if (pool.length === 0) return;
     const take = Math.min(pool.length, this.rng.int(1, 3));
     for (let i = 0; i < take; i++) {
@@ -1743,6 +1747,14 @@ export class Engine {
         const id = r.queue[0]!;
         const tech = techById(id);
         if (!tech || r.completed.includes(id) || !canResearch(tech, r.completed)) { r.queue.shift(); continue; }
+        // Secret-project race (Phase 3): if a rival already claimed this galaxy-unique tech, the race
+        // is lost — drop it and bank back the RP already invested rather than waste it.
+        if (tech.secret && this.secretOwner(id) !== null) {
+          rp += r.invested[id] ?? 0;
+          delete r.invested[id];
+          r.queue.shift();
+          continue;
+        }
         const need = tech.rpCost - (r.invested[id] ?? 0);
         if (rp >= need) {
           rp -= need;
@@ -1754,14 +1766,54 @@ export class Engine {
             corp.rangeTier = tech.grantsRangeTier as typeof corp.rangeTier;
             if (corp.rangeTier >= 2 && this.metrics.range2Turn[corp.id] === -1) this.metrics.range2Turn[corp.id] = this.turn;
           }
+          if (id === "nav-wormhole") this.applyWormholeEngineering(corp); // Phase 3 secret-project effect
           this.events.push({ type: "research", corpId: corp.id, techId: id });
-          this.log(`  ${corp.name} completes research: ${tech.name}`);
+          this.log(`  ${corp.name} completes research: ${tech.name}${tech.secret ? " (secret project!)" : ""}`);
         } else {
           r.invested[id] = (r.invested[id] ?? 0) + rp;
           rp = 0;
         }
       }
       r.banked = rp; // leftover banks for next turn (e.g. an empty queue)
+    }
+    this.resolveEspionage();
+  }
+
+  /** Which charter (if any) has already completed a galaxy-unique secret project (Section 28, Phase 3). */
+  private secretOwner(techId: string): string | null {
+    for (const c of this.corps) if (c.research.completed.includes(techId)) return c.id;
+    return null;
+  }
+
+  /** Wormhole Engineering (Phase 3): instantly chart every warp lane touching the holder's systems. */
+  private applyWormholeEngineering(corp: Corporation): void {
+    for (const sysId of corp.ownedSystemIds) {
+      for (const rid of this.galaxy.system(sysId).routeIds) {
+        const route = this.galaxy.routes.get(rid);
+        if (route) route.charted = true;
+      }
+    }
+  }
+
+  /** Industrial Espionage (Phase 3): charters with a spy network steal one random tech they lack from
+   *  a random rival that holds it, every few turns. Secret projects can't be stolen (galaxy-unique). */
+  private resolveEspionage(): void {
+    if (this.turn % this.config.tuning.espionageInterval !== 0) return;
+    for (const corp of this.corps) {
+      if (corp.isFreeOperator || !this.mods(corp).stealsTech) continue;
+      const stealable = new Set<string>();
+      for (const rival of this.corps) {
+        if (rival.id === corp.id) continue;
+        for (const id of rival.research.completed) {
+          if (!corp.research.completed.includes(id) && !SECRET_TECH_IDS.includes(id)) stealable.add(id);
+        }
+      }
+      const pool = [...stealable];
+      if (pool.length === 0) continue;
+      const id = pool[this.rng.int(0, pool.length - 1)]!;
+      corp.research.completed.push(id);
+      this.events.push({ type: "research", corpId: corp.id, techId: id });
+      this.log(`  ESPIONAGE: ${corp.name} steals research: ${techById(id)?.name ?? id}`);
     }
   }
 
@@ -1811,7 +1863,7 @@ export class Engine {
           const habitatGrowthMult = 1 + habs * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
 
           if (fed) {
-            const tax = t.taxPerStage[pop.stage] * (1 - pop.unrest) * habitatTaxMult;
+            const tax = t.taxPerStage[pop.stage] * (1 - pop.unrest) * habitatTaxMult * rm.taxMult;
             corp.credits += tax;
             taxLevied += tax;
             pop.unrest = Math.max(0, pop.unrest - t.unrestRecoveryPerFedTurn);
@@ -1987,6 +2039,7 @@ export class Engine {
       if ((target.shareRegister[holder] ?? 0) <= threshold) continue;
       const acquirer = this.corps.find((c) => c.id === holder);
       if (!acquirer || acquirer.id === target.id) continue;
+      this.transferTech(target, acquirer); // inherit 1–3 of the absorbed charter's techs (Section 28, Phase 3)
       this.absorb(acquirer, target);
       acquisitions += 1;
     }

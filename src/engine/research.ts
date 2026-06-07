@@ -108,6 +108,23 @@ export const RESEARCH_TREE: ResearchTech[] = [
     desc: "Trading desks win 6% better fills on every exchange order." },
   { id: "acq-takeover", division: "acquisitions", tier: 2, name: "Hostile Takeover", rpCost: 320, prereqs: ["acq-algorithms"],
     desc: "Share raids and acquisitions cost 25% less." },
+  { id: "acq-espionage", division: "acquisitions", tier: 3, name: "Industrial Espionage", rpCost: 460, prereqs: ["acq-takeover"],
+    desc: "A spy network steals a random tech you lack from a rival every few turns." },
+
+  // — Secret projects (Section 28, Phase 3): galaxy-unique T4 capstones — once any charter finishes
+  //   one, no other charter can. A race for a one-of-a-kind edge.
+  { id: "pro-antimatter", division: "prospectus", tier: 4, name: "Antimatter Containment", rpCost: 560, prereqs: ["pro-extractors"], secret: true,
+    desc: "Galaxy-unique. An exotic-fuel monopoly: +30% extraction output across your empire." },
+  { id: "fab-nanofab", division: "fabrication", tier: 4, name: "Nanofabrication", rpCost: 600, prereqs: ["fab-metallurgy"], secret: true,
+    desc: "Galaxy-unique. Self-replicating foundries: factories +25% output and colonies build 2× faster." },
+  { id: "nav-wormhole", division: "navigation", tier: 4, name: "Wormhole Engineering", rpCost: 620, prereqs: ["nav-warp4"], secret: true,
+    desc: "Galaxy-unique. On completion, instantly charts every warp lane touching your systems; charting is then free." },
+  { id: "col-arcology", division: "colonial", tier: 4, name: "Arcology", rpCost: 620, prereqs: ["col-terraform"], secret: true,
+    desc: "Galaxy-unique. The first megacities: +50% population growth and +40% tax across your colonies." },
+  { id: "sec-orbital", division: "security", tier: 4, name: "Orbital Dominance", rpCost: 600, prereqs: ["sec-capital"], secret: true,
+    desc: "Galaxy-unique. Orbital bombardment: +40% warship combat and invasions land far more easily." },
+  { id: "acq-insider", division: "acquisitions", tier: 4, name: "Insider Networks", rpCost: 560, prereqs: ["acq-takeover"], secret: true,
+    desc: "Galaxy-unique. Total market capture: +10% fills and acquisitions cost 40% less." },
 ];
 
 const TECH_BY_ID: Record<string, ResearchTech> = Object.fromEntries(RESEARCH_TREE.map((t) => [t.id, t]));
@@ -158,6 +175,9 @@ export interface ResearchMods {
   capitalHullCostMult: number;  // capital warship (Range 5+) build cost
   megastructureCostMult: number;// megastructure build cost
   canTerraform: boolean;        // Terraforming unlocked (Section 28, Phase 2)
+  taxMult: number;              // population tax yield (Section 28, Phase 3)
+  captureRatioMult: number;     // invasion capture threshold (<1 = easier to capture)
+  stealsTech: boolean;          // Industrial Espionage: steal a rival tech periodically
 }
 
 export function emptyResearchMods(): ResearchMods {
@@ -166,6 +186,7 @@ export function emptyResearchMods(): ResearchMods {
     growthMult: 1, upkeepMult: 1, defenseMult: 1, shipCombatMult: 1, shipFuelMult: 1,
     marketEdge: 0, acquisitionCostMult: 1, surveyCostMult: 1,
     capitalHullCostMult: 1, megastructureCostMult: 1, canTerraform: false,
+    taxMult: 1, captureRatioMult: 1, stealsTech: false,
   };
 }
 
@@ -191,5 +212,16 @@ export function researchMods(completed: string[]): ResearchMods {
   if (has("fab-metallurgy")) m.megastructureCostMult *= 0.7;
   if (has("sec-capital")) m.capitalHullCostMult *= 0.7;
   if (has("col-terraform")) m.canTerraform = true;
+  if (has("acq-espionage")) m.stealsTech = true;
+  // Secret-project capstones (Phase 3).
+  if (has("pro-antimatter")) m.yieldMult *= 1.3;
+  if (has("fab-nanofab")) { m.factoryOutputMult *= 1.25; m.constructionRateMult *= 2; }
+  if (has("nav-wormhole")) m.surveyCostMult = 0;
+  if (has("col-arcology")) { m.growthMult *= 1.5; m.taxMult *= 1.4; }
+  if (has("sec-orbital")) { m.shipCombatMult *= 1.4; m.captureRatioMult *= 0.7; }
+  if (has("acq-insider")) { m.marketEdge += 0.1; m.acquisitionCostMult *= 0.6; }
   return m;
 }
+
+/** The secret-project tech ids — galaxy-unique capstones (Section 28, Phase 3). */
+export const SECRET_TECH_IDS: string[] = RESEARCH_TREE.filter((t) => t.secret).map((t) => t.id);

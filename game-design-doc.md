@@ -1146,8 +1146,17 @@ competes for RP like everything else, and conquest can even seize a rival's warp
 population), **Capital Shipyards** (Security — Range-5+ hulls 30% cheaper), and **Advanced Metallurgy**
 (Fabrication — megastructures 30% cheaper). Bots open every doctrine with Warp II/III so they still
 reach the frontier; the 30-game sweep stays green (leader/median ≈12, metals floor 0%, food 92%).
-*(Remaining: wormhole-lane / arcology / nanofab secret-project capstones and espionage tech-steal —
-see `RESEARCH_DESIGN.md`.)*
+**Phase 3** adds the endgame layer: each division has a galaxy-unique **secret-project** T4 capstone
+(`secret: true`, `SECRET_TECH_IDS`) — once any charter finishes one, no other can (the engine drops a
+lost-race tech and refunds its RP). The six: **Antimatter Containment** (+30% yield), **Nanofabrication**
+(×2 construction, +25% factory), **Wormhole Engineering** (instantly charts every lane touching your
+systems, free charting after), **Arcology** (+50% growth, +40% tax), **Orbital Dominance** (+40% combat,
+easier captures), **Insider Networks** (+10% fills, −40% acquisitions). Plus **Industrial Espionage**
+(steals a random rival tech every few turns) and **tech transfer on acquisition** (absorbing a charter
+inherits 1–3 of its techs, like conquest; secrets never transfer). The Research screen flags secrets and
+shows which rival has claimed each. Capstones are reachable but rare — a focused specialist lands ~1 in
+roughly half of games; the 30-game sweep holds with capstone effects live (leader/median ≈13, all flags
+green).
 
 ◆ END OF DOSSIER ◆
 

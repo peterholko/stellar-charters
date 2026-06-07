@@ -805,11 +805,11 @@ export function maybeExpand(view: PlayerView): Order[] {
 export const RESEARCH_PLANS: Record<string, string[]> = {
   // Every doctrine opens with Warp Drive II/III (range fuels expansion + reach), then leans into ~2
   // divisions. Range now comes from research (Section 28 Phase 2), so it's part of the queue.
-  miner: ["nav-warp2", "pro-extractors", "nav-warp3", "pro-deepcore", "nav-warp4", "fab-assembly", "fab-lean", "col-habitat"],
-  balanced: ["nav-warp2", "fab-assembly", "fab-modular", "nav-warp3", "col-habitat", "col-charter", "pro-extractors", "acq-algorithms"],
-  raider: ["nav-warp2", "acq-algorithms", "nav-warp3", "acq-takeover", "sec-plating", "sec-firecontrol", "nav-warp4", "nav-warp5", "sec-capital"],
-  warlord: ["nav-warp2", "sec-plating", "nav-warp3", "sec-firecontrol", "nav-warp4", "nav-warp5", "sec-capital", "fab-assembly", "pro-extractors"],
-  hybrid: ["nav-warp2", "fab-assembly", "nav-warp3", "fab-modular", "pro-extractors", "col-habitat"],
+  miner: ["nav-warp2", "pro-extractors", "nav-warp3", "pro-deepcore", "nav-warp4", "fab-assembly", "fab-lean", "col-habitat", "pro-antimatter"],
+  balanced: ["nav-warp2", "fab-assembly", "fab-modular", "nav-warp3", "col-habitat", "col-charter", "fab-metallurgy", "acq-algorithms", "col-terraform", "col-arcology"],
+  raider: ["nav-warp2", "acq-algorithms", "acq-takeover", "acq-insider", "acq-espionage", "nav-warp3", "sec-plating", "sec-firecontrol"],
+  warlord: ["nav-warp2", "sec-plating", "nav-warp3", "sec-firecontrol", "nav-warp4", "nav-warp5", "sec-capital", "sec-orbital", "pro-extractors"],
+  hybrid: ["nav-warp2", "fab-assembly", "nav-warp3", "fab-modular", "fab-metallurgy", "pro-extractors", "fab-nanofab"],
 };
 
 /** Fund research (Section 28): keep a few Research Labs going and steer the tech queue by doctrine. */

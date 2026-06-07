@@ -18,7 +18,7 @@ import { Panel, PanelTitle, Badge } from "../ui/primitives";
  * acquire / steal / conquer the rest.
  */
 export function Research() {
-  const { view } = useApp();
+  const { view, claimedSecrets } = useApp();
   if (!view) return null;
   const me = view.me;
   const completed = me.research.completed;
@@ -72,13 +72,17 @@ export function Research() {
                 .sort((a, b) => a.tier - b.tier)
                 .map((tk) => {
                   const qi = queue.indexOf(tk.id);
+                  const claimedBy = tk.secret ? claimedSecrets[tk.id] : undefined;
+                  const mineSecret = claimedBy && completed.includes(tk.id);
                   const state = completed.includes(tk.id) ? "done"
+                    : claimedBy && !mineSecret ? "rivalsecret"
                     : qi === 0 ? "active"
                     : qi > 0 ? "queued"
                     : locked.has(tk.id) ? "locked"
                     : canResearch(tk, completed) ? "open"
                     : "blocked";
-                  return <TechNode key={tk.id} tech={tk} state={state} queuePos={qi} onClick={() => (state === "done" || state === "locked" ? null : toggle(tk.id))} />;
+                  const clickable = state === "open" || state === "queued" || state === "active";
+                  return <TechNode key={tk.id} tech={tk} state={state} queuePos={qi} claimedBy={claimedBy} onClick={() => (clickable ? toggle(tk.id) : undefined)} />;
                 })}
             </div>
           </Panel>
@@ -88,9 +92,10 @@ export function Research() {
   );
 }
 
-function TechNode({ tech, state, queuePos, onClick }: { tech: ResearchTech; state: string; queuePos: number; onClick: () => void }) {
+function TechNode({ tech, state, queuePos, claimedBy, onClick }: { tech: ResearchTech; state: string; queuePos: number; claimedBy?: string; onClick: () => void }) {
   const tag =
     state === "done" ? <Badge tone="positive">Researched</Badge>
+    : state === "rivalsecret" ? <Badge tone="negative">Claimed: {claimedBy}</Badge>
     : state === "active" ? <Badge tone="accent">Active</Badge>
     : state === "queued" ? <Badge tone="accent">#{queuePos + 1}</Badge>
     : state === "locked" ? <Badge tone="neutral">Locked — chose other</Badge>
@@ -98,10 +103,11 @@ function TechNode({ tech, state, queuePos, onClick }: { tech: ResearchTech; stat
     : <Badge tone="neutral">{tech.rpCost} RP</Badge>;
   const clickable = state === "open" || state === "queued" || state === "active";
   return (
-    <button type="button" className={`tech tech--${state}`} disabled={!clickable} onClick={onClick}>
+    <button type="button" className={`tech tech--${state}${tech.secret ? " tech--secret" : ""}`} disabled={!clickable} onClick={onClick}>
       <div className="tech__top"><strong>{tech.name}</strong>{tag}</div>
       <p className="tech__desc">{tech.desc}</p>
-      {tech.choiceGroup && <span className="tech__choice">choose one in this branch</span>}
+      {tech.secret ? <span className="tech__secret">★ Secret project — galaxy-unique race</span>
+        : tech.choiceGroup ? <span className="tech__choice">choose one in this branch</span> : null}
     </button>
   );
 }

@@ -57,6 +57,7 @@ export {
 export {
   RESEARCH_TREE,
   RESEARCH_DIVISIONS,
+  SECRET_TECH_IDS,
   researchMods,
   emptyResearchMods,
   techById,

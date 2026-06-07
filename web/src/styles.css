@@ -353,6 +353,9 @@ input, select { font-family: inherit; }
 .tech--active { border-color: var(--accent); box-shadow: var(--glow); }
 .tech--queued { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .tech--locked, .tech--blocked { opacity: 0.55; }
+.tech--secret { border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft)); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
+.tech--rivalsecret { opacity: 0.6; border-style: dashed; }
+.tech__secret { font-size: 0.58rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
 
 /* ============================ order tray ============================ */
 .tray { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); flex: 1; min-height: 0; }

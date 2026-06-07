@@ -55,6 +55,8 @@ export interface AppState {
   selection: Selection;
   theme: ThemeId;
   resolving: boolean;
+  /** Galaxy-unique secret projects already claimed (Section 28, Phase 3): techId → corp name. */
+  claimedSecrets: Record<string, string>;
   // ----- multiplayer / lobby -----
   mySeat: string | null;
   isHost: boolean;
@@ -103,6 +105,7 @@ class Store {
     selection: { kind: "system", id: "hub" },
     theme: loadTheme(),
     resolving: false,
+    claimedSecrets: {},
     mySeat: null,
     isHost: false,
     players: [],
@@ -159,6 +162,7 @@ class Store {
       valuationHistory,
       staged: [],
       resolving: false,
+      claimedSecrets: cs.claimedSecrets ?? {},
       mySeat: cs.mySeat,
       isHost: cs.isHost,
       players: cs.players,

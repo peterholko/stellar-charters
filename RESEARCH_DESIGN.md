@@ -4,9 +4,10 @@
 tech tree with live `researchMods` effects, Research screen + queue, bot doctrines, conquest
 tech-seizure (1–3 random). P2: Warp-Drive range ladder folded into Navigation (`grantsRangeTier`; old
 `researchRange` removed), Terraforming (`terraform` order), Capital Shipyards (cheaper Range-5+ hulls),
-Advanced Metallurgy (cheaper megastructures). Tree now 22 techs; balance-swept (leader/median ≈12).
-Remaining: P3 — secret-project capstones (wormhole-lane / arcology / nanofab races) + espionage
-tech-steal + acquisition tech transfer + deeper choice nodes. Inspired by **Master of Orion 2** (field tree with
+Advanced Metallurgy (cheaper megastructures). P3: six galaxy-unique secret-project capstones (one per
+division, race-to-claim), Industrial Espionage (steal a rival tech), and tech transfer on acquisition.
+Tree now 28 techs; balance-swept (leader/median ≈13, capstones land ~1 per half of games). **The full
+system is implemented.** Inspired by **Master of Orion 2** (field tree with
 "pick-one" tier choices you can't un-pick; trade/steal what you skipped) and **Alpha Centauri** (research
 as the spine of an asymmetric empire; one-time *secret projects*; tech feeds society / units / facilities).
 

@@ -28,6 +28,7 @@ import {
   type SystemPosition,
 } from "./types.js";
 import { systemBuildings } from "./bodies.js";
+import { SECRET_TECH_IDS } from "./research.js";
 
 export type GamePhase = "play" | "over";
 
@@ -195,6 +196,8 @@ export interface ClientState {
   convoys: ClientConvoy[];
   /** Active wars between charters (Section 23). */
   wars: War[];
+  /** Galaxy-unique secret projects already claimed (Section 28, Phase 3): techId → corp name. */
+  claimedSecrets: Record<string, string>;
   /** Exchange tariff you (the viewing charter) pay as a war aggressor; 0 if not at war. */
   warTariff: number;
   reports: TurnReport[];
@@ -356,6 +359,10 @@ export function buildClientState(
   const prices = {} as Record<Resource, number>;
   for (const r of RESOURCES) prices[r] = engine.market.prices[r];
 
+  // Which galaxy-unique secret projects are already claimed, and by whom (Section 28, Phase 3).
+  const claimedSecrets: Record<string, string> = {};
+  for (const c of engine.corps) for (const id of c.research.completed) if (SECRET_TECH_IDS.includes(id)) claimedSecrets[id] = c.name;
+
   return {
     gameId,
     scenarioId: engine.config.scenario.id ?? "legacy",
@@ -369,6 +376,7 @@ export function buildClientState(
     corps,
     convoys,
     wars: engine.activeWars.map((w) => ({ ...w })),
+    claimedSecrets,
     warTariff: engine.warTariffFor(humanCorpId),
     reports,
     // Multiplayer fields default here; the server overrides them with DB membership.
