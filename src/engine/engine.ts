@@ -851,19 +851,6 @@ export class Engine {
             this.log(`  ${corp.name} builds a ${site.resource} extractor at ${sys.name} (L${site.extractorLevel})`);
             break;
           }
-          case "assay": {
-            // Survey a deposit to reveal its exact richness/reserves (Section 21).
-            if (corp.isFreeOperator) break;
-            const sys = this.galaxy.systems.get(order.systemId);
-            if (!sys || sys.owner !== corp.id) break;
-            const site = sys.sites.find((s) => s.key === order.siteKey);
-            if (!site || site.prospected) break;
-            if (corp.credits < this.config.tuning.assayCost) break;
-            corp.credits -= this.config.tuning.assayCost;
-            site.prospected = true;
-            this.events.push({ type: "build", corpId: corp.id, what: `Assayed ${site.resource} deposit`, systemId: sys.id });
-            break;
-          }
           case "alliancePledge": {
             // Pledge to defend another charter (Section 23). Allied once the pledge is mutual.
             const target = this.corps.find((c) => c.id === order.targetId);

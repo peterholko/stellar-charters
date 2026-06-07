@@ -287,8 +287,8 @@ function depositInvestmentFactor(view: PlayerView, sys: System, site: System["si
  * Develop the corp's deposits (Section 21): build extractors on the highest-value workable
  * sites across owned systems, climbing toward the cap. This is the core mid-game build loop —
  * a claimed system only pays out once its deposits are worked, so this runs early and often.
- * Bots see true geology (the fog is only for human clients), so they don't assay — they weigh
- * richness, accessibility, depletion, and stellar dynamics directly.
+ * Bots see true geology (the fog is only for human clients), so they weigh richness, accessibility,
+ * depletion, and stellar dynamics directly.
  */
 export function maybeBuildExtractor(view: PlayerView): Order[] {
   const t = view.config.tuning;
@@ -818,6 +818,38 @@ export function maybeExpand(view: PlayerView): Order[] {
   // Keep a working buffer above the claim cost so upkeep doesn't bankrupt the corp.
   if (view.me.credits < best.sys.claimCost + 1000) return [];
   return [{ kind: "claim", systemId: best.sys.id, amount: best.sys.claimCost }];
+}
+
+/**
+ * Operate a survey vessel (Section 25): keep one unarmed scout in the fleet and send it to chart the
+ * deposit intel of the nearest reachable system the charter hasn't surveyed yet (frontier worlds it
+ * might claim, or a rival's economy it might move on). The scout returns home on its own after each
+ * run, so this re-dispatches it whenever it's idle.
+ */
+export function maybeSurvey(view: PlayerView): Order[] {
+  const me = view.me;
+  if (me.isFreeOperator || !me.hasCharter || me.ownedSystemIds.length === 0) return [];
+  const t = view.config.tuning;
+  const scouts = me.ships.filter((s) => s.surveyor);
+
+  // Send an idle scout to the cheapest-to-reach system we neither own nor have surveyed.
+  const idle = scouts.find((s) => !s.transit && s.stationedAt);
+  if (idle) {
+    const known = new Set([...me.ownedSystemIds, ...me.surveyedSystemIds]);
+    const target = view.galaxy
+      .allSystems()
+      .filter((s) => s.id !== view.galaxy.hubId && s.id !== idle.stationedAt && !known.has(s.id))
+      .map((s) => ({ s, path: view.galaxy.shortestWarpPath(idle.stationedAt, s.id, idle.rangeTier) }))
+      .filter((e) => e.path && e.path.routes.length > 0)
+      .sort((a, b) => a.path!.transitTime - b.path!.transitTime)[0];
+    if (target) return [{ kind: "surveySystem", fromSystemId: idle.stationedAt, targetSystemId: target.s.id }];
+  }
+
+  // Otherwise keep exactly one survey vessel in the fleet, built once the corp can spare the cash.
+  if (scouts.length === 0 && me.credits > t.surveyShipCost * 4) {
+    return [{ kind: "buildSurveyShip", systemId: me.ownedSystemIds[0]! }];
+  }
+  return [];
 }
 
 /**

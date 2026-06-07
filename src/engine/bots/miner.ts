@@ -22,6 +22,7 @@ import {
   maybeExpand,
   maybeFrontier,
   maybeResearchRange,
+  maybeSurvey,
   maybeUpgradeInfrastructure,
   sellSurplus,
   valueSystem,
@@ -45,7 +46,8 @@ export class MinerBot implements Bot {
     // Grow the local economy, then keep climbing the range-tech ladder.
     orders.push(...maybeExpand(view));
     orders.push(...maybeResearchRange(view));
-    // Miners are the explorers: reach the rare-isotope frontier before other builds.
+    // Miners are the explorers: scout systems with survey vessels, then reach the frontier.
+    orders.push(...maybeSurvey(view));
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeBuildHydroponics(view));

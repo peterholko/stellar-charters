@@ -145,16 +145,6 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
         cost: 0,
         tone: "build",
       };
-    case "assay": {
-      const site = g.systems.get(order.systemId)?.sites.find((s) => s.key === order.siteKey);
-      const res = site ? resourceLabels[site.resource] : "deposit";
-      return {
-        label: `Assay ${res} deposit`,
-        detail: `survey at ${name(order.systemId)} — reveals its richness & reserves`,
-        cost: t.assayCost,
-        tone: "build",
-      };
-    }
     case "buildExtractor": {
       const site = g.systems.get(order.systemId)?.sites.find((s) => s.key === order.siteKey);
       const res = site ? resourceLabels[site.resource] : "deposit";

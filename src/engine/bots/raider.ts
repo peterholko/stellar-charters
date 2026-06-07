@@ -19,6 +19,7 @@ import {
   maybeDefendAlly,
   maybeResearchRange,
   maybeSabotage,
+  maybeSurvey,
   planRaid,
   routeExposureScore,
   sellSurplus,
@@ -48,6 +49,8 @@ export class RaiderBot implements Bot {
     // Raiders still export their own modest output to stay solvent.
     orders.push(...sellSurplus(view, 0));
     orders.push(...maybeBuildExtractor(view));
+    // Scout rival systems for raid/seizure targets with a survey vessel (Section 25).
+    orders.push(...maybeSurvey(view));
     // Aggressively haunt the busiest export lane from turn 5 onward.
     if (view.turn >= 5) orders.push(...planRaid(view, { fundFactor: 1.2 }));
     // Sabotage a reachable rival's production as well as its convoys (Section 21).

@@ -226,8 +226,6 @@ export interface Tuning {
     /** Extra credit multiplier for the least-accessible deposits (× (1 + (1-access)*mult)). */
     accessibilityMult: number;
   };
-  /** Credits to assay (reveal exact richness/reserves of) one of a system's deposits (Section 21). */
-  assayCost: number;
   /** Extraction sabotage (Section 21): raid strength needed, and turns a hit site stays offline. */
   sabotage: { minStrength: number; disableTurns: number };
   /**
@@ -391,7 +389,6 @@ export const DEFAULT_TUNING: Tuning = {
     alloyCost: 2,
     accessibilityMult: 0.8,
   },
-  assayCost: 120,
   sabotage: { minStrength: 4, disableTurns: 3 },
   war: { captureRatio: 1.1, repelLossFrac: 0.5, captureLossFrac: 0.2, durationTurns: 6, aggressorTariff: 0.35 },
   // Megastructures (Section 22): the metal-hungry demand sink. Costs escalate from a mid-game

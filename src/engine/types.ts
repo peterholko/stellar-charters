@@ -188,7 +188,7 @@ export type BodyKind = "planet" | "belt" | "star";
  * site. `extractorLevel` 0 means unworked (no output); building extractors raises it.
  * `reservesRemaining` depletes as the site is mined (null = renewable). `disabledUntil` is the
  * first turn the site is online again after sabotage / a stellar outage. `prospected` is true
- * once the owner has assayed it (knows exact richness/reserves; otherwise only a coarse hint).
+ * once the deposit is worked or its system surveyed (knows exact richness/reserves; otherwise only a coarse hint).
  */
 export interface ExtractionSite {
   /** Stable key, e.g. "planet:2:metals", "belt:0:silicates", "star:antimatter". */
@@ -617,13 +617,6 @@ export interface BuildExtractorOrder {
   siteKey: string;
 }
 
-/** Survey one of an owned system's deposits to reveal its true richness/reserves (Section 21). */
-export interface AssayOrder {
-  kind: "assay";
-  systemId: string;
-  siteKey: string;
-}
-
 /** Knock a rival system's extractor offline for several turns (Section 21 economic warfare). */
 export interface SabotageOrder {
   kind: "sabotage";
@@ -721,7 +714,6 @@ export type Order =
   | BuildPlatformOrder
   | BuildMegastructureOrder
   | BuildExtractorOrder
-  | AssayOrder
   | SabotageOrder
   | InvadeOrder
   | RedeployShipOrder

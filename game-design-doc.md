@@ -1098,9 +1098,11 @@ and `buildClientState` reveals that charter's intel only to it — surveying doe
 deposit's global "publicly worked" flag, so the intel stays private (unlike a worked deposit, whose
 richness is public to all). A charter always has full intel on systems it **owns**, so the survey
 vessel is purely about scouting *other* systems — frontier worlds you're weighing for a claim, or a
-rival's economy before you move on it. The deterministic, all-bot balance simulator is untouched
-(bots still use the cheap per-deposit `assay` internally; survey vessels are a human-facing layer that
-costs only a small ship build, so the economy sweep is unchanged).
+rival's economy before you move on it. The old per-deposit **assay** action is **removed** entirely:
+owners see their own deposits automatically, and everyone else uses survey vessels. **Bots fly them
+too** — every archetype keeps one scout in its fleet and repeatedly dispatches it to the nearest
+unsurveyed reachable system (`maybeSurvey`); a 42-turn game sees ~130 survey runs across eight
+charters, with scouts criss-crossing into rival space and returning home.
 
 ◆ END OF DOSSIER ◆
 
