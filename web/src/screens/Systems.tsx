@@ -12,14 +12,12 @@ import { RESOURCES } from "@engine";
 import { PlanetArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 import { Panel, PanelTitle, Badge, Bar } from "../ui/primitives";
-import { Icon } from "../ui/icons";
 
 export function Systems() {
   const { view } = useApp();
   if (!view) return null;
   const galaxy = view.galaxy;
   const mine = view.me.ownedSystemIds.map((id) => galaxy.system(id));
-  const open = galaxy.allSystems().filter((s) => s.owner === null && s.id !== galaxy.hubId);
   const prices = view.market.prices;
   const t = view.config.tuning;
 
@@ -28,7 +26,7 @@ export function Systems() {
       <Panel className="systems__panel">
         <PanelTitle icon="systems" eyebrow="Charter Holdings" title={`Your Systems (${mine.length})`} />
         {mine.length === 0 ? (
-          <p className="hint">No systems yet. Claim an open system below to begin extraction.</p>
+          <p className="hint">No systems yet. Claim an open system from the Map to begin extraction.</p>
         ) : (
           <div className="sys-grid">
             {mine.map((s) => {
@@ -69,34 +67,6 @@ export function Systems() {
             })}
           </div>
         )}
-      </Panel>
-
-      <Panel className="systems__panel">
-        <PanelTitle icon="gavel" eyebrow="Frontier" title={`Open Claims (${open.length})`} />
-        <div className="claim-list">
-          {open.map((s) => {
-            const arch = systemArchetype(s);
-            const afford = view.me.credits >= s.claimCost && !view.me.isFreeOperator;
-            return (
-              <div key={s.id} className="claim-row" onClick={() => store.select({ kind: "system", id: s.id })}>
-                <PlanetArt archetype={arch} className="claim-row__planet" />
-                <div className="claim-row__info">
-                  <strong>{s.name}</strong>
-                  <span>{[...new Set(s.sites.map((x) => x.resource))].map((r) => resourceLabels[r]).join(" · ")}</span>
-                </div>
-                <button
-                  type="button"
-                  className="claim-row__btn"
-                  disabled={!afford}
-                  title={afford ? "Stage claim" : "Cannot afford / Free Operator"}
-                  onClick={(e) => { e.stopPropagation(); store.stage({ kind: "claim", systemId: s.id, amount: s.claimCost }); }}
-                >
-                  <Icon name="gavel" size={13} /> {formatCr(s.claimCost)}
-                </button>
-              </div>
-            );
-          })}
-        </div>
       </Panel>
     </div>
   );
