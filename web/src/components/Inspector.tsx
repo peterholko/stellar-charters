@@ -445,12 +445,14 @@ function WarControls({ view, sys }: { view: PlayerView; sys: System }) {
   const atWar = view.wars.some(
     (w) => w.endTurn > view.turn && ((w.aggressorId === me.id && w.defenderId === ownerId) || (w.aggressorId === ownerId && w.defenderId === me.id)),
   );
-  // Can a combat ship reach this system to invade?
-  const canReach = me.ships.some((sh) => {
-    if (sh.combat <= 0 || !sh.stationedAt) return false;
-    const r = view.galaxy.routeBetween(sh.stationedAt, sys.id);
-    return !!r && r.charted && r.requiredRange <= sh.rangeTier;
-  });
+  // The owned system with our largest idle fleet, and whether it can reach this target by a
+  // charted path within range (mobile fleets march through neutral space — Section 23).
+  let base: { id: string; combat: number } | undefined;
+  for (const id of me.ownedSystemIds) {
+    const combat = me.ships.filter((s) => s.combat > 0 && !s.transit && s.stationedAt === id).reduce((a, s) => a + s.combat, 0);
+    if (combat > 0 && (!base || combat > base.combat)) base = { id, combat };
+  }
+  const canReach = !!base && !!view.galaxy.shortestWarpPath(base.id, sys.id, me.rangeTier);
   return (
     <div className="war-controls">
       {atWar && <p className="hint hint--war">⚔ At war with {owner?.name ?? ownerId}.</p>}
@@ -461,10 +463,10 @@ function WarControls({ view, sys }: { view: PlayerView; sys: System }) {
             icon="crosshair"
             variant="danger"
             disabled={!canReach}
-            title={canReach ? "Invade this system — declares war and bars you from the Exchange until a ceasefire" : "Need a warship stationed on an adjacent lane"}
-            onClick={() => store.stage({ kind: "invade", systemId: sys.id })}
+            title={canReach ? "March your fleet here to assault it — entering declares war; win to capture, lose to fall back" : "Need a fleet that can reach this system by a charted route"}
+            onClick={() => base && store.stage({ kind: "moveFleet", fromSystemId: base.id, toSystemId: sys.id })}
           >
-            Invade
+            Assault
           </ActionButton>
         )}
         {allied ? (

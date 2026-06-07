@@ -145,6 +145,50 @@ describe("war & conquest (Section 23)", () => {
     expect(eng.galaxy.system("s1").owner).toBe(a.id); // concentrated force took the system
   });
 
+  it("a fleet marches several hops through neutral space and captures a non-adjacent enemy", () => {
+    // hub + s0 (corp-0) — sA (neutral) — s1 (corp-1); s0 and s1 are NOT directly linked, so the
+    // old adjacency invasion could never reach s1. A mobile fleet marches s0 → sA → s1.
+    const lane = (a: string, b: string) => ({ a, b, transitTime: 1, stability: 0.9, capacity: 40, exposure: 0.4, authorityPresence: 0.5, charted: true });
+    const scen: Scenario = {
+      name: "chain", hubId: "hub", players: 2, turns: 16, bots: ["noop"],
+      systems: [
+        { id: "hub", name: "Hub", yields: {}, claimCost: 0, upkeep: 0, defense: 99 },
+        { id: "s0", name: "S0", yields: { metals: 5 }, claimCost: 1000, upkeep: 0, defense: 2, innerRing: true },
+        { id: "sA", name: "SA", yields: { metals: 5 }, claimCost: 1000, upkeep: 0, defense: 2 },
+        { id: "s1", name: "S1", yields: { metals: 5 }, claimCost: 1000, upkeep: 0, defense: 2, innerRing: true },
+      ],
+      routes: [lane("hub", "s0"), lane("hub", "sA"), lane("hub", "s1"), lane("s0", "sA"), lane("sA", "s1")],
+    };
+    const eng = new Engine(loadScenario(scen), 1, reg());
+    const [a, d] = eng.corps;
+    for (const sys of eng.galaxy.allSystems()) if (sys.id !== "hub") sys.owner = null;
+    a!.ownedSystemIds = ["s0"]; a!.hasCharter = true; a!.isFreeOperator = false; eng.galaxy.system("s0").owner = a!.id;
+    d!.ownedSystemIds = ["s1"]; d!.hasCharter = true; d!.isFreeOperator = false; eng.galaxy.system("s1").owner = d!.id;
+    a!.ships = [{ rangeTier: 1, combat: 30, raider: false, stationedAt: "s0" }];
+    eng.makeHybrid(a!.id);
+    // S0 and S1 are not adjacent: a direct invasion can't reach.
+    expect(eng.galaxy.routeBetween("s0", "s1")).toBeUndefined();
+    eng.setHumanOrders(a!.id, [{ kind: "moveFleet", fromSystemId: "s0", toSystemId: "s1" }]);
+    eng.stepTurn();
+    eng.setHumanOrders(a!.id, null);
+    for (let i = 0; i < 4; i++) eng.stepTurn(); // march s0 → sA → s1, then fight
+    expect(eng.galaxy.system("s1").owner).toBe(a!.id); // captured after the march
+    expect(a!.ships.some((s) => s.stationedAt === "s1")).toBe(true); // fleet now occupies it
+  });
+
+  it("a fleet moved to a friendly/neutral system just re-bases (no battle)", () => {
+    const { eng, a } = setup({ attackerCombat: 12 });
+    // S2 is owned by corp-2 (not allied, not at war) — but corp-0 moves to its OWN... use s0→a-owned.
+    a.ownedSystemIds = ["s0", "s2"];
+    eng.galaxy.system("s2").owner = a.id;
+    eng.setHumanOrders(a.id, [{ kind: "moveFleet", fromSystemId: "s0", toSystemId: "s2" }]);
+    eng.stepTurn();
+    eng.setHumanOrders(a.id, null);
+    for (let i = 0; i < 3; i++) eng.stepTurn();
+    expect(a.ships.some((s) => s.stationedAt === "s2")).toBe(true); // relocated, no war
+    expect(eng.activeWars.length).toBe(0);
+  });
+
   it("allies cannot invade each other", () => {
     const { eng, a, d } = setup({ attackerCombat: 30 });
     a.alliancePledges = [d.id];

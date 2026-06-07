@@ -324,14 +324,37 @@ export interface Convoy {
   value: number;
 }
 
+/**
+ * A warship in transit between systems (Section 23 — mobile fleets). Ships ordered to move travel
+ * along charted routes over turns, exactly like a convoy. While in transit a ship's `stationedAt`
+ * is "" so it neither defends nor escorts. On arriving at a non-allied rival system it gives
+ * battle (an invasion); arriving anywhere else it simply re-bases.
+ */
+export interface ShipTransit {
+  /** Ordered system ids from origin to destination. */
+  path: string[];
+  /** Route ids connecting consecutive systems in `path`. */
+  routeIds: string[];
+  /** Index in `path` of the last system reached. */
+  position: number;
+  /** Turns remaining on the current route segment. */
+  segmentTurnsLeft: number;
+  /** Turn the move was ordered (a fleet does not advance on its launch turn). */
+  launchedTurn: number;
+  /** Destination is a non-allied rival system → resolve a battle on arrival. */
+  attack: boolean;
+}
+
 export interface Ship {
   rangeTier: RangeTier;
   /** Raiding/escort combat strength; 0 for pure cargo/survey ships. */
   combat: number;
   /** True if this ship can perform interdiction/raids. */
   raider: boolean;
-  /** Owned system this ship is based at (defends it and escorts its convoys); "" if unstationed. */
+  /** System this ship is based at (defends it and escorts its convoys); "" while in transit. */
   stationedAt: string;
+  /** Movement state when the ship is travelling between systems (Section 23). */
+  transit?: ShipTransit;
 }
 
 export interface Privateer {
@@ -546,6 +569,18 @@ export interface RedeployShipOrder {
   toSystemId: string;
 }
 
+/**
+ * Move a fleet across the galaxy (Section 23 — mobile fleets). Sends every combat ship currently
+ * at `fromSystemId` travelling along the cheapest charted path to `toSystemId` (transit takes
+ * turns). Passage through other charters' territory is peaceful; arriving at a non-allied rival's
+ * system gives battle (an invasion), capturing it on a win or falling back on a loss.
+ */
+export interface MoveFleetOrder {
+  kind: "moveFleet";
+  fromSystemId: string;
+  toSystemId: string;
+}
+
 /** Pledge a mutual defensive alliance with another charter (Section 23). Allied only once
  *  both charters have pledged each other. */
 export interface AlliancePledgeOrder {
@@ -594,6 +629,7 @@ export type Order =
   | SabotageOrder
   | InvadeOrder
   | RedeployShipOrder
+  | MoveFleetOrder
   | AlliancePledgeOrder
   | AllianceBreakOrder
   | BuySharesOrder

@@ -948,13 +948,20 @@ strategic choice rather than a constant state.
 
 ### Invasion
 
-A charter may **invade** a rival-owned system it can reach with a warfleet. The attacker's
-committed strength is the combat of its ships (and privateers) stationed on a charted lane
-adjacent to the target — so taking a defended world means **massing a fleet** there first.
-Warships can be **redeployed** between owned systems to concentrate a scattered defensive fleet
-into an offensive fist at a staging border (or, conversely, to rush reinforcements to a threatened
-world). A real conquest fleet is built from capital hulls, whose huge alloy cost (Section 22) makes
-a war fleet a serious investment only a strong charter can field. The defender's strength is the system's full standing defense — base,
+Fleets are **real objects on the galaxy map**. A charter orders a fleet to **move** from one system
+to another; it travels along charted warp routes over several turns (like a convoy), so a navy on
+campaign is a visible, intercept-able thing, and a fleet sent to the front leaves its home
+undefended. Passage through other charters' territory is **peaceful** — borders don't stop a fleet
+passing through — but **entering a non-allied rival's system is an act of war**: the arriving fleet
+gives battle. If its combat beats the system's defense (incl. allied reinforcement) by the capture
+ratio, it **captures and occupies** the world; otherwise it is repelled, takes heavy losses, and
+**falls back** to a neighbouring friendly/neutral system. A charter that loses its last system
+collapses into a Free Operator. The Wormhole Hub itself is Authority-protected and cannot be taken.
+
+Because fleets march, **reach is no longer limited to your neighbours** — you can project power
+(or come to a distant ally's aid) anywhere a charted path leads. A real conquest fleet is built
+from capital hulls, whose huge alloy cost (Section 22) makes a war fleet a serious investment only
+a strong charter can field. The defender's strength is the system's full standing defense — base,
 defense platforms, Mining-Rig fortification, megastructures, a Trade Depot's patrols, and any
 warships stationed there — **plus allied reinforcement** (below). If the attacker exceeds the
 defense by the capture ratio, the system is **captured** and its ownership transfers (a charter

@@ -39,6 +39,7 @@ import {
   type Order,
   type PopulationStage,
   type Resource,
+  type Ship,
   type System,
   type War,
 } from "./types.js";
@@ -357,7 +358,10 @@ export class Engine {
     // 5. Route interdiction (predictive) + 6. targeted raids.
     const raidStats = this.resolveRaids(ordersByCorp);
 
-    // 6.7 Invasions & conquest (Section 23): capture rival systems, declaring/extending war.
+    // 6.6 Fleet movement (Section 23): advance travelling fleets; arrivals at hostile systems fight.
+    this.resolveFleetMovement();
+
+    // 6.7 Invasions & conquest (Section 23): capture adjacent rival systems (the static-force path).
     this.resolveInvasions(ordersByCorp);
 
     // 7. Arrivals & settlements.
@@ -594,6 +598,35 @@ export class Engine {
             this.metrics.platformsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Defense platform", systemId: sys.id });
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
+            break;
+          }
+          case "moveFleet": {
+            // Send every idle combat ship at `fromSystemId` travelling to `toSystemId` along the
+            // cheapest charted path (Section 23 — mobile fleets). Passage is peaceful; arriving at
+            // a non-allied rival's system gives battle.
+            const from = this.galaxy.systems.get(order.fromSystemId);
+            const to = this.galaxy.systems.get(order.toSystemId);
+            if (!from || !to || from.id === to.id) break;
+            const fleet = corp.ships.filter((s) => s.combat > 0 && !s.transit && s.stationedAt === from.id);
+            if (fleet.length === 0) break;
+            const minTier = fleet.map((s) => s.rangeTier).reduce((a, b) => (a < b ? a : b));
+            const path = this.galaxy.shortestWarpPath(from.id, to.id, minTier);
+            if (!path || path.routes.length === 0) break; // no charted path within range
+            const attack = to.owner !== null && to.owner !== corp.id && !this.areAllied(corp.id, to.owner);
+            const firstRoute = this.galaxy.routes.get(path.routes[0]!);
+            for (const ship of fleet) {
+              ship.stationedAt = ""; // leaves home — no longer defends/escorts
+              ship.transit = {
+                path: path.systems,
+                routeIds: path.routes,
+                position: 0,
+                segmentTurnsLeft: firstRoute ? firstRoute.transitTime : 1,
+                launchedTurn: this.turn,
+                attack,
+              };
+            }
+            this.events.push({ type: "build", corpId: corp.id, what: `Fleet to ${to.name}`, systemId: to.id });
+            this.log(`  ${corp.name} sends a fleet from ${from.name} toward ${to.name}${attack ? " (assault)" : ""}`);
             break;
           }
           case "redeployShip": {
@@ -1227,7 +1260,6 @@ export class Engine {
    * invasion declares/extends war; capture transfers the system (and may unseat a charter).
    */
   private resolveInvasions(ordersByCorp: Map<string, Order[]>): void {
-    const t = this.config.tuning.war;
     for (const corp of this.corps) {
       for (const order of ordersByCorp.get(corp.id) ?? []) {
         if (order.kind !== "invade") continue;
@@ -1237,40 +1269,126 @@ export class Engine {
         if (this.areAllied(corp.id, sys.owner)) continue; // allies don't invade each other
         const attack = this.invasionAttackForce(corp, sys);
         if (attack <= 0) continue; // no military able to reach the target
-        const defenderId = sys.owner;
-        const defense = this.invasionDefenseForce(sys);
-        this.declareOrExtendWar(corp.id, defenderId);
-        this.addGrudge(defenderId, corp.id, 3); // invasion is the gravest grievance
-        // Defensive pact (Section 23): the defender's allies are drawn into the war against the
-        // aggressor and will counter-attack it (penalty-free, as defenders).
-        for (const ally of this.corps) {
-          if (!this.areAllied(defenderId, ally.id)) continue;
-          this.declareOrExtendWar(corp.id, ally.id, true);
-          this.addGrudge(ally.id, corp.id, 3);
-          this.events.push({ type: "pactInvoked", protectorId: ally.id, aggressorId: corp.id, allyId: defenderId });
-          this.log(`  PACT: ${this.name(ally.id)} joins the war against ${this.name(corp.id)} to defend ${this.name(defenderId)}`);
-        }
-        const captured = attack >= Math.max(1, defense) * t.captureRatio;
-        if (captured) {
-          const prevOwner = this.corps.find((c) => c.id === defenderId);
-          if (prevOwner) {
-            prevOwner.ownedSystemIds = prevOwner.ownedSystemIds.filter((id) => id !== sys.id);
-            for (const ship of prevOwner.ships) if (ship.stationedAt === sys.id) ship.stationedAt = "";
-            if (prevOwner.ownedSystemIds.length === 0) {
-              prevOwner.hasCharter = false;
-              prevOwner.isFreeOperator = true;
-            }
-          }
-          sys.owner = corp.id;
-          corp.ownedSystemIds.push(sys.id);
-          this.grantStarterExtractor(sys);
-          this.applyInvaderLosses(corp, attack, t.captureLossFrac);
-        } else {
-          this.applyInvaderLosses(corp, attack, t.repelLossFrac);
-        }
-        this.events.push({ type: "invasion", attackerId: corp.id, defenderId, systemId: sys.id, captured });
-        this.log(`  INVASION: ${corp.name} ${captured ? "captures" : "is repelled at"} ${sys.name}`);
+        this.resolveBattle(corp, sys, attack, null);
       }
+    }
+  }
+
+  /**
+   * Resolve a battle for a system (Section 23): declare/extend war, pull the defender's allies in,
+   * and capture the system if the attacker's committed force beats the defense by `captureRatio`,
+   * else repel it. Losses fall on `fleet` if given (a mobile fleet), otherwise on the attacker's
+   * stationed military. Returns whether the system was captured.
+   */
+  private resolveBattle(attacker: Corporation, sys: System, attackForce: number, fleet: Ship[] | null): boolean {
+    const t = this.config.tuning.war;
+    const defenderId = sys.owner!;
+    const defense = this.invasionDefenseForce(sys);
+    this.declareOrExtendWar(attacker.id, defenderId);
+    this.addGrudge(defenderId, attacker.id, 3); // invasion is the gravest grievance
+    // Defensive pact (Section 23): draw the defender's allies into the war against the aggressor.
+    for (const ally of this.corps) {
+      if (!this.areAllied(defenderId, ally.id)) continue;
+      this.declareOrExtendWar(attacker.id, ally.id, true);
+      this.addGrudge(ally.id, attacker.id, 3);
+      this.events.push({ type: "pactInvoked", protectorId: ally.id, aggressorId: attacker.id, allyId: defenderId });
+      this.log(`  PACT: ${this.name(ally.id)} joins the war against ${this.name(attacker.id)} to defend ${this.name(defenderId)}`);
+    }
+    const captured = attackForce >= Math.max(1, defense) * t.captureRatio;
+    if (captured) {
+      const prevOwner = this.corps.find((c) => c.id === defenderId);
+      if (prevOwner) {
+        prevOwner.ownedSystemIds = prevOwner.ownedSystemIds.filter((id) => id !== sys.id);
+        for (const ship of prevOwner.ships) if (ship.stationedAt === sys.id) ship.stationedAt = "";
+        if (prevOwner.ownedSystemIds.length === 0) {
+          prevOwner.hasCharter = false;
+          prevOwner.isFreeOperator = true;
+        }
+      }
+      sys.owner = attacker.id;
+      attacker.ownedSystemIds.push(sys.id);
+      this.grantStarterExtractor(sys);
+    }
+    const frac = captured ? t.captureLossFrac : t.repelLossFrac;
+    if (fleet) this.applyFleetLosses(attacker, fleet, attackForce, frac);
+    else this.applyInvaderLosses(attacker, attackForce, frac);
+    this.events.push({ type: "invasion", attackerId: attacker.id, defenderId, systemId: sys.id, captured });
+    this.log(`  INVASION: ${attacker.name} ${captured ? "captures" : "is repelled at"} ${sys.name}`);
+    return captured;
+  }
+
+  /** Destroy `committed × frac` of a specific fleet's combat (Section 23 mobile-fleet battle). */
+  private applyFleetLosses(corp: Corporation, fleet: Ship[], committed: number, frac: number): void {
+    let remaining = committed * frac;
+    const destroyed = new Set<Ship>();
+    for (const ship of fleet) {
+      if (remaining <= 0) break;
+      if (ship.combat <= 0) continue;
+      const a = Math.min(ship.combat, remaining);
+      ship.combat -= a;
+      remaining -= a;
+      if (ship.combat <= 0) destroyed.add(ship);
+    }
+    corp.ships = corp.ships.filter((s) => !destroyed.has(s));
+  }
+
+  /**
+   * Advance every ship in transit one turn (Section 23). On reaching its destination a fleet
+   * re-bases there — unless the destination is a non-allied rival system, in which case the
+   * arriving ships give battle: a win captures and occupies the system, a loss falls back.
+   */
+  private resolveFleetMovement(): void {
+    // Group ships that arrive at the same destination this turn so a fleet fights as one.
+    const arrivals = new Map<string, { corp: Corporation; sys: System; ships: Ship[]; attack: boolean }>();
+    for (const corp of this.corps) {
+      for (const ship of corp.ships) {
+        const tr = ship.transit;
+        if (!tr) continue;
+        if (tr.launchedTurn >= this.turn) continue; // ordered this turn — does not advance yet
+        tr.segmentTurnsLeft -= 1;
+        if (tr.segmentTurnsLeft > 0) continue;
+        tr.position += 1;
+        if (tr.position < tr.path.length - 1) {
+          const nextRoute = this.galaxy.routes.get(tr.routeIds[tr.position]!);
+          tr.segmentTurnsLeft = nextRoute ? nextRoute.transitTime : 1;
+          continue;
+        }
+        // Reached the destination.
+        const dest = tr.path[tr.path.length - 1]!;
+        const sys = this.galaxy.systems.get(dest);
+        const hostile = !!sys && sys.owner !== null && sys.owner !== corp.id && !this.areAllied(corp.id, sys.owner);
+        if (sys && hostile && tr.attack && dest !== this.galaxy.hubId) {
+          const key = `${corp.id}|${dest}`;
+          const g = arrivals.get(key) ?? { corp, sys, ships: [], attack: true };
+          g.ships.push(ship);
+          arrivals.set(key, g);
+          ship.stationedAt = ""; // resolved below
+          ship.transit = undefined;
+        } else {
+          // Peaceful arrival (own/allied/neutral) — re-base here. (A would-be attack on a system
+          // that is no longer hostile just becomes a peaceful move.)
+          ship.stationedAt = sys ? dest : tr.path[tr.position - 1] ?? dest;
+          ship.transit = undefined;
+        }
+      }
+    }
+    // Resolve each arriving fleet's battle.
+    for (const { corp, sys, ships } of arrivals.values()) {
+      if (sys.owner === null || sys.owner === corp.id) {
+        for (const s of ships) s.stationedAt = sys.id; // target changed hands first — just occupy
+        continue;
+      }
+      const force = ships.reduce((sum, s) => sum + s.combat, 0);
+      const fallback = sys.routeIds
+        .map((rid) => this.galaxy.route(rid))
+        .map((r) => (r.a === sys.id ? r.b : r.a))
+        .find((id) => {
+          const n = this.galaxy.systems.get(id);
+          return n && (n.owner === corp.id || n.owner === null || this.areAllied(corp.id, n.owner ?? ""));
+        }) ?? sys.id;
+      const captured = this.resolveBattle(corp, sys, force, ships);
+      // Survivors occupy on a win, fall back to a friendly/neutral neighbour on a loss.
+      for (const s of corp.ships) if (ships.includes(s)) s.stationedAt = captured ? sys.id : fallback;
     }
   }
 

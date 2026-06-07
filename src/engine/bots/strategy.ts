@@ -373,6 +373,46 @@ function warEnemies(view: PlayerView): Set<string> {
   return new Set(view.wars.filter((w) => w.endTurn > view.turn && w.defenderId === view.me.id).map((w) => w.aggressorId));
 }
 
+/** The owned system holding our largest idle combat fleet — the natural staging base for a campaign. */
+function fleetBase(view: PlayerView): { sysId: string; combat: number } | undefined {
+  let best: { sysId: string; combat: number } | undefined;
+  for (const id of view.me.ownedSystemIds) {
+    const combat = view.me.ships
+      .filter((s) => s.combat > 0 && !s.transit && s.stationedAt === id)
+      .reduce((a, s) => a + s.combat, 0);
+    if (combat > 0 && (!best || combat > best.combat)) best = { sysId: id, combat };
+  }
+  return best;
+}
+
+/** A charted path within our range exists between two systems (mobile fleets can pass peacefully). */
+function pathExists(view: PlayerView, from: string, to: string): boolean {
+  return !!view.galaxy.shortestWarpPath(from, to, view.me.rangeTier);
+}
+
+/** True if we already have a fleet committed to an assault (don't open a second front mid-march). */
+function fleetOnCampaign(view: PlayerView): boolean {
+  return view.me.ships.some((s) => s.transit?.attack);
+}
+
+/** A target is reachable if any of our systems connects to it by charted routes within range. */
+function reachableFromTerritory(view: PlayerView, sys: System): boolean {
+  return view.me.ownedSystemIds.some((id) => pathExists(view, id, sys.id));
+}
+
+/** Send our staging fleet to seize/relieve `target` if it's strong enough, else grow the fleet. */
+function campaignAgainst(view: PlayerView, target: System, marginBonus: number): Order[] {
+  if (fleetOnCampaign(view)) return [];
+  const base = fleetBase(view);
+  const need = systemDefenseEstimate(view, target) * (view.config.tuning.war.captureRatio + marginBonus);
+  if (base && base.combat >= need && pathExists(view, base.sysId, target.id)) {
+    return [{ kind: "moveFleet", fromSystemId: base.sysId, toSystemId: target.id }];
+  }
+  // Not strong enough yet (or no fleet): build the warfleet up at the base.
+  const buildAt = base?.sysId ?? view.me.ownedSystemIds[0];
+  return buildAt ? buildWarshipAt(view, buildAt) : [];
+}
+
 /** Combat strength this corp can bring against a target system (ships/privateers in range). */
 function attackForceOn(view: PlayerView, sys: System): number {
   let f = 0;
@@ -473,7 +513,7 @@ function hegemonId(view: PlayerView): string | undefined {
 function resolveConquestTarget(view: PlayerView, state: BotState): System | undefined {
   const valid = (sys: System | undefined): sys is System =>
     !!sys && sys.owner !== null && sys.owner !== view.me.id && sys.id !== view.galaxy.hubId &&
-    !areAlliedView(view, view.me.id, sys.owner) && !!stagingFor(view, sys);
+    !areAlliedView(view, view.me.id, sys.owner) && reachableFromTerritory(view, sys);
   const current = state.conquestTarget ? view.galaxy.systems.get(state.conquestTarget) : undefined;
   if (valid(current)) return current;
   const cap = view.config.tuning.shipCombat[view.me.rangeTier] * 5 + 50; // willing to mass for a defended prize
@@ -506,25 +546,7 @@ export function maybeConquest(view: PlayerView, state: BotState): Order[] {
   // multiple fronts — Section 23.)
   const target = resolveConquestTarget(view, state);
   if (!target) return [];
-  const staging = stagingFor(view, target);
-  if (!staging) { state.conquestTarget = undefined; return []; }
-  const force = attackForceOn(view, target);
-  const need = systemDefenseEstimate(view, target) * (view.config.tuning.war.captureRatio + 0.05);
-  if (force >= need) {
-    state.conquestTarget = undefined; // mission accomplished (or about to be)
-    return [{ kind: "invade", systemId: target.id }];
-  }
-  // Mass the fleet: pull a warship in from another owned system, and build a fresh hull here.
-  const orders: Order[] = [];
-  for (const id of view.me.ownedSystemIds) {
-    if (id === staging.id) continue;
-    if (view.me.ships.some((s) => s.stationedAt === id && s.combat > 0)) {
-      orders.push({ kind: "redeployShip", fromSystemId: id, toSystemId: staging.id });
-      break; // one redeploy per turn
-    }
-  }
-  orders.push(...buildWarshipAt(view, staging.id));
-  return orders;
+  return campaignAgainst(view, target, 0.05);
 }
 
 /**
@@ -538,26 +560,11 @@ export function maybeDefendAlly(view: PlayerView, state: BotState): Order[] {
   const enemies = warEnemies(view);
   if (enemies.size === 0) return [];
   const targets = view.galaxy.allSystems().filter(
-    (s): s is System => s.owner !== null && enemies.has(s.owner) && !!stagingFor(view, s),
+    (s): s is System => s.owner !== null && enemies.has(s.owner) && reachableFromTerritory(view, s),
   );
   if (targets.length === 0) return [];
   const target = targets.sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a))[0]!;
-  const staging = stagingFor(view, target)!;
-  const force = attackForceOn(view, target);
-  if (force >= systemDefenseEstimate(view, target) * view.config.tuning.war.captureRatio) {
-    return [{ kind: "invade", systemId: target.id }];
-  }
-  // Mobilise: pull a warship to the staging system and build a fresh hull there.
-  const orders: Order[] = [];
-  for (const id of view.me.ownedSystemIds) {
-    if (id === staging.id) continue;
-    if (view.me.ships.some((s) => s.combat > 0 && s.stationedAt === id)) {
-      orders.push({ kind: "redeployShip", fromSystemId: id, toSystemId: staging.id });
-      break;
-    }
-  }
-  orders.push(...buildWarshipAt(view, staging.id));
-  return orders;
+  return campaignAgainst(view, target, 0);
 }
 
 /**
