@@ -30,7 +30,9 @@ export function Systems() {
   const sys = selSys ? galaxy.systems.get(selSys) ?? null : null;
   const canBuild = !view.me.isFreeOperator;
 
-  const pickSystem = (id: string) => { setSelSys(id); setSelBody(null); store.select({ kind: "system", id }); };
+  // Drive only this screen's local state — the right-sidebar inspector is hidden on the Systems
+  // screen, so we deliberately don't call store.select here (that would resurface the old panel).
+  const pickSystem = (id: string) => { setSelSys(id); setSelBody(null); };
 
   return (
     <div className="systems2">

@@ -89,6 +89,10 @@ input, select { font-family: inherit; }
   grid-template-columns: 92px minmax(0, 1fr) clamp(400px, 26vw, 520px);
   gap: 0;
 }
+/* Systems screen carries its own master→detail layout, so drop the inspector sidebar there. */
+.shell__body--full {
+  grid-template-columns: 92px minmax(0, 1fr);
+}
 
 /* nav rail */
 .navrail {

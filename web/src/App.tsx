@@ -125,7 +125,7 @@ export function App() {
   return (
     <div className={`shell ${drawer ? "shell--drawer" : ""}`}>
       {top}
-      <div className="shell__body">
+      <div className={`shell__body${nav === "systems" ? " shell__body--full" : ""}`}>
         <nav className="navrail">
           {NAV.map((n) => (
             <button key={n.id} type="button" className={`navrail__btn${nav === n.id ? " is-active" : ""}`} onClick={() => store.setNav(n.id)} title={n.label}>
@@ -140,9 +140,11 @@ export function App() {
           <Screen nav={nav} />
         </main>
 
-        <aside className="sidestack">
-          <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
-        </aside>
+        {nav !== "systems" && (
+          <aside className="sidestack">
+            <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
+          </aside>
+        )}
       </div>
 
       {/* Mobile bottom nav */}
