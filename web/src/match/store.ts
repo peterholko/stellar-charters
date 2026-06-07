@@ -20,6 +20,7 @@ export type ViewId =
   | "convoys"
   | "fleet"
   | "finance"
+  | "turn"
   | "report";
 
 export type ThemeId = "terminal" | "used-future" | "clean";

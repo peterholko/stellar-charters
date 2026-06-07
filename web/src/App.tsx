@@ -6,7 +6,6 @@ import { CorpCrest } from "./theme/art";
 import { useAuth } from "./auth/AuthContext";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { Inspector } from "./components/Inspector";
-import { OrderTray } from "./components/OrderTray";
 import { Dashboard } from "./screens/Dashboard";
 import { GalaxyMap } from "./screens/GalaxyMap";
 import { Systems } from "./screens/Systems";
@@ -14,6 +13,7 @@ import { Exchange } from "./screens/Exchange";
 import { Convoys } from "./screens/Convoys";
 import { Fleet } from "./screens/Fleet";
 import { Finance } from "./screens/Finance";
+import { Turn } from "./screens/Turn";
 import { Report } from "./screens/Report";
 
 const NAV: { id: ViewId; label: string; icon: IconName }[] = [
@@ -24,6 +24,7 @@ const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "convoys", label: "Convoys", icon: "convoys" },
   { id: "fleet", label: "Fleet", icon: "fleet" },
   { id: "finance", label: "Finance", icon: "finance" },
+  { id: "turn", label: "Turn", icon: "send" },
   { id: "report", label: "Report", icon: "report" },
 ];
 
@@ -36,6 +37,7 @@ function Screen({ nav }: { nav: ViewId }) {
     case "convoys": return <Convoys />;
     case "fleet": return <Fleet />;
     case "finance": return <Finance />;
+    case "turn": return <Turn />;
     case "report": return <Report />;
   }
 }
@@ -126,9 +128,10 @@ export function App() {
       <div className="shell__body">
         <nav className="navrail">
           {NAV.map((n) => (
-            <button key={n.id} type="button" className={nav === n.id ? "is-active" : ""} onClick={() => store.setNav(n.id)} title={n.label}>
+            <button key={n.id} type="button" className={`navrail__btn${nav === n.id ? " is-active" : ""}`} onClick={() => store.setNav(n.id)} title={n.label}>
               <Icon name={n.icon} size={19} />
               <span>{n.label}</span>
+              {n.id === "turn" && staged.length > 0 && <span className="navrail__count">{staged.length}</span>}
             </button>
           ))}
         </nav>
@@ -139,7 +142,6 @@ export function App() {
 
         <aside className="sidestack">
           <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
-          <OrderTray view={view} staged={staged} resolving={resolving} turn={turn} totalTurns={totalTurns} submitted={iSubmitted} players={players} submittedCount={submittedCount} />
         </aside>
       </div>
 
@@ -153,11 +155,13 @@ export function App() {
         ))}
       </nav>
 
-      {/* Mobile / tablet orders drawer toggle */}
-      <button type="button" className="drawer-fab" onClick={() => setDrawer((d) => !d)}>
-        <Icon name={drawer ? "x" : "send"} size={18} />
-        {staged.length > 0 && <span className="drawer-fab__count">{staged.length}</span>}
-      </button>
+      {/* Mobile / tablet: jump to the Turn screen to review & submit (orders moved out of the drawer) */}
+      {nav !== "turn" && (
+        <button type="button" className="drawer-fab" onClick={() => store.setNav("turn")} title="Review & submit turn">
+          <Icon name="send" size={18} />
+          {staged.length > 0 && <span className="drawer-fab__count">{staged.length}</span>}
+        </button>
+      )}
       {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
 
       {phase === "over" && <OverModal />}
