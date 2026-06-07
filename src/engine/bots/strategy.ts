@@ -422,6 +422,84 @@ export function maybeInvade(view: PlayerView): Order[] {
   return best ? [{ kind: "invade", systemId: best.id }] : [];
 }
 
+/** An owned system adjacent to the target on a traversable charted lane (an invasion staging point). */
+function stagingFor(view: PlayerView, target: System): System | undefined {
+  let best: System | undefined;
+  let bestForce = -1;
+  for (const id of view.me.ownedSystemIds) {
+    const r = view.galaxy.routeBetween(id, target.id);
+    if (!r || !r.charted || r.requiredRange > view.me.rangeTier) continue;
+    const sys = view.galaxy.system(id);
+    const force = view.me.ships.filter((s) => s.combat > 0 && s.stationedAt === id).reduce((s, sh) => s + sh.combat, 0);
+    if (force > bestForce) { bestForce = force; best = sys; }
+  }
+  return best;
+}
+
+/** Build the best non-raider warship the corp can afford, stationed at `systemId` (war fleet). */
+function buildWarshipAt(view: PlayerView, systemId: string): Order[] {
+  const t = view.config.tuning;
+  const localIso = corpStock(view, "rareIsotopes");
+  const localAlloys = corpStock(view, "alloys");
+  for (let cand = view.me.rangeTier; cand >= 1; cand--) {
+    const tier = cand as RangeTier;
+    const isoBill = Math.max(0, t.shipIsotopeCost[tier] - localIso) * view.market.prices.rareIsotopes;
+    const alloyBill = Math.max(0, t.shipAlloyCost[tier] - localAlloys) * view.market.prices.alloys;
+    if (view.me.credits > (t.shipCost[tier] + isoBill + alloyBill) * 1.1) {
+      return [{ kind: "buildShip", rangeTier: tier, raider: false, systemId }];
+    }
+  }
+  return [];
+}
+
+/** Pick (and persist) a valuable, reachable rival system worth conquering. */
+function resolveConquestTarget(view: PlayerView, state: BotState): System | undefined {
+  const valid = (sys: System | undefined): sys is System =>
+    !!sys && sys.owner !== null && sys.owner !== view.me.id && sys.id !== view.galaxy.hubId &&
+    !areAlliedView(view, view.me.id, sys.owner) && !!stagingFor(view, sys);
+  const current = state.conquestTarget ? view.galaxy.systems.get(state.conquestTarget) : undefined;
+  if (valid(current)) return current;
+  // Pick the highest-value reachable rival system whose defense isn't hopeless.
+  const cap = view.config.tuning.shipCombat[view.me.rangeTier] * 3 + 20; // affordable to overcome
+  const candidates = view.galaxy.allSystems()
+    .filter((s): s is System => valid(s) && systemDefenseEstimate(view, s) <= cap)
+    .sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a));
+  state.conquestTarget = candidates[0]?.id;
+  return candidates[0];
+}
+
+/**
+ * Conquest doctrine (Section 23): striving to dominate, mass a warfleet and seize a rival's most
+ * valuable reachable system. Concentrates force at a staging system (redeploying scattered
+ * warships + building capital hulls), then invades once clearly superior. The Exchange lockout is
+ * the price of empire — only a corp that can fund a real fleet pursues this.
+ */
+export function maybeConquest(view: PlayerView, state: BotState): Order[] {
+  if (view.turn < 16 || !view.me.hasCharter || view.me.isFreeOperator) return [];
+  if (isLockedOutAggressor(view)) return []; // finish the current war before starting another
+  const target = resolveConquestTarget(view, state);
+  if (!target) return [];
+  const staging = stagingFor(view, target);
+  if (!staging) { state.conquestTarget = undefined; return []; }
+  const force = attackForceOn(view, target);
+  const need = systemDefenseEstimate(view, target) * (view.config.tuning.war.captureRatio + 0.15);
+  if (force >= need) {
+    state.conquestTarget = undefined; // mission accomplished (or about to be)
+    return [{ kind: "invade", systemId: target.id }];
+  }
+  // Mass the fleet: pull a warship in from another owned system, and build a fresh hull here.
+  const orders: Order[] = [];
+  for (const id of view.me.ownedSystemIds) {
+    if (id === staging.id) continue;
+    if (view.me.ships.some((s) => s.stationedAt === id && s.combat > 0)) {
+      orders.push({ kind: "redeployShip", fromSystemId: id, toSystemId: staging.id });
+      break; // one redeploy per turn
+    }
+  }
+  orders.push(...buildWarshipAt(view, staging.id));
+  return orders;
+}
+
 /**
  * Take out a mutual defensive alliance with a comparable charter (Section 23) — cheap insurance
  * that deters invasion. One ally is plenty; never ally with a charter we're at war with.
@@ -500,6 +578,8 @@ export function maybeUpgradeInfrastructure(view: PlayerView): Order[] {
 /** Mutable per-bot memory so a financier locks onto one acquisition target. */
 export interface BotState {
   acqTarget?: string;
+  /** A reachable rival system this corp is massing a warfleet to conquer (Section 23). */
+  conquestTarget?: string;
 }
 
 /** Resolve (and persist) which charter rival this corp is trying to take over. */

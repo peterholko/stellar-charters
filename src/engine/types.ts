@@ -532,6 +532,17 @@ export interface InvadeOrder {
   systemId: string;
 }
 
+/**
+ * Mobilise a warfleet (Section 23): restation a combat ship from one owned system to another,
+ * concentrating force for an invasion or reinforcing a threatened defense. Moves the strongest
+ * combat ship at `fromSystemId`.
+ */
+export interface RedeployShipOrder {
+  kind: "redeployShip";
+  fromSystemId: string;
+  toSystemId: string;
+}
+
 /** Pledge a mutual defensive alliance with another charter (Section 23). Allied only once
  *  both charters have pledged each other. */
 export interface AlliancePledgeOrder {
@@ -579,6 +590,7 @@ export type Order =
   | AssayOrder
   | SabotageOrder
   | InvadeOrder
+  | RedeployShipOrder
   | AlliancePledgeOrder
   | AllianceBreakOrder
   | BuySharesOrder

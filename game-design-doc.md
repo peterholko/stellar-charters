@@ -950,7 +950,11 @@ strategic choice rather than a constant state.
 
 A charter may **invade** a rival-owned system it can reach with a warfleet. The attacker's
 committed strength is the combat of its ships (and privateers) stationed on a charted lane
-adjacent to the target. The defender's strength is the system's full standing defense — base,
+adjacent to the target — so taking a defended world means **massing a fleet** there first.
+Warships can be **redeployed** between owned systems to concentrate a scattered defensive fleet
+into an offensive fist at a staging border (or, conversely, to rush reinforcements to a threatened
+world). A real conquest fleet is built from capital hulls, whose huge alloy cost (Section 22) makes
+a war fleet a serious investment only a strong charter can field. The defender's strength is the system's full standing defense — base,
 defense platforms, Mining-Rig fortification, megastructures, a Trade Depot's patrols, and any
 warships stationed there — **plus allied reinforcement** (below). If the attacker exceeds the
 defense by the capture ratio, the system is **captured** and its ownership transfers (a charter

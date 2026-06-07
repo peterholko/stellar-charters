@@ -104,6 +104,25 @@ describe("war & conquest (Section 23)", () => {
     expect(eng.galaxy.system("s1").owner).not.toBe(a.id); // alliance held the line
   });
 
+  it("redeploys a warship to concentrate force, enabling a capture that single-system force couldn't", () => {
+    // Attacker owns S0 (adjacent to defender's S1) and S2 (adjacent to S1 too), with a warship at
+    // each. Neither alone beats the defense; mobilising S2's fleet to S0 concentrates enough force.
+    const { eng, a } = setup({ attackerCombat: 7, defenderEscort: 8 });
+    a.ownedSystemIds = ["s0", "s2"];
+    eng.galaxy.system("s2").owner = a.id;
+    a.ships = [
+      { rangeTier: 1, combat: 7, raider: false, stationedAt: "s0" },
+      { rangeTier: 1, combat: 7, raider: false, stationedAt: "s2" },
+    ];
+    // Redeploy S2's warship to S0, then invade S1 with the combined 14 vs defense ~12.
+    eng.setHumanOrders(a.id, [
+      { kind: "redeployShip", fromSystemId: "s2", toSystemId: "s0" },
+      { kind: "invade", systemId: "s1" },
+    ]);
+    eng.stepTurn();
+    expect(eng.galaxy.system("s1").owner).toBe(a.id); // concentrated force took the system
+  });
+
   it("allies cannot invade each other", () => {
     const { eng, a, d } = setup({ attackerCombat: 30 });
     a.alliancePledges = [d.id];

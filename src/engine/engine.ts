@@ -589,6 +589,23 @@ export class Engine {
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
             break;
           }
+          case "redeployShip": {
+            // Mobilise a warfleet (Section 23): move the strongest combat ship between two owned
+            // systems to concentrate force for an invasion or reinforce a threatened defense.
+            const from = this.galaxy.systems.get(order.fromSystemId);
+            const to = this.galaxy.systems.get(order.toSystemId);
+            if (!from || !to || from.id === to.id) break;
+            if (from.owner !== corp.id || to.owner !== corp.id) break;
+            let best: (typeof corp.ships)[number] | undefined;
+            for (const s of corp.ships) {
+              if (s.stationedAt === from.id && s.combat > 0 && (!best || s.combat > best.combat)) best = s;
+            }
+            if (!best) break;
+            best.stationedAt = to.id;
+            this.events.push({ type: "build", corpId: corp.id, what: "Redeployed warship", systemId: to.id });
+            this.log(`  ${corp.name} redeploys a Range-${best.rangeTier} warship to ${to.name}`);
+            break;
+          }
           case "buildMegastructure": {
             // Pour overproduced metal into a grand construction (Section 22). One of each per
             // system, gated by population; consumes an enormous metals + alloys bill (drawn from

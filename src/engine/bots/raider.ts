@@ -15,7 +15,7 @@ import {
   maybeBuildExtractor,
   maybeBuildPlatforms,
   maybeBuildWarships,
-  maybeInvade,
+  maybeConquest,
   maybeResearchRange,
   maybeSabotage,
   planRaid,
@@ -51,10 +51,10 @@ export class RaiderBot implements Bot {
     if (view.turn >= 5) orders.push(...planRaid(view, { fundFactor: 1.2 }));
     // Sabotage a reachable rival's production as well as its convoys (Section 21).
     if (view.turn >= 8) orders.push(...maybeSabotage(view));
-    // Diplomacy & conquest (Section 23): take an ally for cover, then invade a weak neighbour
-    // when militarily dominant (accepting the Exchange lockout for the territory).
+    // Diplomacy & conquest (Section 23): take an ally for cover, then mass a warfleet and seize
+    // a rival's most valuable reachable system (accepting the Exchange lockout for the territory).
     orders.push(...maybeAlliance(view));
-    orders.push(...maybeInvade(view));
+    orders.push(...maybeConquest(view, this.state));
     // Advance range tech, then defend its home system and convoys.
     orders.push(...maybeResearchRange(view));
     orders.push(...maybeBuildPlatforms(view));

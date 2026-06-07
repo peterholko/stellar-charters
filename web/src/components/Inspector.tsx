@@ -242,6 +242,7 @@ export function Inspector({
                 {!sys.hasDepot && <ActionButton icon="systems" onClick={() => store.stage({ kind: "buildDepot", systemId: sys.id })}>Depot</ActionButton>}
                 <ActionButton icon="flask" onClick={() => store.stage({ kind: "buildHydroponics", systemId: sys.id })}>Hydro</ActionButton>
                 {sys.platforms < t.platformCap && <ActionButton icon="shield" onClick={() => store.stage({ kind: "buildPlatform", systemId: sys.id })}>Platform</ActionButton>}
+                <ReinforceButton view={view} sys={sys} />
               </div>
               <MegastructureBuilds sys={sys} view={view} />
             </>
@@ -349,6 +350,26 @@ function SystemComposition({ sys, canBuild, turn, totalTurns, assayCost }: { sys
         })}
       </div>
     </div>
+  );
+}
+
+/** Redeploy the strongest warship from another owned system to this one (Section 23 mobilisation) —
+ *  mass force at a staging border for an invasion, or reinforce a threatened world. */
+function ReinforceButton({ view, sys }: { view: PlayerView; sys: System }) {
+  const source = view.me.ownedSystemIds
+    .filter((id) => id !== sys.id)
+    .map((id) => ({ id, force: view.me.ships.filter((s) => s.combat > 0 && s.stationedAt === id).reduce((s, sh) => s + sh.combat, 0) }))
+    .filter((e) => e.force > 0)
+    .sort((a, b) => b.force - a.force)[0];
+  if (!source) return null;
+  return (
+    <ActionButton
+      icon="convoys"
+      title="Redeploy your strongest warship here to mass for an invasion or reinforce this system"
+      onClick={() => store.stage({ kind: "redeployShip", fromSystemId: source.id, toSystemId: sys.id })}
+    >
+      Reinforce
+    </ActionButton>
   );
 }
 
