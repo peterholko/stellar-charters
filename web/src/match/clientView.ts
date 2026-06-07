@@ -79,7 +79,13 @@ export function reconstructView(state: ClientState): PlayerView {
     if (cs.stockpile) sys.stockpile = cs.stockpile;
     // Overlay the server's (fogged) extraction sites + star (Section 21). The rebuilt galaxy
     // has no deposits of its own (bodies aren't shipped), so these are the source of truth.
-    if (cs.starType) sys.bodies = { starType: cs.starType, planets: [], asteroidBelts: [] };
+    if (cs.starType || cs.planets.length) {
+      sys.bodies = {
+        starType: cs.starType ?? "mainSequence",
+        planets: cs.planets.map((p) => ({ type: p.type, orbit: p.orbit, habitable: p.habitable, visualSeed: 0, deposits: [] })),
+        asteroidBelts: cs.asteroidBelts.map((b) => ({ orbit: b.orbit, deposits: [] })),
+      };
+    }
     sys.sites = cs.sites.map((cse) => ({
       key: cse.key,
       bodyKind: cse.bodyKind,

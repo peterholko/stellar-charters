@@ -66,6 +66,10 @@ export interface ClientSystem {
   yields?: Stockpile;
   /** The system's star (Section 21), for rendering + stellar forecasts. */
   starType?: StarType;
+  /** The system's worlds in orbital order (Section 21) — public geology (type/orbit/habitability). */
+  planets: { type: PlanetType; orbit: number; habitable: boolean }[];
+  /** Asteroid belts, by orbital slot (Section 21). */
+  asteroidBelts: { orbit: number }[];
   /** Fogged extraction sites — the system's resource economy (Section 21). */
   sites: ClientSite[];
   claimCost: number;
@@ -214,6 +218,8 @@ export function buildClientState(
       name: s.name,
       yields: hasFlatYields ? { ...s.yields } : undefined,
       starType: s.bodies?.starType,
+      planets: s.bodies?.planets.map((p) => ({ type: p.type, orbit: p.orbit, habitable: p.habitable })) ?? [],
+      asteroidBelts: s.bodies?.asteroidBelts.map((b) => ({ orbit: b.orbit })) ?? [],
       sites,
       claimCost: s.claimCost,
       upkeep: s.upkeep,

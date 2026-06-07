@@ -6,6 +6,7 @@ import {
   formatCr,
   megastructureLabel,
   megastructureShort,
+  planetTypeLabel,
   populationLabel,
   resourceLabels,
   routeRisk,
@@ -19,7 +20,7 @@ import {
 } from "../match/format";
 import { RESOURCES } from "@engine";
 import { Badge, Bar, Panel, PanelTitle, ActionButton } from "../ui/primitives";
-import { PlanetArt, ArtSlot, StarArt } from "../theme/ArtSlot";
+import { PlanetArt, PlanetTypeArt, ArtSlot, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 
 export function Inspector({
@@ -192,6 +193,7 @@ export function Inspector({
             {open && <div><dt>Claim cost</dt><dd>{formatCr(sys.claimCost)}</dd></div>}
           </dl>
 
+          <BodyRoster sys={sys} />
           <SystemComposition sys={sys} canBuild={mine && !view.me.isFreeOperator} turn={view.turn} totalTurns={view.config.turns} assayCost={t.assayCost} />
           {!mine && sys.owner && (
             <>
@@ -370,6 +372,37 @@ function ReinforceButton({ view, sys }: { view: PlayerView; sys: System }) {
     >
       Reinforce
     </ActionButton>
+  );
+}
+
+/** The system's worlds + asteroid belts in orbital order (Section 21). */
+function BodyRoster({ sys }: { sys: System }) {
+  const b = sys.bodies;
+  if (!b || (b.planets.length === 0 && b.asteroidBelts.length === 0)) return null;
+  const bodies = [
+    ...b.planets.map((p) => ({ kind: "planet" as const, orbit: p.orbit, type: p.type, habitable: p.habitable })),
+    ...b.asteroidBelts.map((belt) => ({ kind: "belt" as const, orbit: belt.orbit })),
+  ].sort((x, y) => x.orbit - y.orbit);
+  return (
+    <div className="bodies">
+      <h4 className="composition__title">Worlds ({b.planets.length} planet{b.planets.length === 1 ? "" : "s"}{b.asteroidBelts.length ? `, ${b.asteroidBelts.length} belt${b.asteroidBelts.length === 1 ? "" : "s"}` : ""})</h4>
+      <div className="bodies__list">
+        {bodies.map((body, i) =>
+          body.kind === "planet" ? (
+            <div key={i} className="body-chip" title={planetTypeLabel[body.type]}>
+              <PlanetTypeArt planetType={body.type} className="body-chip__art" />
+              <span className="body-chip__label">{planetTypeLabel[body.type]}</span>
+              {body.habitable && <span className="body-chip__tag">Habitable</span>}
+            </div>
+          ) : (
+            <div key={i} className="body-chip" title="Asteroid belt">
+              <span className="body-chip__art body-chip__belt" aria-hidden />
+              <span className="body-chip__label">Asteroid belt</span>
+            </div>
+          ),
+        )}
+      </div>
+    </div>
   );
 }
 
