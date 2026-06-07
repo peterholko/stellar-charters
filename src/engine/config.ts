@@ -228,6 +228,9 @@ export interface Tuning {
     captureLossFrac: number;
     /** Turns a war lasts after the latest act of aggression before a ceasefire. */
     durationTurns: number;
+    /** War tariff (Section 23): fraction skimmed off an aggressor's Exchange trades while at war
+     *  — a softer penalty than a full lockout (trade still flows, but at a cost). */
+    aggressorTariff: number;
   };
   /**
    * Megastructures (Section 22): the enormous metals/alloys demand sink. Each is one-per-system,
@@ -360,7 +363,7 @@ export const DEFAULT_TUNING: Tuning = {
   },
   assayCost: 120,
   sabotage: { minStrength: 4, disableTurns: 3 },
-  war: { captureRatio: 1.25, repelLossFrac: 0.5, captureLossFrac: 0.2, durationTurns: 6 },
+  war: { captureRatio: 1.1, repelLossFrac: 0.5, captureLossFrac: 0.2, durationTurns: 6, aggressorTariff: 0.35 },
   // Megastructures (Section 22): the metal-hungry demand sink. Costs escalate from a mid-game
   // station to the apex ringworld; metalsCost dwarfs anything else in the game so a metals-rich
   // empire finally has somewhere to pour its overproduction (and buys the shortfall at market,

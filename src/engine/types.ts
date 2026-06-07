@@ -385,6 +385,9 @@ export interface Corporation {
   hasCharter: boolean;
   /** Charters this corp has pledged to defend (Section 23). Allied iff the pledge is mutual. */
   alliancePledges: string[];
+  /** Accumulated grievance per rival (Section 23) from being raided/sabotaged/invaded — biases
+   *  this corp toward retaliating against those who wronged it. Decays over time. */
+  grudges: Record<string, number>;
 }
 
 // ----- Orders (discriminated union) -----

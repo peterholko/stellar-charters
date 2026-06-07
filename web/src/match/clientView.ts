@@ -126,6 +126,7 @@ export function reconstructView(state: ClientState): PlayerView {
     botId: "",
     hasCharter: c.hasCharter,
     alliancePledges: c.alliancePledges ?? [],
+    grudges: {}, // AI retaliation intel — not surfaced to the client
   }));
   const me = corporations.find((c) => c.id === state.humanCorpId) ?? corporations[0]!;
 

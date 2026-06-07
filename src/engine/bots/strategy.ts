@@ -453,18 +453,36 @@ function buildWarshipAt(view: PlayerView, systemId: string): Order[] {
   return [];
 }
 
-/** Pick (and persist) a valuable, reachable rival system worth conquering. */
+/** The dominant rival (the hegemon) the galaxy should gang up on, if one stands clearly above. */
+function hegemonId(view: PlayerView): string | undefined {
+  const charters = view.corporations.filter((c) => c.hasCharter && c.ownedSystemIds.length > 0);
+  if (charters.length < 3) return undefined;
+  const vals = charters.map((c) => c.valuation).sort((a, b) => a - b);
+  const median = vals[Math.floor(vals.length / 2)] ?? 0;
+  const top = charters.reduce((m, c) => (c.valuation > m.valuation ? c : m));
+  return top.id !== view.me.id && top.valuation > Math.max(1, median) * 1.6 ? top.id : undefined;
+}
+
+/** Pick (and persist) a valuable, reachable rival system worth conquering — favouring grudges
+ *  (retaliation) and the over-mighty hegemon (coalition warfare). */
 function resolveConquestTarget(view: PlayerView, state: BotState): System | undefined {
   const valid = (sys: System | undefined): sys is System =>
     !!sys && sys.owner !== null && sys.owner !== view.me.id && sys.id !== view.galaxy.hubId &&
     !areAlliedView(view, view.me.id, sys.owner) && !!stagingFor(view, sys);
   const current = state.conquestTarget ? view.galaxy.systems.get(state.conquestTarget) : undefined;
   if (valid(current)) return current;
-  // Pick the highest-value reachable rival system whose defense isn't hopeless.
   const cap = view.config.tuning.shipCombat[view.me.rangeTier] * 5 + 50; // willing to mass for a defended prize
+  const hegemon = hegemonId(view);
+  const grudge = view.me.grudges ?? {};
+  const score = (s: System): number => {
+    let v = grossYieldValue(view, s);
+    if (s.owner === hegemon) v += 4000; // dogpile the runaway leader
+    v += (grudge[s.owner ?? ""] ?? 0) * 300; // settle scores with those who wronged us
+    return v;
+  };
   const candidates = view.galaxy.allSystems()
     .filter((s): s is System => valid(s) && systemDefenseEstimate(view, s) <= cap)
-    .sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a));
+    .sort((a, b) => score(b) - score(a));
   state.conquestTarget = candidates[0]?.id;
   return candidates[0];
 }
@@ -477,7 +495,8 @@ function resolveConquestTarget(view: PlayerView, state: BotState): System | unde
  */
 export function maybeConquest(view: PlayerView, state: BotState): Order[] {
   if (view.turn < 11 || !view.me.hasCharter || view.me.isFreeOperator) return [];
-  if (isLockedOutAggressor(view)) return []; // finish the current war before starting another
+  // (No one-war limit: with only a trade tariff rather than a full lockout, a warlord can press
+  // multiple fronts — Section 23.)
   const target = resolveConquestTarget(view, state);
   if (!target) return [];
   const staging = stagingFor(view, target);
@@ -508,8 +527,9 @@ export function maybeConquest(view: PlayerView, state: BotState): Order[] {
 export function maybeAlliance(view: PlayerView): Order[] {
   if (view.turn < 8 || !view.me.hasCharter) return [];
   if (view.corporations.some((c) => c.id !== view.me.id && areAlliedView(view, view.me.id, c.id))) return [];
+  const hegemon = hegemonId(view); // never ally with the corp the galaxy should be ganging up on
   const peers = view.corporations
-    .filter((c) => c.id !== view.me.id && c.hasCharter && c.ownedSystemIds.length > 0 && !atWarView(view, view.me.id, c.id))
+    .filter((c) => c.id !== view.me.id && c.id !== hegemon && c.hasCharter && c.ownedSystemIds.length > 0 && !atWarView(view, view.me.id, c.id))
     .sort((a, b) => Math.abs(a.valuation - view.me.valuation) - Math.abs(b.valuation - view.me.valuation));
   return peers[0] ? [{ kind: "alliancePledge", targetId: peers[0].id }] : [];
 }

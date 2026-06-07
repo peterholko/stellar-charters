@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { Engine } from "../src/engine/engine.js";
-import { loadScenario, type Scenario } from "../src/engine/config.js";
+import { DEFAULT_TUNING, loadScenario, type Scenario } from "../src/engine/config.js";
 import type { Bot, BotFactory, PlayerView } from "../src/engine/bots/bot.js";
 import type { BidOrder, Order } from "../src/engine/types.js";
 
@@ -68,31 +68,38 @@ describe("war & conquest (Section 23)", () => {
     eng.stepTurn();
     expect(eng.galaxy.system("s1").owner).not.toBe(a.id); // not captured
     expect(a.ships.reduce((s, sh) => s + sh.combat, 0)).toBeLessThan(10); // took losses
-    expect(eng.isMarketLockedOut(a.id)).toBe(true); // war declared regardless
+    expect(eng.warTariffFor(a.id)).toBeGreaterThan(0); // war declared regardless
   });
 
-  it("locks the aggressor out of the Exchange until a ceasefire ends the war", () => {
+  it("tariffs the aggressor's Exchange trades until a ceasefire ends the war", () => {
     const { eng, a } = setup({ attackerCombat: 30 });
     eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
     eng.stepTurn(); // turn 1: war declared, endTurn = 1 + durationTurns(6) = 7
     eng.setHumanOrders(a.id, null);
-    expect(eng.isMarketLockedOut(a.id)).toBe(true);
+    expect(eng.warTariffFor(a.id)).toBeGreaterThan(0);
     for (let i = 0; i < 6; i++) eng.stepTurn(); // through turn 7 — ceasefire
-    expect(eng.isMarketLockedOut(a.id)).toBe(false);
+    expect(eng.warTariffFor(a.id)).toBe(0);
   });
 
-  it("an aggressor's market orders are dropped while locked out", () => {
-    const { eng, a } = setup({ attackerCombat: 30 });
-    // Invade and, the next turn while locked out, try to sell — the order must not fill.
-    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
-    eng.stepTurn();
-    const creditsBefore = a.credits;
-    eng.setHumanOrders(a.id, [{ kind: "market", side: "sell", resource: "metals", quantity: 50, limitPrice: 1, systemId: "s0", strict: false }]);
-    eng.stepTurn();
-    // The locked-out sell order is dropped: the metal stays in the stockpile (≈2 turns × 10),
-    // rather than being shipped out to the exchange. (Credits only drift down from fleet fuel.)
-    expect(eng.galaxy.system("s0").stockpile.metals).toBeGreaterThan(15);
-    expect(a.credits).toBeLessThanOrEqual(creditsBefore); // no export income gained while locked out
+  it("an aggressor still trades but its Exchange proceeds are tariffed", () => {
+    const tariff = DEFAULT_TUNING.war.aggressorTariff;
+    const sell = (atWar: boolean): number => {
+      const { eng, a } = setup({ attackerCombat: 30 });
+      eng.galaxy.system("s0").stockpile.metals = 100;
+      if (atWar) { eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]); eng.stepTurn(); }
+      const before = a.credits;
+      eng.setHumanOrders(a.id, [{ kind: "market", side: "sell", resource: "metals", quantity: 40, limitPrice: 1, systemId: "s0", strict: false }]);
+      eng.stepTurn();
+      // Export pays on arrival (1-turn hub lane), so advance one more turn to collect.
+      eng.setHumanOrders(a.id, null);
+      eng.stepTurn();
+      return a.credits - before;
+    };
+    const peace = sell(false);
+    const war = sell(true);
+    expect(tariff).toBeGreaterThan(0);
+    expect(war).toBeGreaterThan(0); // trade still flows (not a full lockout)
+    expect(war).toBeLessThan(peace); // but the war tariff skims the proceeds
   });
 
   it("a defensive alliance reinforces the defender, turning a capture into a repel", () => {

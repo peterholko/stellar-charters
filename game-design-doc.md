@@ -962,15 +962,25 @@ that loses its last system collapses into a Free Operator). Otherwise the assaul
 and the attacker loses a large fraction of the force it committed. Either way, blood is spilled and
 war is declared. The Wormhole Hub itself remains Authority-protected and cannot be invaded.
 
-### Declared war & the aggressor penalty
+### Declared war & the aggressor tariff
 
 The first invasion of a non-hostile rival **declares war** between the two charters. The
-**aggressor is barred from the Galactic Exchange** — it cannot buy or sell at the hub — until the
-war ends. This is the core deterrent: a warmonger gives up its trade lifeline for the duration, so
-conquest must pay for itself in territory. (Internal transfers between the aggressor's own systems
-still work.) A war lasts a fixed span after the latest act of aggression; once that passes, a
-**ceasefire** ends it and Exchange access is restored. A defender striking back inside an existing
-war is acting defensively — it is *not* treated as a new aggressor and keeps its market access.
+**aggressor pays a war tariff** on every Galactic Exchange trade — a fraction skimmed off each
+buy and sell at the hub — until the war ends. Trade still flows (internal transfers between the
+aggressor's own systems are untaxed entirely), but at a cost, so conquest must pay for itself in
+territory. A war lasts a fixed span after the latest act of aggression; once that passes, a
+**ceasefire** ends it and the tariff lifts. A defender striking back inside an existing war is
+acting defensively — it is *not* treated as a new aggressor and pays no tariff. The tariff is
+light enough that a committed **warlord can press several fronts at once**.
+
+### Grudges & coalitions
+
+War feeds on itself. Being **raided, sabotaged, or invaded** stokes a **grudge** against the
+attacker (grudges fade over time), and a wronged charter is biased toward retaliating — turning
+isolated raids into escalating feuds. And when one charter grows into a **hegemon** that towers
+over the field, the others stop trusting it and start **ganging up** — declining to ally with it
+and steering their conquests at *its* systems. Conquest is thus both a path to dominance and the
+galaxy's check on it: get too big and you become everyone's target.
 
 ### Defensive alliances
 

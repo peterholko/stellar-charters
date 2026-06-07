@@ -157,8 +157,8 @@ export interface ClientState {
   convoys: ClientConvoy[];
   /** Active wars between charters (Section 23). */
   wars: War[];
-  /** True if you (the viewing charter) are barred from the Exchange as a war aggressor. */
-  marketLockedOut: boolean;
+  /** Exchange tariff you (the viewing charter) pay as a war aggressor; 0 if not at war. */
+  warTariff: number;
   reports: TurnReport[];
   // ----- multiplayer / lobby (filled by the server) -----
   /** This client's seat, or null if it hasn't joined. */
@@ -308,7 +308,7 @@ export function buildClientState(
     corps,
     convoys,
     wars: engine.activeWars.map((w) => ({ ...w })),
-    marketLockedOut: engine.isMarketLockedOut(humanCorpId),
+    warTariff: engine.warTariffFor(humanCorpId),
     reports,
     // Multiplayer fields default here; the server overrides them with DB membership.
     mySeat: humanCorpId,

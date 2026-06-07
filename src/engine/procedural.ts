@@ -192,8 +192,9 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
     p.sys.bodies = generateSystemBodies(bodyRng, p.gen);
   }
 
+  // Weighted toward aggressors (Section 23) so the galaxy is a contested, warlike place.
   const bots = Array.from({ length: Math.max(players, 1) }, () =>
-    rng.pick(["miner", "raider", "balanced"]),
+    rng.pick(["miner", "raider", "balanced", "raider", "warlord", "balanced", "warlord"]),
   );
 
   return {

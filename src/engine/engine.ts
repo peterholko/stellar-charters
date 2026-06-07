@@ -119,6 +119,7 @@ export class Engine {
         botId,
         hasCharter: false,
         alliancePledges: [],
+        grudges: {},
       };
       this.corps.push(corp);
       this.bots.set(corp.id, factory());
@@ -253,9 +254,9 @@ export class Engine {
     return this.wars;
   }
 
-  /** True if `corpId` is barred from the Exchange as a war aggressor (Section 23). */
-  isMarketLockedOut(corpId: string): boolean {
-    return this.isAggressorAtWar(corpId);
+  /** The Exchange tariff `corpId` pays as a war aggressor (Section 23); 0 if not at war. */
+  warTariffFor(corpId: string): number {
+    return this.isAggressorAtWar(corpId) ? this.config.tuning.war.aggressorTariff : 0;
   }
 
   /** A player's full view of the game (the same surface bots reason over). */
@@ -325,8 +326,14 @@ export class Engine {
     this.events = [];
     const creditsBefore = new Map(this.corps.map((c) => [c.id, c.credits]));
 
-    // 0. End wars whose ceasefire has arrived (lifts the aggressor's market lockout).
+    // 0. End wars whose ceasefire has arrived (lifts the aggressor's trade tariff); fade grudges.
     this.expireWars();
+    for (const c of this.corps) {
+      for (const k of Object.keys(c.grudges)) {
+        c.grudges[k]! *= 0.85;
+        if (c.grudges[k]! < 0.5) delete c.grudges[k];
+      }
+    }
 
     // 1. Lock: collect orders from every bot.
     const ordersByCorp = new Map<string, Order[]>();
@@ -801,8 +808,6 @@ export class Engine {
     const clearables: ClearableOrder[] = [];
     const orderMeta = new Map<ClearableOrder, { corp: Corporation }>();
     for (const corp of this.corps) {
-      // War aggressors are barred from the Galactic Exchange until their wars end (Section 23).
-      if (this.isAggressorAtWar(corp.id)) continue;
       for (const order of ordersByCorp.get(corp.id) ?? []) {
         if (order.kind !== "market") continue;
         const co: ClearableOrder = {
@@ -846,7 +851,8 @@ export class Engine {
         if (!path) continue;
         const hops = path.routes.length;
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
-        const unitCost = price + this.config.tuning.shippingFeePerHop * hops * shipMult;
+        // War aggressors pay a tariff on Exchange trades (Section 23) — imports cost more.
+        const unitCost = (price + this.config.tuning.shippingFeePerHop * hops * shipMult) * (1 + this.warTariffFor(corp.id));
         const affordable = Math.min(
           fill.filledQuantity,
           Math.floor(corp.credits / Math.max(0.01, unitCost)),
@@ -885,7 +891,8 @@ export class Engine {
         sys.stockpile[resource] -= qty;
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
         const shipping = this.config.tuning.shippingFeePerHop * hops * qty * shipMult;
-        const payout = Math.max(0, qty * price - shipping);
+        // War aggressors pay a tariff on Exchange trades (Section 23) — exports earn less.
+        const payout = Math.max(0, (qty * price - shipping) * (1 - this.warTariffFor(corp.id)));
         const value = qty * this.config.tuning.basePrices[resource];
         this.events.push({
           type: "fill",
@@ -955,6 +962,8 @@ export class Engine {
           resource: convoy.resource,
           cargoLost: result.cargoDestroyed + result.cargoPlundered,
         });
+        // A struck convoy stokes a grievance against the raider (Section 23 retaliation).
+        if (result.cargoDestroyed + result.cargoPlundered > 0) this.addGrudge(convoy.owner, attacker.id, 1);
       }
       if (
         result.outcome === "noContact" ||
@@ -1063,6 +1072,7 @@ export class Engine {
         const strength = raidStrength(corp);
         const success = strength >= this.systemDefense(sys) + this.config.tuning.sabotage.minStrength;
         if (success) site.disabledUntil = this.turn + this.config.tuning.sabotage.disableTurns;
+        this.addGrudge(sys.owner, corp.id, success ? 1.5 : 0.5);
         this.events.push({
           type: "sabotage",
           attackerId: corp.id,
@@ -1098,6 +1108,13 @@ export class Engine {
 
   private name(corpId: string): string {
     return this.corps.find((c) => c.id === corpId)?.name ?? corpId;
+  }
+
+  /** Record a grievance so the victim is biased toward retaliating against the offender (Section 23). */
+  private addGrudge(victimId: string, offenderId: string, weight: number): void {
+    if (victimId === offenderId) return;
+    const v = this.corps.find((c) => c.id === victimId);
+    if (v) v.grudges[offenderId] = (v.grudges[offenderId] ?? 0) + weight;
   }
 
   /** Two charters are allied iff each has pledged to defend the other (Section 23). */
@@ -1221,6 +1238,8 @@ export class Engine {
         const defenderId = sys.owner;
         const defense = this.invasionDefenseForce(sys);
         this.declareOrExtendWar(corp.id, defenderId);
+        this.addGrudge(defenderId, corp.id, 3); // invasion is the gravest grievance
+        for (const ally of this.corps) if (this.areAllied(defenderId, ally.id)) this.addGrudge(ally.id, corp.id, 1);
         const captured = attack >= Math.max(1, defense) * t.captureRatio;
         if (captured) {
           const prevOwner = this.corps.find((c) => c.id === defenderId);
