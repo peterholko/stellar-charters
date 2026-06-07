@@ -38,7 +38,7 @@ export function ColonyPanel({
 }) {
   const colonies = coloniesOf(sys);
   if (colonies.length === 0) return null;
-  const t = view.config.tuning;
+  const names = colonyNames(sys.name, colonies);
 
   return (
     <div className="colonies">
@@ -48,11 +48,29 @@ export function ColonyPanel({
       </div>
       <div className="colonies__list">
         {colonies.map((c) => (
-          <ColonyCard key={c.key} colony={c} sys={sys} view={view} canBuild={canBuild} />
+          <ColonyCard key={c.key} colony={c} name={names.get(c.key) ?? c.bodyLabel} sys={sys} view={view} canBuild={canBuild} />
         ))}
       </div>
     </div>
   );
+}
+
+const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"];
+const roman = (n: number): string => ROMAN[n] ?? String(n);
+
+/** Conventional planetary designations: "<System> <Roman numeral>" numbered by orbital order
+ *  (planets only). Belts read "<System> Belt[ n]", the star's corona "<System> Corona". */
+function colonyNames(sysName: string, colonies: ColonyInfo[]): Map<string, string> {
+  const names = new Map<string, string>();
+  const beltCount = colonies.filter((c) => c.kind === "belt").length;
+  let p = 0;
+  let b = 0;
+  for (const c of colonies) {
+    if (c.kind === "planet") names.set(c.key, `${sysName} ${roman(++p)}`);
+    else if (c.kind === "belt") names.set(c.key, beltCount > 1 ? `${sysName} Belt ${++b}` : `${sysName} Belt`);
+    else names.set(c.key, `${sysName} Corona`);
+  }
+  return names;
 }
 
 /** System-wide power balance — factory draw vs. base + power-grid + reactor capacity (Section 07b). */
@@ -77,11 +95,13 @@ function PowerMeter({ sys, view }: { sys: System; view: PlayerView }) {
 
 function ColonyCard({
   colony,
+  name,
   sys,
   view,
   canBuild,
 }: {
   colony: ColonyInfo;
+  name: string;
   sys: System;
   view: PlayerView;
   canBuild: boolean;
@@ -108,7 +128,8 @@ function ColonyCard({
           : null;
 
   const sites = [...colony.sites].sort((a, b) => a.resource.localeCompare(b.resource));
-  const label =
+  // World type → shown as the subtitle now that the title carries the planet's designation.
+  const typeLabel =
     colony.kind === "belt"
       ? "Asteroid belt"
       : colony.kind === "star"
@@ -126,9 +147,10 @@ function ColonyCard({
           <span className="colony__art colony__belt" aria-hidden />
         )}
         <div className="colony__title">
-          <strong>{label}</strong>
+          <strong>{name}</strong>
           <span className="colony__sub">
-            {colony.orbit >= 0 ? `orbit ${colony.orbit}` : "corona"}
+            {typeLabel}
+            {colony.orbit >= 0 ? ` · orbit ${colony.orbit}` : ""}
             {colony.habitable ? " · habitable" : ""}
           </span>
         </div>
