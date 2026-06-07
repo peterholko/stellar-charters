@@ -1117,6 +1117,13 @@ helium-3). The colony build menu and order tray show each building's materials a
 cost. A 30-game / 8-player sweep stays green (leader/median ≈12, metals price-floor 0%, food-growth
 91%) — the added demand sink mildly compresses the runaway leader.
 
+The colony build menu is **descriptive** (Civ-style): every option spells out what the building does,
+its credit + materials cost, and **how long it takes to raise** — a clear per-kind spread of
+construction turns (agri-dome fast, power-grid / mining-rig quick, habitat moderate, reactor slow,
+factory slowest), with a **factory scaling by its recipe tier** (`constructionCpCost` — a tier-3
+components plant takes twice the turns of a tier-1 refinery). Build time and the queue both read from
+the same `Tuning.construction` points so the UI's "~N turns" matches what the engine resolves.
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

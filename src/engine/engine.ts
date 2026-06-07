@@ -9,7 +9,7 @@
  * available only in the next order window. Newly launched convoys therefore do not
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
-import type { GameConfig } from "./config.js";
+import { constructionCpCost, type GameConfig } from "./config.js";
 import {
   EXTRACTOR_CAP,
   agriFoodMult,
@@ -433,16 +433,11 @@ export class Engine {
   }
 
   /** Construction-point cost of one queued building kind (Section 24, Phase 4a). */
-  private constructionCost(kind: QueueBuildingKind): number {
-    const c = this.config.tuning.construction;
-    switch (kind) {
-      case "factory": return c.factory;
-      case "reactor": return c.reactor;
-      case "agridome": return c.agridome;
-      case "mining": return c.mining;
-      case "habitat": return c.habitat;
-      case "power": return c.power;
-    }
+  private constructionCost(kind: QueueBuildingKind, recipeId?: string): number {
+    const tier = kind === "factory" && recipeId
+      ? this.config.tuning.recipes.find((r) => r.id === recipeId)?.tier ?? 1
+      : 1;
+    return constructionCpCost(this.config.tuning, kind, tier);
   }
 
   /** Land a finished queue item into its colony's buildings (Section 24, Phase 4a). */
@@ -490,7 +485,7 @@ export class Engine {
 
   /** Append a build to a colony's queue, charging it now (Section 24, Phase 4a). */
   private enqueueBuild(sys: System, bodyKey: string, kind: QueueBuildingKind, recipeId?: string): void {
-    (sys.buildQueues[bodyKey] ??= []).push({ kind, recipeId, cpCost: this.constructionCost(kind), cpDone: 0 });
+    (sys.buildQueues[bodyKey] ??= []).push({ kind, recipeId, cpCost: this.constructionCost(kind, recipeId), cpDone: 0 });
   }
 
   /** Count of a building kind already built + still queued on a body, for cap checks (Phase 4a). */

@@ -3,6 +3,7 @@ import {
   agriFoodMult,
   canBuildOnBody,
   coloniesOf,
+  constructionCpCost,
   factoryCostMult,
   systemBuildings,
   systemSeed,
@@ -275,7 +276,22 @@ function ColonyQueue({ colony, rate }: { colony: ColonyInfo; rate: number }) {
   );
 }
 
-/** Per-body build menu (Section 24): factories, reactor, agri-dome, and the 07c upgrade tracks.
+interface BuildOpt {
+  key: string;
+  name: string;
+  desc: string;
+  /** e.g. "×2" for countables, "Lv 1/4" for upgrade tracks. */
+  have: string;
+  costNote: string;
+  /** Whole turns to raise at the colony's current construction rate. */
+  turns: number;
+  afford: boolean;
+  maxed?: boolean;
+  action: string; // button label
+  onClick: () => void;
+}
+
+/** Per-body build menu (Section 24): each option shows what it does, its cost, and how long it takes.
  *  Every order carries `bodyKey: colony.key`, so the build lands on this specific world. */
 function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; view: PlayerView }) {
   const t = view.config.tuning;
@@ -283,145 +299,109 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
   const b = colony.buildings;
   const credits = view.me.credits;
   const type = colony.bodyType;
-  // What this world type can host (Section 24) — domes/habitats need a livable surface, etc.
-  const canFactory = canBuildOnBody("factory", type);
-  const canReactor = canBuildOnBody("reactor", type);
-  const canAgri = canBuildOnBody("agridome", type);
-  const canHab = canBuildOnBody("habitat", type);
-  const canMining = canBuildOnBody("mining", type);
-  const canPower = canBuildOnBody("power", type);
   const factoryMult = factoryCostMult(type);
   const agriMult = agriFoodMult(type);
+  const rate = t.construction.pointsPerTurn;
+  const turnsOf = (kind: Parameters<typeof constructionCpCost>[1], tier = 1) => Math.max(1, Math.ceil(constructionCpCost(t, kind, tier) / rate));
+  const resList = (m: Record<string, number | undefined>) =>
+    Object.entries(m).filter(([, n]) => (n ?? 0) > 0).map(([r, n]) => `${n} ${(resourceLabels[r as keyof typeof resourceLabels] ?? r).toLowerCase()}`).join(" + ");
+
+  const opts: BuildOpt[] = [];
+  if (canBuildOnBody("factory", type)) {
+    for (const r of t.recipes) {
+      const cost = Math.round(r.buildCost * factoryMult);
+      const ins = resList(r.inputs);
+      const outs = resList(r.outputs);
+      opts.push({
+        key: `f-${r.id}`,
+        name: `${r.id} factory`,
+        desc: `Each turn refines ${ins} → ${outs} (needs power).`,
+        have: `×${b.processors[r.id] ?? 0}`,
+        costNote: `${formatCr(cost)} + ${matsLabel(t.buildResources.factory)}${factoryMult !== 1 ? ` · ${type} ×${factoryMult}` : ""}`,
+        turns: turnsOf("factory", r.tier),
+        afford: credits >= cost,
+        action: "Build",
+        onClick: () => store.stage({ kind: "buildProcessor", systemId: sys.id, recipeId: r.id, bodyKey: colony.key }),
+      });
+    }
+  }
+  if (canBuildOnBody("reactor", type)) {
+    opts.push({
+      key: "reactor", name: "Reactor",
+      desc: `Adds +${t.reactorPowerOutput} power; burns helium-3 to keep this system's factories running.`,
+      have: `×${b.reactors}`,
+      costNote: `${formatCr(t.reactorCost)} + ${matsLabel(t.buildResources.reactor)}`,
+      turns: turnsOf("reactor"), afford: credits >= t.reactorCost, action: "Build",
+      onClick: () => store.stage({ kind: "buildReactor", systemId: sys.id, bodyKey: colony.key }),
+    });
+  }
+  if (canBuildOnBody("agridome", type)) {
+    opts.push({
+      key: "agridome", name: "Agri-dome",
+      desc: `Converts ice into food (×${agriMult} on a ${(planetTypeLabel[type as keyof typeof planetTypeLabel] ?? "world").toLowerCase()}); local food fuels population growth.`,
+      have: `×${b.hydroponics}`,
+      costNote: `${formatCr(t.hydroponicsCost)} + ${matsLabel(t.buildResources.agridome)}`,
+      turns: turnsOf("agridome"), afford: credits >= t.hydroponicsCost, action: "Build",
+      onClick: () => store.stage({ kind: "buildHydroponics", systemId: sys.id, bodyKey: colony.key }),
+    });
+  }
+  if (canBuildOnBody("mining", type)) {
+    const lvl = b.miningRigs, cost = inf.miningCreditCost * (lvl + 1);
+    opts.push({
+      key: "mining", name: "Mining rig",
+      desc: "Fortifies the system against raids and trims its per-turn upkeep, each level.",
+      have: `Lv ${lvl}/${inf.cap}`,
+      costNote: `${formatCr(cost)} + ${inf.miningMetalsCost * (lvl + 1)} metals`,
+      turns: turnsOf("mining"), afford: credits >= cost, maxed: lvl >= inf.cap, action: "Upgrade",
+      onClick: () => store.stage({ kind: "upgradeInfrastructure", systemId: sys.id, track: "mining", bodyKey: colony.key }),
+    });
+  }
+  if (canBuildOnBody("habitat", type)) {
+    const lvl = b.habitats, cost = inf.habitatCreditCost * (lvl + 1);
+    opts.push({
+      key: "habitat", name: "Habitat",
+      desc: "Speeds this colony's population growth and raises the tax it pays, each level.",
+      have: `Lv ${lvl}/${inf.cap}`,
+      costNote: `${formatCr(cost)} + ${inf.habitatSilicatesCost * (lvl + 1)} silicates`,
+      turns: turnsOf("habitat"), afford: credits >= cost, maxed: lvl >= inf.cap, action: "Upgrade",
+      onClick: () => store.stage({ kind: "upgradeInfrastructure", systemId: sys.id, track: "habitat", bodyKey: colony.key }),
+    });
+  }
+  if (canBuildOnBody("power", type)) {
+    const lvl = b.powerGrid, cost = inf.powerCreditCost * (lvl + 1);
+    opts.push({
+      key: "power", name: "Power grid",
+      desc: `Adds +${inf.powerCapacityPerLevel} baseline power per level — a cheaper standby than reactors.`,
+      have: `Lv ${lvl}/${inf.cap}`,
+      costNote: `${formatCr(cost)} + ${inf.powerHelium3Cost * (lvl + 1)} helium-3`,
+      turns: turnsOf("power"), afford: credits >= cost, maxed: lvl >= inf.cap, action: "Upgrade",
+      onClick: () => store.stage({ kind: "upgradeInfrastructure", systemId: sys.id, track: "power", bodyKey: colony.key }),
+    });
+  }
 
   return (
     <div className="colony__builds">
-      <span className="colony__buildlabel">Buildings</span>
-      <div className="colony__buildgrid">
-        {canFactory &&
-          t.recipes.map((r) => {
-            const cost = Math.round(r.buildCost * factoryMult);
-            return (
-              <BuildChip
-                key={r.id}
-                label={`${r.id} factory`}
-                count={b.processors[r.id] ?? 0}
-                costNote={`${formatCr(cost)} + ${matsLabel(t.buildResources.factory)}${factoryMult !== 1 ? ` (${type} ×${factoryMult})` : ""}`}
-                afford={credits >= cost}
-                onClick={() => store.stage({ kind: "buildProcessor", systemId: sys.id, recipeId: r.id, bodyKey: colony.key })}
-              />
-            );
-          })}
-        {canReactor && (
-          <BuildChip
-            label="Reactor"
-            count={b.reactors}
-            costNote={`${formatCr(t.reactorCost)} + ${matsLabel(t.buildResources.reactor)}`}
-            afford={credits >= t.reactorCost}
-            onClick={() => store.stage({ kind: "buildReactor", systemId: sys.id, bodyKey: colony.key })}
-          />
-        )}
-        {canAgri && (
-          <BuildChip
-            label="Agri-dome"
-            count={b.hydroponics}
-            costNote={`${formatCr(t.hydroponicsCost)} + ${matsLabel(t.buildResources.agridome)} · food ×${agriMult}`}
-            afford={credits >= t.hydroponicsCost}
-            onClick={() => store.stage({ kind: "buildHydroponics", systemId: sys.id, bodyKey: colony.key })}
-          />
-        )}
-        {canMining && (
-          <UpgradeChip
-            label="Mining rig"
-            level={b.miningRigs}
-            cap={inf.cap}
-            costNote={`${formatCr(inf.miningCreditCost * (b.miningRigs + 1))} + ${inf.miningMetalsCost * (b.miningRigs + 1)} metals`}
-            afford={credits >= inf.miningCreditCost * (b.miningRigs + 1)}
-            onClick={() => store.stage({ kind: "upgradeInfrastructure", systemId: sys.id, track: "mining", bodyKey: colony.key })}
-          />
-        )}
-        {canHab && (
-          <UpgradeChip
-            label="Habitat"
-            level={b.habitats}
-            cap={inf.cap}
-            costNote={`${formatCr(inf.habitatCreditCost * (b.habitats + 1))} + ${inf.habitatSilicatesCost * (b.habitats + 1)} silicates`}
-            afford={credits >= inf.habitatCreditCost * (b.habitats + 1)}
-            onClick={() => store.stage({ kind: "upgradeInfrastructure", systemId: sys.id, track: "habitat", bodyKey: colony.key })}
-          />
-        )}
-        {canPower && (
-          <UpgradeChip
-            label="Power grid"
-            level={b.powerGrid}
-            cap={inf.cap}
-            costNote={`${formatCr(inf.powerCreditCost * (b.powerGrid + 1))} + ${inf.powerHelium3Cost * (b.powerGrid + 1)} helium-3`}
-            afford={credits >= inf.powerCreditCost * (b.powerGrid + 1)}
-            onClick={() => store.stage({ kind: "upgradeInfrastructure", systemId: sys.id, track: "power", bodyKey: colony.key })}
-          />
-        )}
+      <span className="colony__buildlabel">Build</span>
+      <div className="boptlist">
+        {opts.map((o) => (
+          <div key={o.key} className={`bopt${o.maxed ? " bopt--maxed" : ""}`}>
+            <div className="bopt__info">
+              <div className="bopt__top"><strong>{o.name}</strong><span className="bopt__have">{o.have}</span></div>
+              <p className="bopt__desc">{o.desc}</p>
+              <span className="bopt__cost">{o.costNote} · <span className="bopt__time">~{o.turns} turn{o.turns === 1 ? "" : "s"}</span></span>
+            </div>
+            <button
+              type="button"
+              className={`bopt__btn${o.afford || o.maxed ? "" : " bopt__btn--poor"}`}
+              disabled={o.maxed}
+              title={o.maxed ? "At maximum level" : `${o.action} · ${o.costNote} · ~${o.turns} turns`}
+              onClick={o.onClick}
+            >
+              {o.maxed ? "Max" : o.action}
+            </button>
+          </div>
+        ))}
       </div>
     </div>
-  );
-}
-
-/** A countable building (factories / reactor / agri-dome): shows current count + a build button. */
-function BuildChip({
-  label,
-  count,
-  costNote,
-  afford,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  costNote: string;
-  afford: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`build-chip${afford ? "" : " build-chip--poor"}`}
-      title={`Build ${label} · ${costNote}`}
-      onClick={onClick}
-    >
-      <span className="build-chip__label">{label}</span>
-      <span className="build-chip__count">×{count}</span>
-      <span className="build-chip__plus">+</span>
-    </button>
-  );
-}
-
-/** A levelled upgrade track (07c): shows level/cap + an upgrade button (disabled at the cap). */
-function UpgradeChip({
-  label,
-  level,
-  cap,
-  costNote,
-  afford,
-  onClick,
-}: {
-  label: string;
-  level: number;
-  cap: number;
-  costNote: string;
-  afford: boolean;
-  onClick: () => void;
-}) {
-  const maxed = level >= cap;
-  return (
-    <button
-      type="button"
-      className={`build-chip${maxed ? " build-chip--maxed" : afford ? "" : " build-chip--poor"}`}
-      title={maxed ? `${label} at max (${cap})` : `Upgrade ${label} to L${level + 1} · ${costNote}`}
-      disabled={maxed}
-      onClick={onClick}
-    >
-      <span className="build-chip__label">{label}</span>
-      <span className="build-chip__count">
-        L{level}/{cap}
-      </span>
-      {!maxed && <span className="build-chip__plus">+</span>}
-    </button>
   );
 }

@@ -14,7 +14,24 @@ import type {
   SystemBodies,
   SystemPosition,
 } from "./types.js";
-import { emptyStockpile, RESOURCES } from "./types.js";
+import { emptyStockpile, RESOURCES, type QueueBuildingKind } from "./types.js";
+
+/**
+ * Construction points a colony building costs to complete (Section 24/27): the single source of
+ * truth shared by the engine's build queue and the colony UI's "~N turns" estimate. A factory scales
+ * with its recipe tier so a higher-tier plant takes proportionally longer to raise.
+ */
+export function constructionCpCost(tuning: Tuning, kind: QueueBuildingKind, recipeTier = 1): number {
+  const c = tuning.construction;
+  const base =
+    kind === "factory" ? c.factory
+    : kind === "reactor" ? c.reactor
+    : kind === "agridome" ? c.agridome
+    : kind === "mining" ? c.mining
+    : kind === "habitat" ? c.habitat
+    : c.power;
+  return kind === "factory" ? Math.round(base * (1 + (recipeTier - 1) * 0.5)) : base;
+}
 
 /**
  * A production-chain recipe run by a Processor module (Section 07b). Each turn a processor
@@ -392,12 +409,16 @@ export const DEFAULT_TUNING: Tuning = {
   // colony serialises into a visible queue while a single build still lands fast.
   construction: {
     pointsPerTurn: 100,
-    factory: 180,
-    reactor: 140,
+    // A clear Civ-style spread (turns at 100 pts/turn): a dome goes up fast, a power grid / mining
+    // rig quick, a habitat moderate, a reactor slow, a factory slowest — and a factory scales with
+    // its recipe TIER (tier-1 ×1, tier-2 ×1.5, tier-3 ×2 via constructionCpCost), so a components
+    // plant takes far longer than a fuel refinery.
+    factory: 200,
+    reactor: 220,
     agridome: 90,
-    mining: 130,
-    habitat: 130,
-    power: 130,
+    mining: 120,
+    habitat: 160,
+    power: 120,
   },
   platformCost: 350,
   platformDefense: 1,

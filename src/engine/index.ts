@@ -8,6 +8,7 @@ export { Rng } from "./rng.js";
 export * from "./types.js";
 export {
   DEFAULT_TUNING,
+  constructionCpCost,
   loadScenario,
   normaliseYields,
   type GameConfig,
