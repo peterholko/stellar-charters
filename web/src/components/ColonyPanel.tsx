@@ -60,7 +60,7 @@ const roman = (n: number): string => ROMAN[n] ?? String(n);
 
 /** Conventional planetary designations: "<System> <Roman numeral>" numbered by orbital order
  *  (planets only). Belts read "<System> Belt[ n]", the star's corona "<System> Corona". */
-function colonyNames(sysName: string, colonies: ColonyInfo[]): Map<string, string> {
+export function colonyNames(sysName: string, colonies: ColonyInfo[]): Map<string, string> {
   const names = new Map<string, string>();
   const beltCount = colonies.filter((c) => c.kind === "belt").length;
   let p = 0;
@@ -74,7 +74,7 @@ function colonyNames(sysName: string, colonies: ColonyInfo[]): Map<string, strin
 }
 
 /** System-wide power balance — factory draw vs. base + power-grid + reactor capacity (Section 07b). */
-function PowerMeter({ sys, view }: { sys: System; view: PlayerView }) {
+export function PowerMeter({ sys, view }: { sys: System; view: PlayerView }) {
   const t = view.config.tuning;
   const b = systemBuildings(sys);
   let draw = 0;
@@ -93,7 +93,7 @@ function PowerMeter({ sys, view }: { sys: System; view: PlayerView }) {
   );
 }
 
-function ColonyCard({
+export function ColonyCard({
   colony,
   name,
   sys,
