@@ -248,6 +248,22 @@ export function emptyBodyBuildings(): BodyBuildings {
   return { processors: {}, reactors: 0, hydroponics: 0, miningRigs: 0, habitats: 0, powerGrid: 0 };
 }
 
+/** The building kinds that run through a colony's construction queue (Section 24, Phase 4a). System
+ *  structures (platforms, depot, megastructures) and per-site extractors stay instant-on-affordability. */
+export type QueueBuildingKind = "factory" | "reactor" | "agridome" | "mining" | "habitat" | "power";
+
+/** One item in a colony's build queue. Credits + resources are charged when the item is *queued*;
+ *  the building materialises once `cpDone` reaches `cpCost`, gated by the colony's construction rate. */
+export interface QueueItem {
+  kind: QueueBuildingKind;
+  /** Recipe id for a factory (`kind === "factory"`). */
+  recipeId?: string;
+  /** Construction points required to finish (Section 24). */
+  cpCost: number;
+  /** Construction points accumulated so far. */
+  cpDone: number;
+}
+
 export interface System {
   id: string;
   name: string;
@@ -275,6 +291,12 @@ export interface System {
    * system aggregates these (shared stockpile + pooled power), but construction is per-body.
    */
   bodyBuildings: Record<string, BodyBuildings>;
+  /**
+   * Per-body construction queues (Section 24, Phase 4a): each body key maps to its FIFO list of
+   * pending builds. A colony pours `construction.pointsPerTurn` into the front item each turn; when
+   * it finishes, the building lands in `bodyBuildings` and the leftover points roll to the next item.
+   */
+  buildQueues: Record<string, QueueItem[]>;
   /** Number of stationary defense platforms built here (each adds raid defense). */
   platforms: number;
   /** Megastructures built here (Section 22) — the metals/alloys demand sink + valuation race. */

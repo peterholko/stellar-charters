@@ -63,16 +63,24 @@ function engineWith(setup: (sys: System) => void, highPower = true, orders: Orde
 const corpOf = (e: Engine) => e.corps.find((c) => c.id === "corp-0")!;
 
 describe("system infrastructure upgrades", () => {
-  it("spends credits + the track's raw to add a level", () => {
+  it("charges an upgrade up front, then completes it over the construction queue (Phase 4a)", () => {
     const e = engineWith((sys) => {
       sys.stockpile.metals = 18; // exactly miningMetalsCost × level 1
     }, true, [{ kind: "upgradeInfrastructure", systemId: "s0", track: "mining" }]);
     const start = corpOf(e).credits;
     e.stepTurn();
     const sys = e.galaxy.system("s0");
-    expect(buildingTotal(sys, "miningRigs")).toBe(1);
-    expect(sys.stockpile.metals).toBeCloseTo(0, 6); // drawn from local stock
+    // Charged immediately (credits + the local raw), but the rig is still under construction.
+    expect(buildingTotal(sys, "miningRigs")).toBe(0);
+    expect(sys.stockpile.metals).toBeCloseTo(0, 6); // drawn from local stock at queue time
     expect(corpOf(e).credits).toBeCloseTo(start - 350, 6); // miningCreditCost only (raw was local)
+    const queued = Object.values(sys.buildQueues).reduce((n, q) => n + q.length, 0);
+    expect(queued).toBe(1);
+    // Construction points accumulate; the rig lands once cpCost (130) is met (≤ 2 turns at 100/turn).
+    e.stepTurn();
+    e.stepTurn();
+    expect(buildingTotal(e.galaxy.system("s0"), "miningRigs")).toBe(1);
+    expect(Object.values(e.galaxy.system("s0").buildQueues).reduce((n, q) => n + q.length, 0)).toBe(0); // queue drained
   });
 
   it("refuses to upgrade past the cap", () => {
@@ -188,6 +196,24 @@ describe("planet-type affinities (Section 24)", () => {
     const rocky = food("rocky");
     expect(rocky).toBeGreaterThan(0);
     expect(ocean / rocky).toBeCloseTo(1.5, 5); // agriFoodMult ocean 1.5 vs rocky 1.0
+  });
+
+  it("serialises a colony's build queue FIFO, rolling leftover points forward (Phase 4a)", () => {
+    const e = bodiesEngine("ocean");
+    const sys = e.galaxy.system("s0");
+    // Two builds on planet:1 — agri-dome (90 cp) then reactor (140 cp), at 100 points/turn.
+    sys.buildQueues["planet:1"] = [
+      { kind: "agridome", cpCost: 90, cpDone: 0 },
+      { kind: "reactor", cpCost: 140, cpDone: 0 },
+    ];
+    e.stepTurn(); // +100 → dome completes (90), 10 rolls onto the reactor
+    expect(getBodyBuildings(e.galaxy.system("s0"), "planet:1").hydroponics).toBe(1);
+    expect(getBodyBuildings(e.galaxy.system("s0"), "planet:1").reactors).toBe(0);
+    e.stepTurn(); // reactor 10+100 = 110 < 140
+    expect(getBodyBuildings(e.galaxy.system("s0"), "planet:1").reactors).toBe(0);
+    e.stepTurn(); // 110+100 = 210 ≥ 140 → reactor lands
+    expect(getBodyBuildings(e.galaxy.system("s0"), "planet:1").reactors).toBe(1);
+    expect(e.galaxy.system("s0").buildQueues["planet:1"]).toBeUndefined(); // drained + cleaned up
   });
 
   it("refuses to build an agri-dome on a gas giant (no livable surface)", () => {

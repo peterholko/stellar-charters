@@ -293,6 +293,15 @@ input, select { font-family: inherit; }
 .build-chip--poor { opacity: 0.6; }
 .build-chip--poor .build-chip__plus { color: var(--ink-dim); }
 .build-chip--maxed { opacity: 0.5; cursor: default; }
+.colony__queue { margin-top: 0.5rem; }
+.colony__queuelist { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.35rem; }
+.queue-row { display: flex; align-items: center; gap: 0.45rem; font-size: 0.66rem; }
+.queue-row__label { text-transform: capitalize; min-width: 92px; color: var(--ink-dim); }
+.queue-row--active .queue-row__label { color: var(--ink); }
+.queue-row__bar { flex: 1; height: 6px; border-radius: 3px; background: var(--panel); border: 1px solid var(--line-soft); overflow: hidden; }
+.queue-row__fill { display: block; height: 100%; background: var(--accent); }
+.queue-row__wait { flex: 1; color: var(--ink-dim); font-style: italic; }
+.queue-row__eta { min-width: 28px; text-align: right; color: var(--ink-dim); font-family: var(--font-display); }
 
 /* ============================ order tray ============================ */
 .tray { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); flex: 1; min-height: 0; }

@@ -1050,6 +1050,19 @@ drive build decisions. The colony screen (web `ColonyPanel`) is the management U
 its deposits, and build its structures, with a system-wide power meter since reactors/power pool at
 the container.
 
+### Construction queue (Phase 4a)
+
+Colony buildings (factory / reactor / agri-dome / mining-rig / habitat / power-grid) no longer appear
+instantly: ordering one charges its credits + resources up front and appends it to the host body's
+**construction queue** (`System.buildQueues`). Each turn a colony pours `construction.pointsPerTurn`
+(100) into the front item; when its `cpCost` is met the building lands and leftover points roll to
+the next item, so a colony serialises a batch of builds (a factory is ~2 turns, an agri-dome ~1).
+System structures (platforms, depot, megastructures) and per-site extractors stay instant. Charging
+at queue time keeps the economic sink unchanged — only *timing* shifts — and the queue advances
+before new orders each turn, so nothing chains the turn it's ordered. Bots won't re-pay for a build
+that's still in flight. Slowing development slightly **compresses the leader's snowball**: a 100-game
+sweep moves leader/median from ≈16.9 to ≈14.8 with every other risk flag still green.
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

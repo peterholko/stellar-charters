@@ -36,6 +36,7 @@ export class Galaxy {
         populationProgress: 0,
         unrest: 0,
         bodyBuildings: {},
+        buildQueues: {},
         platforms: 0,
         megastructures: [],
         hasDepot: false,

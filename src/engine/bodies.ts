@@ -24,6 +24,7 @@ import {
   type ExtractionSite,
   type Planet,
   type PlanetType,
+  type QueueItem,
   type Resource,
   type StarType,
   type Stockpile,
@@ -165,6 +166,8 @@ export interface ColonyInfo {
   habitable: boolean;
   sites: ExtractionSite[];
   buildings: BodyBuildings;
+  /** Pending builds on this body (Section 24, Phase 4a), front = under construction. */
+  queue: QueueItem[];
 }
 
 /** Enumerate a system's colonies in orbital order. Bodies with no deposits still appear (you can
@@ -185,6 +188,7 @@ export function coloniesOf(sys: System): ColonyInfo[] {
       key, kind, bodyType, bodyLabel, orbit, habitable,
       sites: sitesByKey.get(key) ?? [],
       buildings: sys.bodyBuildings[key] ?? emptyBodyBuildings(),
+      queue: sys.buildQueues?.[key] ?? [],
     });
   };
   if (sys.bodies) {

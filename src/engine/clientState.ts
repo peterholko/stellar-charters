@@ -12,6 +12,7 @@ import {
   RESOURCES,
   type BodyBuildings,
   type BodyKind,
+  type QueueItem,
   type MegastructureKind,
   type PlanetType,
   type War,
@@ -34,6 +35,13 @@ function cloneBodyBuildings(bb: Record<string, BodyBuildings>): Record<string, B
   for (const [key, b] of Object.entries(bb)) {
     out[key] = { ...b, processors: { ...b.processors } };
   }
+  return out;
+}
+
+/** Deep-copy a per-body construction queue so the client snapshot never aliases live engine state. */
+function cloneBuildQueues(q: Record<string, QueueItem[]>): Record<string, QueueItem[]> {
+  const out: Record<string, QueueItem[]> = {};
+  for (const [key, items] of Object.entries(q)) out[key] = items.map((it) => ({ ...it }));
   return out;
 }
 
@@ -91,6 +99,8 @@ export interface ClientSystem {
   populationStage: PopulationStage;
   /** Per-body building map (Section 24): bodyKey → counts. The colony screen renders from this. */
   bodyBuildings: Record<string, BodyBuildings>;
+  /** Per-body construction queues (Section 24, Phase 4a): bodyKey → pending builds with progress. */
+  buildQueues: Record<string, QueueItem[]>;
   /** System-wide aggregate of hydroponics across all bodies — convenience for compact UI badges. */
   hydroponics: number;
   platforms: number;
@@ -242,6 +252,7 @@ export function buildClientState(
       owner: s.owner,
       populationStage: s.populationStage,
       bodyBuildings: cloneBodyBuildings(s.bodyBuildings),
+      buildQueues: cloneBuildQueues(s.buildQueues),
       hydroponics: systemBuildings(s).hydroponics,
       platforms: s.platforms,
       megastructures: [...s.megastructures],

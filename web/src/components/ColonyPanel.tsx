@@ -196,7 +196,40 @@ function ColonyCard({
         })}
       </div>
 
+      {colony.queue.length > 0 && <ColonyQueue colony={colony} rate={view.config.tuning.construction.pointsPerTurn} />}
       {canBuild && colony.kind !== "star" && <ColonyBuilds colony={colony} sys={sys} view={view} />}
+    </div>
+  );
+}
+
+const QUEUE_LABEL: Record<string, string> = {
+  factory: "factory", reactor: "reactor", agridome: "agri-dome",
+  mining: "mining rig", habitat: "habitat", power: "power grid",
+};
+
+/** The colony's construction queue (Section 24, Phase 4a): front item building, rest waiting. */
+function ColonyQueue({ colony, rate }: { colony: ColonyInfo; rate: number }) {
+  return (
+    <div className="colony__queue">
+      <span className="colony__buildlabel">Under construction</span>
+      <div className="colony__queuelist">
+        {colony.queue.map((item, i) => {
+          const label = item.kind === "factory" ? `${item.recipeId ?? "factory"} factory` : QUEUE_LABEL[item.kind] ?? item.kind;
+          const frac = Math.max(0, Math.min(1, item.cpDone / item.cpCost));
+          const turnsLeft = rate > 0 ? Math.ceil((item.cpCost - item.cpDone) / rate) : 0;
+          return (
+            <div key={i} className={`queue-row${i === 0 ? " queue-row--active" : ""}`}>
+              <span className="queue-row__label">{label}</span>
+              {i === 0 ? (
+                <span className="queue-row__bar"><span className="queue-row__fill" style={{ width: `${Math.round(frac * 100)}%` }} /></span>
+              ) : (
+                <span className="queue-row__wait">queued</span>
+              )}
+              <span className="queue-row__eta">{i === 0 ? `~${turnsLeft}t` : ""}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

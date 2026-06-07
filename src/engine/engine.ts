@@ -47,6 +47,8 @@ import {
   type MegastructureKind,
   type Order,
   type PopulationStage,
+  type QueueBuildingKind,
+  type QueueItem,
   type Resource,
   type Ship,
   type System,
@@ -59,6 +61,18 @@ import type { TurnEvent, TurnReport } from "./report.js";
 export interface EngineOptions {
   /** Optional per-turn text logger for `--verbose` single-game runs. */
   log?: (line: string) => void;
+}
+
+/** Human-readable name for a queued build (Section 24, Phase 4a). */
+function queueLabel(item: QueueItem): string {
+  switch (item.kind) {
+    case "factory": return `${item.recipeId ?? "factory"} processor`;
+    case "reactor": return "Reactor";
+    case "agridome": return "Hydroponics module";
+    case "mining": return "mining upgrade";
+    case "habitat": return "habitat upgrade";
+    case "power": return "power upgrade";
+  }
 }
 
 /** Display names for megastructures (Section 22). */
@@ -355,6 +369,10 @@ export class Engine {
       orderCounts[corp.id] = orders.length;
     }
 
+    // 1.4 Construction: advance each colony's build queue (Section 24, Phase 4a) BEFORE new orders
+    // are queued, so a build only progresses on the turns after it was ordered (no same-turn chain).
+    this.advanceConstruction();
+
     // 1.5 Administrative builds (claims, surveys, ships, research, depots, finance).
     this.resolveAdministrative(ordersByCorp);
 
@@ -396,6 +414,84 @@ export class Engine {
 
     // 10. Report.
     this.recordSnapshot(this.turn, orderCounts, launchInfo, raidStats, equityStats);
+  }
+
+  /** Construction-point cost of one queued building kind (Section 24, Phase 4a). */
+  private constructionCost(kind: QueueBuildingKind): number {
+    const c = this.config.tuning.construction;
+    switch (kind) {
+      case "factory": return c.factory;
+      case "reactor": return c.reactor;
+      case "agridome": return c.agridome;
+      case "mining": return c.mining;
+      case "habitat": return c.habitat;
+      case "power": return c.power;
+    }
+  }
+
+  /** Land a finished queue item into its colony's buildings (Section 24, Phase 4a). */
+  private completeBuild(sys: System, bodyKey: string, item: QueueItem): void {
+    const bb = getBodyBuildings(sys, bodyKey);
+    switch (item.kind) {
+      case "factory": if (item.recipeId) bb.processors[item.recipeId] = (bb.processors[item.recipeId] ?? 0) + 1; break;
+      case "reactor": bb.reactors += 1; break;
+      case "agridome": bb.hydroponics += 1; break;
+      case "mining": bb.miningRigs += 1; break;
+      case "habitat": bb.habitats += 1; break;
+      case "power": bb.powerGrid += 1; break;
+    }
+  }
+
+  /**
+   * Pour each colony's per-turn construction points into the front of its build queue (Section 24,
+   * Phase 4a). Finished items land in `bodyBuildings`; leftover points roll to the next item, so a
+   * colony with spare capacity chains short builds. Charging happened at queue time — this is timing.
+   */
+  private advanceConstruction(): void {
+    const rate = this.config.tuning.construction.pointsPerTurn;
+    if (rate <= 0) return;
+    for (const sys of this.galaxy.allSystems()) {
+      for (const [bodyKey, queue] of Object.entries(sys.buildQueues)) {
+        if (queue.length === 0) continue;
+        let points = rate;
+        while (points > 0 && queue.length > 0) {
+          const item = queue[0]!;
+          const need = item.cpCost - item.cpDone;
+          if (points >= need) {
+            points -= need;
+            queue.shift();
+            this.completeBuild(sys, bodyKey, item);
+            this.events.push({ type: "build", corpId: sys.owner ?? "", what: queueLabel(item), systemId: sys.id });
+          } else {
+            item.cpDone += points;
+            points = 0;
+          }
+        }
+        if (queue.length === 0) delete sys.buildQueues[bodyKey];
+      }
+    }
+  }
+
+  /** Append a build to a colony's queue, charging it now (Section 24, Phase 4a). */
+  private enqueueBuild(sys: System, bodyKey: string, kind: QueueBuildingKind, recipeId?: string): void {
+    (sys.buildQueues[bodyKey] ??= []).push({ kind, recipeId, cpCost: this.constructionCost(kind), cpDone: 0 });
+  }
+
+  /** Count of a building kind already built + still queued on a body, for cap checks (Phase 4a). */
+  private builtPlusQueued(sys: System, bodyKey: string, kind: QueueBuildingKind, recipeId?: string): number {
+    const bb = sys.bodyBuildings[bodyKey];
+    let built = 0;
+    if (bb) {
+      built =
+        kind === "factory" ? (recipeId ? bb.processors[recipeId] ?? 0 : 0)
+        : kind === "reactor" ? bb.reactors
+        : kind === "agridome" ? bb.hydroponics
+        : kind === "mining" ? bb.miningRigs
+        : kind === "habitat" ? bb.habitats
+        : bb.powerGrid;
+    }
+    const queued = (sys.buildQueues[bodyKey] ?? []).filter((q) => q.kind === kind && (kind !== "factory" || q.recipeId === recipeId)).length;
+    return built + queued;
   }
 
   private resolveAdministrative(ordersByCorp: Map<string, Order[]>): void {
@@ -527,9 +623,8 @@ export class Engine {
             if (!canBuildOnBody("agridome", bodyTypeOfKey(sys, bodyKey))) break;
             if (corp.credits < this.config.tuning.hydroponicsCost) break;
             corp.credits -= this.config.tuning.hydroponicsCost;
-            getBodyBuildings(sys, bodyKey).hydroponics += 1;
-            this.events.push({ type: "build", corpId: corp.id, what: "Hydroponics module", systemId: sys.id });
-            this.log(`  ${corp.name} builds hydroponics at ${sys.name}`);
+            this.enqueueBuild(sys, bodyKey, "agridome"); // completes over the construction queue (Phase 4a)
+            this.log(`  ${corp.name} queues hydroponics at ${sys.name}`);
             break;
           }
           case "buildProcessor": {
@@ -548,10 +643,8 @@ export class Engine {
             if (corp.credits < recipeCost + alloyBill) break;
             this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
             corp.credits -= recipeCost + alloyBill;
-            const procBody = getBodyBuildings(sys, procKey);
-            procBody.processors[recipe.id] = (procBody.processors[recipe.id] ?? 0) + 1;
-            this.events.push({ type: "build", corpId: corp.id, what: `${recipe.id} processor`, systemId: sys.id });
-            this.log(`  ${corp.name} builds a ${recipe.id} processor at ${sys.name}`);
+            this.enqueueBuild(sys, procKey, "factory", recipe.id); // Phase 4a: queues, completes later
+            this.log(`  ${corp.name} queues a ${recipe.id} processor at ${sys.name}`);
             break;
           }
           case "buildReactor": {
@@ -564,9 +657,8 @@ export class Engine {
             if (corp.credits < t.reactorCost + alloyBill) break;
             this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
             corp.credits -= t.reactorCost + alloyBill;
-            getBodyBuildings(sys, order.bodyKey ?? primaryBodyKey(sys)).reactors += 1;
-            this.events.push({ type: "build", corpId: corp.id, what: "Reactor", systemId: sys.id });
-            this.log(`  ${corp.name} builds a reactor at ${sys.name}`);
+            this.enqueueBuild(sys, order.bodyKey ?? primaryBodyKey(sys), "reactor"); // Phase 4a
+            this.log(`  ${corp.name} queues a reactor at ${sys.name}`);
             break;
           }
           case "upgradeInfrastructure": {
@@ -579,13 +671,12 @@ export class Engine {
             // Habitats need a livable surface, mining rigs a solid one (Section 24).
             const upBuildKind = order.track === "mining" ? "mining" : order.track === "habitat" ? "habitat" : "power";
             if (!canBuildOnBody(upBuildKind, bodyTypeOfKey(sys, upKey))) break;
-            const bb = getBodyBuildings(sys, upKey);
-            const track: "miningRigs" | "habitats" | "powerGrid" =
-              order.track === "mining" ? "miningRigs" : order.track === "habitat" ? "habitats" : "powerGrid";
             const creditBase = order.track === "mining" ? inf.miningCreditCost : order.track === "habitat" ? inf.habitatCreditCost : inf.powerCreditCost;
             const rawRes: Resource = order.track === "mining" ? "metals" : order.track === "habitat" ? "silicates" : "helium3";
             const rawBase = order.track === "mining" ? inf.miningMetalsCost : order.track === "habitat" ? inf.habitatSilicatesCost : inf.powerHelium3Cost;
-            const level = bb[track];
+            // The level this upgrade *reaches* counts what's built AND already queued (Phase 4a), so
+            // queuing two upgrades charges L1 then L2 and never overshoots the cap.
+            const level = this.builtPlusQueued(sys, upKey, upBuildKind);
             if (level >= inf.cap) break;
             const factor = level + 1; // cost scales with the level being reached
             const creditCost = creditBase * factor;
@@ -594,9 +685,8 @@ export class Engine {
             if (corp.credits < creditCost + rawBill) break;
             this.consumeStrategic(corp, rawRes, rawNeed);
             corp.credits -= creditCost + rawBill;
-            bb[track] += 1;
-            this.events.push({ type: "build", corpId: corp.id, what: `${order.track} upgrade`, systemId: sys.id });
-            this.log(`  ${corp.name} upgrades ${order.track} at ${sys.name} to L${level + 1}`);
+            this.enqueueBuild(sys, upKey, upBuildKind); // Phase 4a: completes via the construction queue
+            this.log(`  ${corp.name} queues ${order.track} upgrade at ${sys.name} to L${level + 1}`);
             break;
           }
           case "buildPlatform": {

@@ -193,6 +193,21 @@ export interface Tuning {
     powerHelium3Cost: number;
     powerCapacityPerLevel: number;
   };
+  /**
+   * Per-colony build queue (Section 24, Phase 4a). A colony pours `pointsPerTurn` construction
+   * points into the front of its queue each turn; each building kind costs the listed points, so a
+   * factory takes ~`factory / pointsPerTurn` turns once it reaches the front. Credits + resources are
+   * still charged up-front at queue time, so the economic sink is unchanged — only timing shifts.
+   */
+  construction: {
+    pointsPerTurn: number;
+    factory: number;
+    reactor: number;
+    agridome: number;
+    mining: number;
+    habitat: number;
+    power: number;
+  };
   /** Stationary defense platform: build cost and raid-defense added per platform (Section 15). */
   platformCost: number;
   platformDefense: number;
@@ -352,6 +367,18 @@ export const DEFAULT_TUNING: Tuning = {
     powerCreditCost: 400,
     powerHelium3Cost: 10,
     powerCapacityPerLevel: 4,
+  },
+  // Build queue (Section 24, Phase 4a). 100 points/turn with these costs makes an agri-dome a
+  // 1-turn job, a reactor/upgrade ~1.5 turns, and a factory ~2 turns — so a batch of builds on one
+  // colony serialises into a visible queue while a single build still lands fast.
+  construction: {
+    pointsPerTurn: 100,
+    factory: 180,
+    reactor: 140,
+    agridome: 90,
+    mining: 130,
+    habitat: 130,
+    power: 130,
   },
   platformCost: 350,
   platformDefense: 1,

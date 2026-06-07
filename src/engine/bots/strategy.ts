@@ -40,6 +40,15 @@ function pickBuildBody(sys: System, kind: BuildingKind): string | null {
   return cands[0]!.key;
 }
 
+/** True if a build of `kind` is already in any of the system's queues (Section 24, Phase 4a) — used
+ *  so bots don't re-pay for a building that's still under construction. */
+function alreadyQueued(sys: System, kinds: BuildingKind[]): boolean {
+  for (const q of Object.values(sys.buildQueues ?? {})) {
+    for (const item of q) if (kinds.includes(item.kind)) return true;
+  }
+  return false;
+}
+
 /** Rough commercial value of a system: full-development yield priced at base, minus claim cost.
  *  Uses *potential* output so an unclaimed system (whose deposits aren't worked yet) is valued
  *  by what it could produce, not its current zero. */
@@ -171,6 +180,7 @@ export function maybeBuildHydroponics(view: PlayerView): Order[] {
   if (view.me.credits < view.config.tuning.hydroponicsCost * 1.5) return [];
   for (const id of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(id);
+    if (alreadyQueued(sys, ["agridome"])) continue; // one agri-dome in flight per system (Phase 4a)
     const hydroponics = buildingTotal(sys, "hydroponics");
     if (hydroponics >= 4) continue; // cap modules per system
     const need = view.config.tuning.foodNeed[sys.populationStage];
@@ -217,6 +227,7 @@ export function maybeBuildProcessor(view: PlayerView): Order[] {
     for (const id of view.me.ownedSystemIds) {
       const sys = view.galaxy.system(id);
       if ((systemBuildings(sys).processors[recipe.id] ?? 0) >= PROCESSOR_CAP_PER_RECIPE) continue;
+      if (alreadyQueued(sys, ["factory"])) continue; // one factory in flight per system (Phase 4a)
       if (!systemCanFeed(view, sys, recipe)) continue;
       const bodyKey = pickBuildBody(sys, "factory"); // cheapest industrial world — Section 24
       return [{ kind: "buildProcessor", systemId: id, recipeId: recipe.id, ...(bodyKey ? { bodyKey } : {}) }];
@@ -235,6 +246,7 @@ export function maybeBuildReactor(view: PlayerView): Order[] {
     let draw = 0;
     for (const recipe of t.recipes) draw += (buildings.processors[recipe.id] ?? 0) * recipe.powerDraw;
     if (draw <= 0) continue;
+    if (alreadyQueued(sys, ["reactor"])) continue; // don't stack reactors while one builds (Phase 4a)
     const capacity = t.basePowerPerSystem + buildings.reactors * t.reactorPowerOutput;
     if (capacity < draw) {
       const bodyKey = pickBuildBody(sys, "reactor");
@@ -641,7 +653,9 @@ export function maybeUpgradeInfrastructure(view: PlayerView): Order[] {
   ): void => {
     if (level >= inf.cap) return;
     // Habitats need a livable world, mining rigs a solid one (Section 24) — skip if none can host it.
-    const bodyKey = pickBuildBody(sys, track === "mining" ? "mining" : track === "habitat" ? "habitat" : "power");
+    const kind: BuildingKind = track === "mining" ? "mining" : track === "habitat" ? "habitat" : "power";
+    if (alreadyQueued(sys, [kind])) return; // don't re-queue a track that's already building (Phase 4a)
+    const bodyKey = pickBuildBody(sys, kind);
     if (!bodyKey) return;
     const factor = level + 1; // cost scales with the level being reached
     const cost = creditBase * factor;
