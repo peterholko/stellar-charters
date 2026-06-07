@@ -54,6 +54,18 @@ export {
   PROCEDURAL_SCENARIO_ID,
   type ProceduralOptions,
 } from "./procedural.js";
+export {
+  RESEARCH_TREE,
+  RESEARCH_DIVISIONS,
+  researchMods,
+  emptyResearchMods,
+  techById,
+  canResearch,
+  lockedChoices,
+  type ResearchTech,
+  type ResearchDivision,
+  type ResearchMods,
+} from "./research.js";
 export { Market, type ClearableOrder, type MarketFill } from "./market.js";
 export { resolveAuction, type AuctionResult } from "./auction.js";
 export {

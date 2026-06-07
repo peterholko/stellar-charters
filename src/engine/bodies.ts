@@ -143,13 +143,14 @@ export function systemBuildings(sys: System): BodyBuildings {
     out.miningRigs += b.miningRigs;
     out.habitats += b.habitats;
     out.powerGrid += b.powerGrid;
+    out.labs += b.labs;
     for (const [id, n] of Object.entries(b.processors)) out.processors[id] = (out.processors[id] ?? 0) + n;
   }
   return out;
 }
 
 /** Total count of a building track across all of a system's bodies. */
-export function buildingTotal(sys: System, track: "reactors" | "hydroponics" | "miningRigs" | "habitats" | "powerGrid"): number {
+export function buildingTotal(sys: System, track: "reactors" | "hydroponics" | "miningRigs" | "habitats" | "powerGrid" | "labs"): number {
   let n = 0;
   for (const b of Object.values(sys.bodyBuildings)) n += b[track];
   return n;
@@ -227,7 +228,7 @@ export function coloniesOf(sys: System): ColonyInfo[] {
 // ---------------------------------------------------------------------------
 
 /** The build menu a colony can offer (distinct from the underlying `BodyBuildings` storage). */
-export type BuildingKind = "factory" | "reactor" | "agridome" | "habitat" | "mining" | "power";
+export type BuildingKind = "factory" | "reactor" | "agridome" | "habitat" | "mining" | "power" | "lab";
 
 type BodyType = ExtractionSite["bodyType"];
 
@@ -247,7 +248,8 @@ export function canBuildOnBody(kind: BuildingKind, bodyType: BodyType): boolean 
     case "factory":
     case "reactor":
     case "power":
-      return true; // industry runs anywhere with a foothold (orbital over the giants/belts)
+    case "lab":
+      return true; // industry + research run anywhere with a foothold (orbital over the giants/belts)
     default:
       return false;
   }

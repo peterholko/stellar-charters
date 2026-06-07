@@ -16,6 +16,7 @@ export function makeCorp(over: Partial<Corporation> = {}): Corporation {
     ships: [],
     privateers: [],
     surveyedSystemIds: [],
+    research: { completed: [], queue: [], invested: {}, banked: 0 },
     rangeTier: 1,
     valuation: 0,
     sharePrice: 0,

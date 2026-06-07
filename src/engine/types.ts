@@ -242,10 +242,12 @@ export interface BodyBuildings {
   habitats: number;
   /** Power-grid upgrade level (helium3-fed): local power capacity (Section 07c). */
   powerGrid: number;
+  /** Research Lab modules (each produces research points per turn, Section 28). */
+  labs: number;
 }
 
 export function emptyBodyBuildings(): BodyBuildings {
-  return { processors: {}, reactors: 0, hydroponics: 0, miningRigs: 0, habitats: 0, powerGrid: 0 };
+  return { processors: {}, reactors: 0, hydroponics: 0, miningRigs: 0, habitats: 0, powerGrid: 0, labs: 0 };
 }
 
 /** Per-colony population (Section 24, Phase 4b): each habitable / agri-domed body grows its own
@@ -264,7 +266,7 @@ export function emptyColonyPopulation(): ColonyPopulation {
 
 /** The building kinds that run through a colony's construction queue (Section 24, Phase 4a). System
  *  structures (platforms, depot, megastructures) and per-site extractors stay instant-on-affordability. */
-export type QueueBuildingKind = "factory" | "reactor" | "agridome" | "mining" | "habitat" | "power";
+export type QueueBuildingKind = "factory" | "reactor" | "agridome" | "mining" | "habitat" | "power" | "lab";
 
 /** One item in a colony's build queue. Credits + resources are charged when the item is *queued*;
  *  the building materialises once `cpDone` reaches `cpCost`, gated by the colony's construction rate. */
@@ -425,6 +427,23 @@ export interface Ship {
   transit?: ShipTransit;
 }
 
+/** A charter's research state (Section 28). RP flows into `queue[0]` each turn; finished techs move to
+ *  `completed`; leftover RP banks when the queue is empty. */
+export interface CorpResearch {
+  /** Completed tech ids (their effects are live). */
+  completed: string[];
+  /** Ordered active+pending tech ids; `queue[0]` is the active project. */
+  queue: string[];
+  /** Research points invested so far into each in-progress tech. */
+  invested: Record<string, number>;
+  /** Unspent research points (rolls over when the queue is empty). */
+  banked: number;
+}
+
+export function emptyCorpResearch(): CorpResearch {
+  return { completed: [], queue: [], invested: {}, banked: 0 };
+}
+
 export interface Privateer {
   /** System id whose adjacent routes this privateer can reach. */
   basedAt: string;
@@ -457,6 +476,8 @@ export interface Corporation {
   /** Systems this charter has scouted with a survey vessel (Section 25): grants full deposit intel
    *  (richness + reserves) on them, even in rival territory. Owned systems are always fully known. */
   surveyedSystemIds: string[];
+  /** Research progress (Section 28): completed techs, the active+queued projects, and banked RP. */
+  research: CorpResearch;
   /** Best range tier the corporation can field (from research/licensing). */
   rangeTier: RangeTier;
   /** Latest computed valuation (Section 17). */
@@ -602,6 +623,20 @@ export interface BuildPlatformOrder {
   systemId: string;
 }
 
+/** Build a Research Lab on a colony (Section 28): produces research points each turn. */
+export interface BuildLabOrder {
+  kind: "buildLab";
+  systemId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
+}
+
+/** Set the charter's research queue (Section 28): the ordered list of tech ids to pursue, active first. */
+export interface SetResearchOrder {
+  kind: "setResearch";
+  queue: string[];
+}
+
 /** Build a megastructure on an owned system (Section 22): a huge metals/alloys sink. */
 export interface BuildMegastructureOrder {
   kind: "buildMegastructure";
@@ -712,6 +747,8 @@ export type Order =
   | BuildReactorOrder
   | UpgradeInfrastructureOrder
   | BuildPlatformOrder
+  | BuildLabOrder
+  | SetResearchOrder
   | BuildMegastructureOrder
   | BuildExtractorOrder
   | SabotageOrder

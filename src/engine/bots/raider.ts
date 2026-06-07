@@ -19,6 +19,8 @@ import {
   maybeDefendAlly,
   maybeResearchRange,
   maybeSabotage,
+  maybeResearch,
+  RESEARCH_PLANS,
   maybeSurvey,
   planRaid,
   routeExposureScore,
@@ -49,6 +51,7 @@ export class RaiderBot implements Bot {
     // Raiders still export their own modest output to stay solvent.
     orders.push(...sellSurplus(view, 0));
     orders.push(...maybeBuildExtractor(view));
+    orders.push(...maybeResearch(view, RESEARCH_PLANS.raider));
     // Scout rival systems for raid/seizure targets with a survey vessel (Section 25).
     orders.push(...maybeSurvey(view));
     // Aggressively haunt the busiest export lane from turn 5 onward.

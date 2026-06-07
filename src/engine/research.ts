@@ -1,0 +1,172 @@
+/**
+ * Research & specialization (Section 28).
+ *
+ * Six corporate Divisions, each a short tier spine with "pick-one" choice nodes. A charter pools
+ * Research Points (from Research Labs + population), pours them into one active project at a time
+ * (with a queue), and unlocks techs whose effects are read live via {@link researchMods}. The tree is
+ * costed so a focused charter completes only ~2 divisions in the 42-turn game — you specialise, then
+ * acquire / steal / conquer to get what you skipped. Phase 1: the economy, the tree, and the early
+ * tunable-bump effects; marquee/cross-system techs (terraforming, wormhole lanes, secret projects,
+ * espionage) land in later phases.
+ *
+ * Pure + deterministic (no Node APIs / Date.now / Math.random) like the rest of the engine core.
+ */
+
+export type ResearchDivision =
+  | "prospectus"   // extraction sciences
+  | "fabrication"  // industrial engineering
+  | "navigation"   // warp dynamics & logistics
+  | "colonial"     // xenobiology & statecraft
+  | "security"     // naval doctrine
+  | "acquisitions"; // market intelligence & espionage
+
+export const RESEARCH_DIVISIONS: { id: ResearchDivision; name: string; blurb: string }[] = [
+  { id: "prospectus", name: "Prospectus", blurb: "Extraction sciences — own the supply." },
+  { id: "fabrication", name: "Fabrication", blurb: "Industrial engineering — out-build everyone." },
+  { id: "navigation", name: "Navigation", blurb: "Warp dynamics & logistics — own the lanes." },
+  { id: "colonial", name: "Colonial", blurb: "Xenobiology & statecraft — the tax superpower." },
+  { id: "security", name: "Security", blurb: "Naval doctrine — the military hegemon." },
+  { id: "acquisitions", name: "Acquisitions", blurb: "Market intelligence — the corporate raider." },
+];
+
+/** A single researchable technology (Section 28). */
+export interface ResearchTech {
+  id: string;
+  division: ResearchDivision;
+  tier: number;
+  name: string;
+  desc: string;
+  /** Research points to complete. */
+  rpCost: number;
+  /** Tech ids that must be completed first. */
+  prereqs: string[];
+  /** Mutually-exclusive group within a division: completing one locks out its siblings. */
+  choiceGroup?: string;
+  /** Galaxy-unique: once any charter completes it, no other charter can (a race). Phase 3. */
+  secret?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// The tree (Phase 1: every tech has a live, wired effect)
+// ---------------------------------------------------------------------------
+
+export const RESEARCH_TREE: ResearchTech[] = [
+  // — Prospectus —
+  { id: "pro-extractors", division: "prospectus", tier: 1, name: "Improved Extractors", rpCost: 200, prereqs: [],
+    desc: "Refined drilling raises every worked deposit's output by 15%." },
+  { id: "pro-deepcore", division: "prospectus", tier: 2, name: "Deep-Core Drilling", rpCost: 320, prereqs: ["pro-extractors"], choiceGroup: "pro-2",
+    desc: "Finite deposits deplete ~35% slower — sustain income deep into the game." },
+  { id: "pro-hydrofrac", division: "prospectus", tier: 2, name: "Hydrofracturing", rpCost: 320, prereqs: ["pro-extractors"], choiceGroup: "pro-2",
+    desc: "A further +12% extraction yield, leaning on renewable ice/gas/bio wells." },
+
+  // — Fabrication —
+  { id: "fab-assembly", division: "fabrication", tier: 1, name: "Assembly Lines", rpCost: 200, prereqs: [],
+    desc: "Automated processors lift factory output by 20%." },
+  { id: "fab-modular", division: "fabrication", tier: 2, name: "Modular Construction", rpCost: 320, prereqs: ["fab-assembly"], choiceGroup: "fab-2",
+    desc: "Colonies pour +50% construction points per turn — everything builds faster." },
+  { id: "fab-lean", division: "fabrication", tier: 2, name: "Lean Manufacturing", rpCost: 320, prereqs: ["fab-assembly"], choiceGroup: "fab-2",
+    desc: "Building material bills cut by 40%." },
+
+  // — Navigation — (Phase 2 folds the Warp-Drive range ladder into this division)
+  { id: "nav-lanes", division: "navigation", tier: 1, name: "Lane Stabilization", rpCost: 200, prereqs: [],
+    desc: "Charting frontier warp lanes costs half as much." },
+  { id: "nav-logistics", division: "navigation", tier: 2, name: "Convoy Logistics", rpCost: 320, prereqs: ["nav-lanes"],
+    desc: "Leaner fleet operations cut per-turn ship fuel burn by 40%." },
+
+  // — Colonial —
+  { id: "col-habitat", division: "colonial", tier: 1, name: "Habitat Engineering", rpCost: 200, prereqs: [],
+    desc: "Every colony's population grows 30% faster." },
+  { id: "col-charter", division: "colonial", tier: 2, name: "Charter Reform", rpCost: 320, prereqs: ["col-habitat"],
+    desc: "Corporate restructuring cuts system upkeep by 40%." },
+
+  // — Security —
+  { id: "sec-plating", division: "security", tier: 1, name: "Hull Plating", rpCost: 200, prereqs: [],
+    desc: "Hardened hulls raise system defense by 30%." },
+  { id: "sec-firecontrol", division: "security", tier: 2, name: "Fire-Control", rpCost: 320, prereqs: ["sec-plating"], choiceGroup: "sec-2",
+    desc: "Targeting suites raise warship combat by 25% (offense)." },
+  { id: "sec-pointdef", division: "security", tier: 2, name: "Point-Defense", rpCost: 320, prereqs: ["sec-plating"], choiceGroup: "sec-2",
+    desc: "Interceptor screens add a further +25% system defense (defense)." },
+
+  // — Acquisitions —
+  { id: "acq-algorithms", division: "acquisitions", tier: 1, name: "Market Algorithms", rpCost: 200, prereqs: [],
+    desc: "Trading desks win 6% better fills on every exchange order." },
+  { id: "acq-takeover", division: "acquisitions", tier: 2, name: "Hostile Takeover", rpCost: 320, prereqs: ["acq-algorithms"],
+    desc: "Share raids and acquisitions cost 25% less." },
+];
+
+const TECH_BY_ID: Record<string, ResearchTech> = Object.fromEntries(RESEARCH_TREE.map((t) => [t.id, t]));
+
+export function techById(id: string): ResearchTech | undefined {
+  return TECH_BY_ID[id];
+}
+
+/** Tech ids locked out for a charter because a sibling in their choice group is already completed. */
+export function lockedChoices(completed: string[]): Set<string> {
+  const done = new Set(completed);
+  const locked = new Set<string>();
+  for (const t of RESEARCH_TREE) {
+    if (!t.choiceGroup || done.has(t.id)) continue;
+    const siblingDone = RESEARCH_TREE.some((s) => s.choiceGroup === t.choiceGroup && s.id !== t.id && done.has(s.id));
+    if (siblingDone) locked.add(t.id);
+  }
+  return locked;
+}
+
+/** Whether `tech` can currently be queued by a charter that has completed `completed`. */
+export function canResearch(tech: ResearchTech, completed: string[]): boolean {
+  if (completed.includes(tech.id)) return false;
+  if (lockedChoices(completed).has(tech.id)) return false;
+  return tech.prereqs.every((p) => completed.includes(p));
+}
+
+// ---------------------------------------------------------------------------
+// Effects — read live by the engine at point of use
+// ---------------------------------------------------------------------------
+
+/** Aggregate research modifiers a charter currently enjoys (Section 28). All multipliers default to
+ *  neutral (1) and additive edges to 0, so an un-researched charter behaves exactly as before. */
+export interface ResearchMods {
+  yieldMult: number;            // extraction output
+  depletionMult: number;        // reserve drain per unit extracted (<1 = slower)
+  factoryOutputMult: number;    // processor output
+  constructionRateMult: number; // build points / turn
+  buildMaterialsMult: number;   // colony building material bills
+  growthMult: number;           // population growth
+  upkeepMult: number;           // system upkeep
+  defenseMult: number;          // system raid/invasion defense
+  shipCombatMult: number;       // warship combat strength
+  shipFuelMult: number;         // per-turn fleet fuel burn
+  marketEdge: number;           // fraction of a better fill on exchange orders (0..1)
+  acquisitionCostMult: number;  // share-buy / acquisition cost
+  surveyCostMult: number;       // route-charting cost
+}
+
+export function emptyResearchMods(): ResearchMods {
+  return {
+    yieldMult: 1, depletionMult: 1, factoryOutputMult: 1, constructionRateMult: 1, buildMaterialsMult: 1,
+    growthMult: 1, upkeepMult: 1, defenseMult: 1, shipCombatMult: 1, shipFuelMult: 1,
+    marketEdge: 0, acquisitionCostMult: 1, surveyCostMult: 1,
+  };
+}
+
+/** Compute the live modifiers from a charter's completed tech list (Section 28). */
+export function researchMods(completed: string[]): ResearchMods {
+  const m = emptyResearchMods();
+  const has = (id: string) => completed.includes(id);
+  if (has("pro-extractors")) m.yieldMult *= 1.15;
+  if (has("pro-hydrofrac")) m.yieldMult *= 1.12;
+  if (has("pro-deepcore")) m.depletionMult *= 0.65;
+  if (has("fab-assembly")) m.factoryOutputMult *= 1.2;
+  if (has("fab-modular")) m.constructionRateMult *= 1.5;
+  if (has("fab-lean")) m.buildMaterialsMult *= 0.6;
+  if (has("nav-lanes")) m.surveyCostMult *= 0.5;
+  if (has("nav-logistics")) m.shipFuelMult *= 0.6;
+  if (has("col-habitat")) m.growthMult *= 1.3;
+  if (has("col-charter")) m.upkeepMult *= 0.6;
+  if (has("sec-plating")) m.defenseMult *= 1.3;
+  if (has("sec-pointdef")) m.defenseMult *= 1.25;
+  if (has("sec-firecontrol")) m.shipCombatMult *= 1.25;
+  if (has("acq-algorithms")) m.marketEdge += 0.06;
+  if (has("acq-takeover")) m.acquisitionCostMult *= 0.75;
+  return m;
+}

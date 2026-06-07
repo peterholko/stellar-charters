@@ -13,6 +13,7 @@ import {
   type BodyBuildings,
   type BodyKind,
   type ColonyPopulation,
+  type CorpResearch,
   type QueueItem,
   type MegastructureKind,
   type PlanetType,
@@ -155,6 +156,10 @@ export interface ClientCorp {
   recentEarnings?: number[];
   /** Systems this charter has scouted with a survey vessel (Section 25); self-only. */
   surveyedSystemIds?: string[];
+  /** Research progress (Section 28); self-only. */
+  research?: CorpResearch;
+  /** Research points generated per turn from labs + population (Section 28); self-only. */
+  rpPerTurn?: number;
 }
 
 export interface ClientConvoy {
@@ -312,6 +317,19 @@ export function buildClientState(
       base.privateers = c.privateers.map((p) => ({ ...p }));
       base.recentEarnings = [...c.recentEarnings];
       base.surveyedSystemIds = [...c.surveyedSystemIds];
+      base.research = {
+        completed: [...c.research.completed], queue: [...c.research.queue],
+        invested: { ...c.research.invested }, banked: c.research.banked,
+      };
+      const tune = engine.config.tuning;
+      let rp = 0;
+      for (const sid of c.ownedSystemIds) {
+        const s = g.systems.get(sid);
+        if (!s) continue;
+        rp += systemBuildings(s).labs * tune.labRpOutput;
+        for (const pop of Object.values(s.colonyPop)) rp += tune.researchPopBase[pop.stage];
+      }
+      base.rpPerTurn = rp;
     }
     return base;
   });

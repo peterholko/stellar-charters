@@ -29,6 +29,7 @@ export function constructionCpCost(tuning: Tuning, kind: QueueBuildingKind, reci
     : kind === "agridome" ? c.agridome
     : kind === "mining" ? c.mining
     : kind === "habitat" ? c.habitat
+    : kind === "lab" ? c.lab
     : c.power;
   return kind === "factory" ? Math.round(base * (1 + (recipeTier - 1) * 0.5)) : base;
 }
@@ -187,6 +188,7 @@ export interface Tuning {
     factory: Partial<Record<Resource, number>>;
     reactor: Partial<Record<Resource, number>>;
     agridome: Partial<Record<Resource, number>>;
+    lab: Partial<Record<Resource, number>>;
   };
   /** Extra components a Trade Depot consumes when built (advanced infrastructure). */
   depotComponentCost: number;
@@ -236,11 +238,20 @@ export interface Tuning {
     mining: number;
     habitat: number;
     power: number;
+    lab: number;
   };
   /** Stationary defense platform: build cost and raid-defense added per platform (Section 15). */
   platformCost: number;
   platformDefense: number;
   platformCap: number;
+  /**
+   * Research (Section 28). A Research Lab costs `labCost` credits to raise and yields `labRpOutput`
+   * research points per turn; a populated colony adds `researchPopBase[stage]` RP on top. Points pool
+   * charter-wide into the active research project.
+   */
+  labCost: number;
+  labRpOutput: number;
+  researchPopBase: Record<PopulationStage, number>;
   /**
    * Per-body extractor economy (Section 21). Building an extractor on a deposit raises its
    * level; the credit cost scales with the level reached and the deposit's accessibility (harder
@@ -381,6 +392,7 @@ export const DEFAULT_TUNING: Tuning = {
     factory: { alloys: 8, metals: 6 },
     reactor: { alloys: 8, silicates: 5 },
     agridome: { silicates: 8, metals: 5 },
+    lab: { components: 4, silicates: 6 },
   },
   depotComponentCost: 3,
   fuelPerShipPerTurn: 0.5,
@@ -419,10 +431,17 @@ export const DEFAULT_TUNING: Tuning = {
     mining: 120,
     habitat: 160,
     power: 120,
+    lab: 180,
   },
   platformCost: 350,
   platformDefense: 1,
   platformCap: 2,
+  // Research (Section 28): a lab costs 320 cr (+ materials) and makes 16 RP/turn; a developed
+  // population adds a research base on top. Tuned so a focused charter finishes ~2 divisions in 42
+  // turns — never the whole ~15-tech tree.
+  labCost: 320,
+  labRpOutput: 24,
+  researchPopBase: { outpost: 0, settlement: 3, colony: 6, city: 11, metropolis: 18 },
   extractor: {
     buildCost: 300,
     alloyCost: 2,

@@ -20,6 +20,7 @@ export type ViewId =
   | "convoys"
   | "fleet"
   | "finance"
+  | "research"
   | "turn"
   | "report";
 

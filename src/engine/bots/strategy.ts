@@ -820,6 +820,40 @@ export function maybeExpand(view: PlayerView): Order[] {
   return [{ kind: "claim", systemId: best.sys.id, amount: best.sys.claimCost }];
 }
 
+/** Per-archetype research doctrines (Section 28): the ordered tech queue a bot pursues. Each leans
+ *  into ~2 divisions matching its play, so the sim exercises the whole tree and bots specialise too. */
+export const RESEARCH_PLANS: Record<string, string[]> = {
+  miner: ["pro-extractors", "pro-deepcore", "fab-assembly", "fab-lean", "col-habitat", "nav-lanes"],
+  balanced: ["fab-assembly", "fab-modular", "col-habitat", "col-charter", "pro-extractors", "acq-algorithms"],
+  raider: ["acq-algorithms", "acq-takeover", "sec-plating", "sec-firecontrol", "nav-logistics"],
+  warlord: ["sec-plating", "sec-firecontrol", "fab-assembly", "pro-extractors", "col-habitat"],
+  hybrid: ["fab-assembly", "fab-modular", "pro-extractors", "pro-deepcore", "col-habitat"],
+};
+
+/** Fund research (Section 28): keep a few Research Labs going and steer the tech queue by doctrine. */
+export function maybeResearch(view: PlayerView, plan: string[] | undefined): Order[] {
+  const me = view.me;
+  if (!plan || me.isFreeOperator || !me.hasCharter || me.ownedSystemIds.length === 0) return [];
+  const orders: Order[] = [];
+
+  // Keep up to one lab per owned system; build when cash allows and none is already in flight.
+  const owned = me.ownedSystemIds.map((id) => view.galaxy.system(id));
+  const labs = owned.reduce((n, s) => n + buildingTotal(s, "labs"), 0);
+  const labQueued = owned.some((s) => Object.values(s.buildQueues ?? {}).some((q) => q.some((it) => it.kind === "lab")));
+  if (labs < me.ownedSystemIds.length && !labQueued && me.credits > view.config.tuning.labCost * 4) {
+    const sys = owned[0]!;
+    const body = pickBuildBody(sys, "lab");
+    if (body) orders.push({ kind: "buildLab", systemId: sys.id, bodyKey: body });
+  }
+
+  // (Re)set the research queue only when it drifts from the doctrine (e.g. after a tech completes).
+  const desired = plan.filter((id) => !me.research.completed.includes(id));
+  const cur = me.research.queue;
+  const same = desired.length === cur.length && desired.every((id, i) => cur[i] === id);
+  if (!same && desired.length > 0) orders.push({ kind: "setResearch", queue: desired });
+  return orders;
+}
+
 /**
  * Operate a survey vessel (Section 25): keep one unarmed scout in the fleet and send it to chart the
  * deposit intel of the nearest reachable system the charter hasn't surveyed yet (frontier worlds it

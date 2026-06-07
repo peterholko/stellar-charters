@@ -131,6 +131,7 @@ export function reconstructView(state: ClientState): PlayerView {
     ships: c.ships ?? [],
     privateers: c.privateers ?? [],
     surveyedSystemIds: c.surveyedSystemIds ?? [],
+    research: c.research ?? { completed: [], queue: [], invested: {}, banked: 0 },
     rangeTier: c.rangeTier,
     valuation: c.valuation,
     sharePrice: c.sharePrice,

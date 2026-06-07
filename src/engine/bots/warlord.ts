@@ -20,6 +20,8 @@ import {
   maybeFrontier,
   maybeResearchRange,
   maybeSabotage,
+  maybeResearch,
+  RESEARCH_PLANS,
   maybeSurvey,
   planRaid,
   sellSurplus,
@@ -41,6 +43,7 @@ export class WarlordBot implements Bot {
     // Keep just enough economy running to bankroll the war machine.
     orders.push(...sellSurplus(view));
     orders.push(...maybeBuildExtractor(view));
+    orders.push(...maybeResearch(view, RESEARCH_PLANS.warlord));
     orders.push(...maybeResearchRange(view)); // climb toward capital hulls
     orders.push(...maybeSurvey(view)); // scout conquest targets (Section 25)
     orders.push(...maybeFrontier(view));

@@ -10,6 +10,7 @@
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
 import { constructionCpCost, type GameConfig } from "./config.js";
+import { RESEARCH_TREE, canResearch, researchMods, techById, type ResearchMods } from "./research.js";
 import {
   EXTRACTOR_CAP,
   agriFoodMult,
@@ -45,6 +46,7 @@ import {
 import {
   RESOURCES,
   emptyColonyPopulation,
+  emptyCorpResearch,
   type Convoy,
   type Corporation,
   type MegastructureKind,
@@ -75,6 +77,7 @@ function queueLabel(item: QueueItem): string {
     case "mining": return "mining upgrade";
     case "habitat": return "habitat upgrade";
     case "power": return "power upgrade";
+    case "lab": return "Research lab";
   }
 }
 
@@ -136,6 +139,7 @@ export class Engine {
         ships: [{ rangeTier: 1, combat: 0, raider: false, stationedAt: "" }],
         privateers: [],
         surveyedSystemIds: [],
+        research: emptyCorpResearch(),
         rangeTier: 1,
         valuation: 0,
         sharePrice: 0,
@@ -414,6 +418,9 @@ export class Engine {
     const popStats = this.resolvePopulationAndUpkeep();
     this.lastTaxLevied = popStats.taxLevied;
 
+    // 8.5 Research: generate points (labs + population) and advance each charter's tech queue (Section 28).
+    this.resolveResearch();
+
     // 9. Valuation + share prices.
     this.updateValuations();
 
@@ -450,6 +457,7 @@ export class Engine {
       case "mining": bb.miningRigs += 1; break;
       case "habitat": bb.habitats += 1; break;
       case "power": bb.powerGrid += 1; break;
+      case "lab": bb.labs += 1; break;
     }
   }
 
@@ -459,9 +467,12 @@ export class Engine {
    * colony with spare capacity chains short builds. Charging happened at queue time — this is timing.
    */
   private advanceConstruction(): void {
-    const rate = this.config.tuning.construction.pointsPerTurn;
-    if (rate <= 0) return;
+    const baseRate = this.config.tuning.construction.pointsPerTurn;
+    if (baseRate <= 0) return;
     for (const sys of this.galaxy.allSystems()) {
+      // Modular Construction (Section 28) speeds the owning charter's build queues.
+      const owner = this.corps.find((c) => c.id === sys.owner);
+      const rate = baseRate * (owner ? this.mods(owner).constructionRateMult : 1);
       for (const [bodyKey, queue] of Object.entries(sys.buildQueues)) {
         if (queue.length === 0) continue;
         let points = rate;
@@ -499,6 +510,7 @@ export class Engine {
         : kind === "agridome" ? bb.hydroponics
         : kind === "mining" ? bb.miningRigs
         : kind === "habitat" ? bb.habitats
+        : kind === "lab" ? bb.labs
         : bb.powerGrid;
     }
     const queued = (sys.buildQueues[bodyKey] ?? []).filter((q) => q.kind === kind && (kind !== "factory" || q.recipeId === recipeId)).length;
@@ -533,8 +545,10 @@ export class Engine {
           case "survey": {
             const route = this.galaxy.routes.get(order.routeId);
             if (!route || route.charted) break;
-            if (corp.credits < this.config.tuning.surveyCost) break;
-            corp.credits -= this.config.tuning.surveyCost;
+            // Lane Stabilization research (Section 28) discounts charting.
+            const surveyCost = Math.round(this.config.tuning.surveyCost * this.mods(corp).surveyCostMult);
+            if (corp.credits < surveyCost) break;
+            corp.credits -= surveyCost;
             route.charted = true;
             this.events.push({ type: "build", corpId: corp.id, what: "Charted warp route" });
             this.log(`  ${corp.name} charts route ${route.id}`);
@@ -632,7 +646,7 @@ export class Engine {
             const bodyKey = order.bodyKey ?? primaryBodyKey(sys);
             // Agri-domes need a livable surface (Section 24) — not a gas giant, lava world, or belt.
             if (!canBuildOnBody("agridome", bodyTypeOfKey(sys, bodyKey))) break;
-            const domeMats = this.config.tuning.buildResources.agridome; // silicates + metals (Section 27)
+            const domeMats = this.scaleMats(corp, this.config.tuning.buildResources.agridome); // silicates + metals (Section 27)
             const domeBill = this.resourceBill(corp, domeMats);
             if (corp.credits < this.config.tuning.hydroponicsCost + domeBill) break;
             this.consumeResources(corp, domeMats);
@@ -653,7 +667,7 @@ export class Engine {
             // Factory build cost depends on the host world's type (Section 24): metal-rich rocky/lava
             // worlds are cheap to tool up, oceans and orbital-over-giants cost a premium.
             const recipeCost = Math.round(recipe.buildCost * factoryCostMult(bodyTypeOfKey(sys, procKey)));
-            const facMats = t.buildResources.factory; // alloys + metals (Section 27)
+            const facMats = this.scaleMats(corp, t.buildResources.factory); // alloys + metals (Section 27)
             const facBill = this.resourceBill(corp, facMats);
             if (corp.credits < recipeCost + facBill) break;
             this.consumeResources(corp, facMats);
@@ -668,7 +682,7 @@ export class Engine {
             const t = this.config.tuning;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            const reactorMats = t.buildResources.reactor; // alloys + silicates (Section 27)
+            const reactorMats = this.scaleMats(corp, t.buildResources.reactor); // alloys + silicates (Section 27)
             const reactorBill = this.resourceBill(corp, reactorMats);
             if (corp.credits < t.reactorCost + reactorBill) break;
             this.consumeResources(corp, reactorMats);
@@ -719,6 +733,43 @@ export class Engine {
             this.metrics.platformsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Defense platform", systemId: sys.id });
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
+            break;
+          }
+          case "buildLab": {
+            // A Research Lab (Section 28): produces research points each turn once built.
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            const labKey = order.bodyKey ?? primaryBodyKey(sys);
+            if (!canBuildOnBody("lab", bodyTypeOfKey(sys, labKey))) break;
+            const labMats = this.scaleMats(corp, t.buildResources.lab);
+            const labBill = this.resourceBill(corp, labMats);
+            if (corp.credits < t.labCost + labBill) break;
+            this.consumeResources(corp, labMats);
+            corp.credits -= t.labCost + labBill;
+            this.enqueueBuild(sys, labKey, "lab"); // Phase 4a queue
+            this.log(`  ${corp.name} queues a research lab at ${sys.name}`);
+            break;
+          }
+          case "setResearch": {
+            // Set the charter's research queue (Section 28): keep only valid, prereq-reachable techs,
+            // de-duped, with completed ones dropped — the engine pours RP into queue[0] each turn.
+            if (corp.isFreeOperator) break;
+            const done = corp.research.completed;
+            const seen = new Set<string>();
+            const queue: string[] = [];
+            // Validate in order, treating earlier queued techs as "will be completed" for prereq checks.
+            const willHave = [...done];
+            for (const id of order.queue) {
+              const tech = techById(id);
+              if (!tech || seen.has(id) || done.includes(id)) continue;
+              if (!tech.prereqs.every((p) => willHave.includes(p))) continue;
+              seen.add(id);
+              queue.push(id);
+              willHave.push(id);
+            }
+            corp.research.queue = queue;
             break;
           }
           case "buildSurveyShip": {
@@ -889,8 +940,11 @@ export class Engine {
     for (const sys of this.galaxy.allSystems()) {
       if (sys.owner === null) continue;
       if ((this.claimedTurn.get(sys.id) ?? 0) >= this.turn) continue; // claimed this turn
-      // Unrest from starvation drags extraction output down (Section 08).
-      const efficiency = 1 - t.unrestProductionPenalty * sys.unrest;
+      // Unrest from starvation drags extraction output down (Section 08); research (Section 28) lifts
+      // yield (Prospectus) and slows finite-deposit depletion.
+      const owner = this.corps.find((c) => c.id === sys.owner);
+      const rm = owner ? this.mods(owner) : researchMods([]);
+      const efficiency = (1 - t.unrestProductionPenalty * sys.unrest) * rm.yieldMult;
       // Body-driven extraction (Section 21): each worked site produces richness × extractor
       // efficiency × stellar modifier, clamped to its remaining reserves. Finite deposits
       // deplete by what they actually extract, so rich worlds eventually run dry.
@@ -903,7 +957,8 @@ export class Engine {
         if (extracted <= 0) continue;
         sys.stockpile[site.resource] += extracted;
         if (site.reservesRemaining !== null) {
-          site.reservesRemaining = Math.max(0, site.reservesRemaining - extracted);
+          // Deep-Core Drilling (Section 28) makes reserves drain slower than what's extracted.
+          site.reservesRemaining = Math.max(0, site.reservesRemaining - extracted * rm.depletionMult);
         }
       }
       // Agri-domes convert ice into food (Section 08), within available ice. Output now scales with
@@ -958,6 +1013,9 @@ export class Engine {
       powerCapacity += fromReactors * fuelledFrac;
     }
     const powerFactor = Math.max(0, Math.min(1, powerCapacity / powerNeed));
+    // Assembly Lines (Section 28) lift processor output without raising input draw.
+    const owner = this.corps.find((c) => c.id === sys.owner);
+    const factoryOutputMult = owner ? this.mods(owner).factoryOutputMult : 1;
 
     for (const recipe of t.recipes) {
       const count = buildings.processors[recipe.id] ?? 0;
@@ -977,7 +1035,7 @@ export class Engine {
         sys.stockpile[res] -= (recipe.inputs[res] ?? 0) * scale * ratio;
       }
       for (const res of Object.keys(recipe.outputs) as Resource[]) {
-        sys.stockpile[res] += (recipe.outputs[res] ?? 0) * scale * ratio;
+        sys.stockpile[res] += (recipe.outputs[res] ?? 0) * scale * ratio * factoryOutputMult;
       }
     }
   }
@@ -1032,6 +1090,7 @@ export class Engine {
       const corp = orderMeta.get(fill.order)!.corp;
       const price = fill.clearingPrice;
       const resource = fill.order.resource;
+      const marketEdge = this.mods(corp).marketEdge; // Market Algorithms (Section 28): better fills
 
       if (fill.order.side === "buy") {
         const path = this.galaxy.shortestWarpPath(
@@ -1043,7 +1102,7 @@ export class Engine {
         const hops = path.routes.length;
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
         // War aggressors pay a tariff on Exchange trades (Section 23) — imports cost more.
-        const unitCost = (price + this.config.tuning.shippingFeePerHop * hops * shipMult) * (1 + this.warTariffFor(corp.id));
+        const unitCost = (price * (1 - marketEdge) + this.config.tuning.shippingFeePerHop * hops * shipMult) * (1 + this.warTariffFor(corp.id));
         const affordable = Math.min(
           fill.filledQuantity,
           Math.floor(corp.credits / Math.max(0.01, unitCost)),
@@ -1083,7 +1142,7 @@ export class Engine {
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
         const shipping = this.config.tuning.shippingFeePerHop * hops * qty * shipMult;
         // War aggressors pay a tariff on Exchange trades (Section 23) — exports earn less.
-        const payout = Math.max(0, (qty * price - shipping) * (1 - this.warTariffFor(corp.id)));
+        const payout = Math.max(0, (qty * price * (1 + marketEdge) - shipping) * (1 - this.warTariffFor(corp.id)));
         const value = qty * this.config.tuning.basePrices[resource];
         this.events.push({
           type: "fill",
@@ -1292,7 +1351,9 @@ export class Engine {
     for (const m of sys.megastructures) def += t.megastructures[m].defenseBonus;
     if (sys.hasDepot) def += t.depotDefenseBonus;
     if (sys.owner) def += this.stationedDefense(sys.id, sys.owner);
-    return def;
+    // Hull Plating / Point-Defense research (Section 28) hardens the owner's systems.
+    const owner = this.corps.find((c) => c.id === sys.owner);
+    return owner ? def * this.mods(owner).defenseMult : def;
   }
 
   // ----- War & conquest (Section 23) -----
@@ -1372,7 +1433,7 @@ export class Engine {
       const route = this.galaxy.routeBetween(p.basedAt, target.id);
       if (route && route.charted && route.requiredRange <= attacker.rangeTier) force += p.strength;
     }
-    return force;
+    return force * this.mods(attacker).shipCombatMult; // Fire-Control research (Section 28)
   }
 
   /** A target system's total defensive strength, including allied reinforcement (Section 23). */
@@ -1458,6 +1519,8 @@ export class Engine {
       if (prevOwner) {
         prevOwner.ownedSystemIds = prevOwner.ownedSystemIds.filter((id) => id !== sys.id);
         for (const ship of prevOwner.ships) if (ship.stationedAt === sys.id) ship.stationedAt = "";
+        // Pillage R&D (Section 28): the conqueror seizes 1–3 random techs the loser holds that it lacks.
+        this.transferTech(prevOwner, attacker);
         if (prevOwner.ownedSystemIds.length === 0) {
           prevOwner.hasCharter = false;
           prevOwner.isFreeOperator = true;
@@ -1565,7 +1628,7 @@ export class Engine {
         for (const s of ships) s.stationedAt = sys.id; // target changed hands first — just occupy
         continue;
       }
-      const force = ships.reduce((sum, s) => sum + s.combat, 0);
+      const force = ships.reduce((sum, s) => sum + s.combat, 0) * this.mods(corp).shipCombatMult; // Section 28
       const fallback = sys.routeIds
         .map((rid) => this.galaxy.route(rid))
         .map((r) => (r.a === sys.id ? r.b : r.a))
@@ -1626,19 +1689,77 @@ export class Engine {
     }
   }
 
+  /** The live research modifiers a charter currently enjoys (Section 28). */
+  private mods(corp: Corporation): ResearchMods {
+    return researchMods(corp.research.completed);
+  }
+
+  /** Seize 1–3 random techs the conquered charter holds that the conqueror lacks (Section 28). A
+   *  pillaged tech bypasses choice-group lockouts — you can end up holding both sides of a fork. */
+  private transferTech(from: Corporation, to: Corporation): void {
+    const pool = from.research.completed.filter((id) => !to.research.completed.includes(id));
+    if (pool.length === 0) return;
+    const take = Math.min(pool.length, this.rng.int(1, 3));
+    for (let i = 0; i < take; i++) {
+      const id = pool.splice(this.rng.int(0, pool.length - 1), 1)[0]!;
+      to.research.completed.push(id);
+      this.events.push({ type: "research", corpId: to.id, techId: id });
+      this.log(`  ${to.name} seizes research from ${from.name}: ${techById(id)?.name ?? id}`);
+    }
+  }
+
+  /**
+   * Generate research points (Research Labs + populated colonies) and pour them into each charter's
+   * active research project (Section 28). Finished techs move to `completed`; leftover RP banks when
+   * the queue empties. Effects are read live via {@link mods}, so completing a tech needs no apply step.
+   */
+  private resolveResearch(): void {
+    const t = this.config.tuning;
+    for (const corp of this.corps) {
+      const r = corp.research;
+      if (corp.isFreeOperator) { r.banked = 0; continue; }
+      let rp = r.banked;
+      for (const sysId of corp.ownedSystemIds) {
+        const sys = this.galaxy.system(sysId);
+        rp += buildingTotal(sys, "labs") * t.labRpOutput;
+        for (const pop of Object.values(sys.colonyPop)) rp += t.researchPopBase[pop.stage];
+      }
+      while (rp > 0 && r.queue.length > 0) {
+        const id = r.queue[0]!;
+        const tech = techById(id);
+        if (!tech || r.completed.includes(id) || !canResearch(tech, r.completed)) { r.queue.shift(); continue; }
+        const need = tech.rpCost - (r.invested[id] ?? 0);
+        if (rp >= need) {
+          rp -= need;
+          delete r.invested[id];
+          r.queue.shift();
+          r.completed.push(id);
+          this.events.push({ type: "research", corpId: corp.id, techId: id });
+          this.log(`  ${corp.name} completes research: ${tech.name}`);
+        } else {
+          r.invested[id] = (r.invested[id] ?? 0) + rp;
+          rp = 0;
+        }
+      }
+      r.banked = rp; // leftover banks for next turn (e.g. an empty queue)
+    }
+  }
+
   private resolvePopulationAndUpkeep(): { taxLevied: number } {
     const t = this.config.tuning;
     const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
     let taxLevied = 0;
 
     for (const corp of this.corps) {
+      const rm = this.mods(corp); // research effects (Section 28): upkeep, growth, fleet fuel
       for (const sysId of corp.ownedSystemIds) {
         const sys = this.galaxy.system(sysId);
         // Building counts are aggregated across the system's bodies (Section 24).
         const buildings = systemBuildings(sys);
-        // Mining Rig fortification lowers a system's upkeep (Section 07c). Upkeep is per-SYSTEM.
+        // Mining Rig fortification lowers a system's upkeep (Section 07c). Upkeep is per-SYSTEM;
+        // Charter Reform research trims it further.
         const upkeepFrac = Math.max(0, 1 - buildings.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
-        corp.credits -= sys.upkeep * upkeepFrac;
+        corp.credits -= sys.upkeep * upkeepFrac * rm.upkeepMult;
 
         // Megastructures (space elevator / ringworld) accelerate growth across the whole system.
         const megaGrowth = sys.megastructures.reduce((s, m) => s + t.megastructures[m].growthBonus, 0);
@@ -1679,7 +1800,7 @@ export class Engine {
           }
 
           if (thriving) {
-            pop.progress += t.growthRate[pop.stage] * habitatGrowthMult;
+            pop.progress += t.growthRate[pop.stage] * habitatGrowthMult * rm.growthMult;
             const idx = stages.indexOf(pop.stage);
             if (pop.progress >= t.growthThreshold && idx < stages.length - 1) {
               pop.stage = stages[idx + 1]!;
@@ -1697,7 +1818,7 @@ export class Engine {
 
       // Fleet operation burns fuel each turn (Section 07b): a recurring sink that keeps the
       // fuel market live. Drawn from the corp's stockpiles first, shortfall bought at market.
-      const fuelNeed = corp.ships.length * t.fuelPerShipPerTurn;
+      const fuelNeed = corp.ships.length * t.fuelPerShipPerTurn * rm.shipFuelMult;
       if (fuelNeed > 0) {
         const fuelBill = this.strategicBill(corp, "fuel", fuelNeed);
         this.consumeStrategic(corp, "fuel", fuelNeed);
@@ -1822,7 +1943,8 @@ export class Engine {
         const seller = this.largestHolder(target, corp.id);
         if (!seller) continue;
         const available = target.shareRegister[seller] ?? 0;
-        const price = target.sharePrice;
+        // Hostile Takeover research (Section 28) makes share raids cheaper for the buyer.
+        const price = target.sharePrice * this.mods(corp).acquisitionCostMult;
         const wanted = Math.min(order.shares, available);
         const affordable = Math.min(wanted, Math.floor(corp.credits / Math.max(0.01, price)));
         if (affordable <= 0) continue;
@@ -2006,6 +2128,15 @@ export class Engine {
     let local = 0;
     for (const id of corp.ownedSystemIds) local += this.galaxy.system(id).stockpile[resource];
     return Math.max(0, need - local) * this.market.prices[resource];
+  }
+
+  /** Scale a build's material bill by the charter's Lean-Manufacturing research (Section 28). */
+  private scaleMats(corp: Corporation, costs: Partial<Record<Resource, number>>): Partial<Record<Resource, number>> {
+    const mult = this.mods(corp).buildMaterialsMult;
+    if (mult === 1) return costs;
+    const out: Partial<Record<Resource, number>> = {};
+    for (const [r, n] of Object.entries(costs)) out[r as Resource] = Math.round((n ?? 0) * mult);
+    return out;
   }
 
   /** Total exchange cost to cover the shortfall of a multi-resource build bill (Section 27). */

@@ -13,6 +13,7 @@ import { Exchange } from "./screens/Exchange";
 import { Convoys } from "./screens/Convoys";
 import { Fleet } from "./screens/Fleet";
 import { Finance } from "./screens/Finance";
+import { Research } from "./screens/Research";
 import { Turn } from "./screens/Turn";
 import { Report } from "./screens/Report";
 
@@ -24,6 +25,7 @@ const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "convoys", label: "Convoys", icon: "convoys" },
   { id: "fleet", label: "Fleet", icon: "fleet" },
   { id: "finance", label: "Finance", icon: "finance" },
+  { id: "research", label: "Research", icon: "flask" },
   { id: "turn", label: "Turn", icon: "send" },
   { id: "report", label: "Report", icon: "report" },
 ];
@@ -37,6 +39,7 @@ function Screen({ nav }: { nav: ViewId }) {
     case "convoys": return <Convoys />;
     case "fleet": return <Fleet />;
     case "finance": return <Finance />;
+    case "research": return <Research />;
     case "turn": return <Turn />;
     case "report": return <Report />;
   }

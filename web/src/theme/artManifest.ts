@@ -37,6 +37,7 @@ export const artManifest: Record<string, ArtMeta> = {
   "building-miningrig": { label: "Mining rig", ratio: 1 },
   "building-habitat": { label: "Habitat", ratio: 1 },
   "building-powergrid": { label: "Power grid", ratio: 1 },
+  "building-lab": { label: "Research lab", ratio: 1 },
 
   // warp routes (route inspector)
   "route-stable": { label: "Stable warp lane", ratio: 16 / 9 },

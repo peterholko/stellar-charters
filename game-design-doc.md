@@ -1124,6 +1124,23 @@ factory slowest), with a **factory scaling by its recipe tier** (`constructionCp
 components plant takes twice the turns of a tier-1 refinery). Build time and the queue both read from
 the same `Tuning.construction` points so the UI's "~N turns" matches what the engine resolves.
 
+## Research & Specialization
+
+**Section 28.** Six corporate research **Divisions** (Prospectus / Fabrication / Navigation / Colonial
+/ Security / Acquisitions), each a short tier spine with **pick-one choice nodes**. A charter pools
+**Research Points** from **Research Labs** (a new per-colony building) + populated colonies, and pours
+them into one **active project at a time** with a queue (`setResearch` order). Completed techs' effects
+are read live via `researchMods` (extraction yield/depletion, factory output, construction speed,
+build-material cost, population growth, upkeep, defense, ship combat, fleet fuel, market edge,
+acquisition cost, survey cost — see `research.ts`). The tree is costed so a focused charter finishes
+only **~2 divisions (~5–6 of 15 techs)** in the 42-turn game — you **specialise**, then take what you
+skipped: **conquering a charter seizes 1–3 random techs it held** (and acquisition/espionage routes
+come in later phases). Bots run per-archetype research doctrines so the sim exercises the whole tree.
+A 30-game / 8-player sweep stays green (leader/median ≈14, every flag healthy); per-game completions
+spread ~3–6 per charter, so nobody nears the full tree. *(Phase 1; Navigation's Warp-Drive range
+ladder fold-in, terraforming/wormhole/secret-project capstones, and espionage are later phases — see
+`RESEARCH_DESIGN.md`.)*
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

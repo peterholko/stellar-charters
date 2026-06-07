@@ -129,6 +129,10 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
     }
     case "buildReactor":
       return { label: "Build reactor", detail: `at ${name(order.systemId)} · ${mats(t.buildResources.reactor)}`, cost: t.reactorCost, tone: "build" };
+    case "buildLab":
+      return { label: "Build research lab", detail: `at ${name(order.systemId)} · ${mats(t.buildResources.lab)}`, cost: t.labCost, tone: "research" };
+    case "setResearch":
+      return { label: "Set research queue", detail: `${order.queue.length} project${order.queue.length === 1 ? "" : "s"} queued`, cost: 0, tone: "research" };
     case "upgradeInfrastructure": {
       const inf = t.infrastructure;
       const trackLabel = order.track === "mining" ? "Mining rig" : order.track === "habitat" ? "Habitat" : "Power grid";

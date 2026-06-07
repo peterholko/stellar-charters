@@ -22,6 +22,8 @@ import {
   maybeExpand,
   maybeFrontier,
   maybeResearchRange,
+  maybeResearch,
+  RESEARCH_PLANS,
   maybeSurvey,
   maybeUpgradeInfrastructure,
   sellSurplus,
@@ -43,6 +45,7 @@ export class MinerBot implements Bot {
     orders.push(...sellSurplus(view));
     // Develop deposits first (Section 21): an undeveloped claim produces nothing.
     orders.push(...maybeBuildExtractor(view));
+    orders.push(...maybeResearch(view, RESEARCH_PLANS.miner));
     // Grow the local economy, then keep climbing the range-tech ladder.
     orders.push(...maybeExpand(view));
     orders.push(...maybeResearchRange(view));

@@ -337,6 +337,16 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
       onClick: () => store.stage({ kind: "buildReactor", systemId: sys.id, bodyKey: colony.key }),
     });
   }
+  if (canBuildOnBody("lab", type)) {
+    opts.push({
+      key: "lab", art: "building-lab", name: "Research Lab",
+      desc: "Generates research points each turn toward your charter's tech tree (Research screen).",
+      have: `×${b.labs}`,
+      costNote: `${formatCr(t.labCost)} + ${matsLabel(t.buildResources.lab)}`,
+      turns: turnsOf("lab"), afford: credits >= t.labCost, action: "Build",
+      onClick: () => store.stage({ kind: "buildLab", systemId: sys.id, bodyKey: colony.key }),
+    });
+  }
   if (canBuildOnBody("agridome", type)) {
     opts.push({
       key: "agridome", art: "building-agridome", name: "Agri-dome",
