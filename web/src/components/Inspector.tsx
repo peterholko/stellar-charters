@@ -158,7 +158,7 @@ export function Inspector({
   return (
     <Panel className="inspector">
       <div className="inspector__portrait">
-        {isHub ? <ArtSlot slot="hero-wormhole-hub" /> : <PlanetArt archetype={arch} />}
+        {isHub ? <ArtSlot slot="hero-wormhole-hub" /> : sys.bodies?.starType ? <StarArt starType={sys.bodies.starType} /> : <PlanetArt archetype={arch} />}
       </div>
       <PanelTitle
         icon={mine ? "systems" : open ? "gavel" : isHub ? "exchange" : "systems"}
