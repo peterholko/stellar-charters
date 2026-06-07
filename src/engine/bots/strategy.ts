@@ -368,6 +368,11 @@ function isLockedOutAggressor(view: PlayerView): boolean {
   return view.wars.some((w) => w.aggressorId === view.me.id && w.endTurn > view.turn);
 }
 
+/** Aggressors currently at war with us as the defender (directly invaded, or via a defensive pact). */
+function warEnemies(view: PlayerView): Set<string> {
+  return new Set(view.wars.filter((w) => w.endTurn > view.turn && w.defenderId === view.me.id).map((w) => w.aggressorId));
+}
+
 /** Combat strength this corp can bring against a target system (ships/privateers in range). */
 function attackForceOn(view: PlayerView, sys: System): number {
   let f = 0;
@@ -474,8 +479,10 @@ function resolveConquestTarget(view: PlayerView, state: BotState): System | unde
   const cap = view.config.tuning.shipCombat[view.me.rangeTier] * 5 + 50; // willing to mass for a defended prize
   const hegemon = hegemonId(view);
   const grudge = view.me.grudges ?? {};
+  const enemies = warEnemies(view); // aggressors at war with us / our allies — counter-attack first
   const score = (s: System): number => {
     let v = grossYieldValue(view, s);
+    if (s.owner && enemies.has(s.owner)) v += 6000; // honour the pact: hit those warring on us
     if (s.owner === hegemon) v += 4000; // dogpile the runaway leader
     v += (grudge[s.owner ?? ""] ?? 0) * 300; // settle scores with those who wronged us
     return v;
@@ -514,6 +521,39 @@ export function maybeConquest(view: PlayerView, state: BotState): Order[] {
     if (view.me.ships.some((s) => s.stationedAt === id && s.combat > 0)) {
       orders.push({ kind: "redeployShip", fromSystemId: id, toSystemId: staging.id });
       break; // one redeploy per turn
+    }
+  }
+  orders.push(...buildWarshipAt(view, staging.id));
+  return orders;
+}
+
+/**
+ * Honour a defensive pact (Section 23): when we are at war as a defender — whether we were invaded
+ * directly or drawn in to defend an ally — counter-attack the aggressor's nearest reachable system.
+ * This runs for *every* archetype (even peaceful miners), since a defensive war is justified, and
+ * it carries no aggressor tariff (counter-invasion is defensive). Masses a fleet if not yet strong.
+ */
+export function maybeDefendAlly(view: PlayerView, state: BotState): Order[] {
+  if (!view.me.hasCharter || view.me.isFreeOperator) return [];
+  const enemies = warEnemies(view);
+  if (enemies.size === 0) return [];
+  const targets = view.galaxy.allSystems().filter(
+    (s): s is System => s.owner !== null && enemies.has(s.owner) && !!stagingFor(view, s),
+  );
+  if (targets.length === 0) return [];
+  const target = targets.sort((a, b) => grossYieldValue(view, b) - grossYieldValue(view, a))[0]!;
+  const staging = stagingFor(view, target)!;
+  const force = attackForceOn(view, target);
+  if (force >= systemDefenseEstimate(view, target) * view.config.tuning.war.captureRatio) {
+    return [{ kind: "invade", systemId: target.id }];
+  }
+  // Mobilise: pull a warship to the staging system and build a fresh hull there.
+  const orders: Order[] = [];
+  for (const id of view.me.ownedSystemIds) {
+    if (id === staging.id) continue;
+    if (view.me.ships.some((s) => s.combat > 0 && s.stationedAt === id)) {
+      orders.push({ kind: "redeployShip", fromSystemId: id, toSystemId: staging.id });
+      break;
     }
   }
   orders.push(...buildWarshipAt(view, staging.id));

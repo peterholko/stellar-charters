@@ -16,6 +16,7 @@ import {
   maybeBuildPlatforms,
   maybeBuildWarships,
   maybeConquest,
+  maybeDefendAlly,
   maybeResearchRange,
   maybeSabotage,
   planRaid,
@@ -54,6 +55,7 @@ export class RaiderBot implements Bot {
     // Diplomacy & conquest (Section 23): take an ally for cover, then mass a warfleet and seize
     // a rival's most valuable reachable system (accepting the Exchange lockout for the territory).
     orders.push(...maybeAlliance(view));
+    orders.push(...maybeDefendAlly(view, this.state));
     orders.push(...maybeConquest(view, this.state));
     // Advance range tech, then defend its home system and convoys.
     orders.push(...maybeResearchRange(view));

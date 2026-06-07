@@ -1146,7 +1146,7 @@ export class Engine {
    * counter-invasion — the attacker is the defender of an existing war — only extends that war
    * and does not make the counter-attacker an aggressor (so it keeps Exchange access).
    */
-  private declareOrExtendWar(aggressorId: string, defenderId: string): void {
+  private declareOrExtendWar(aggressorId: string, defenderId: string, silent = false): void {
     const newEnd = this.turn + this.config.tuning.war.durationTurns;
     const reverse = this.wars.find(
       (w) => w.aggressorId === defenderId && w.defenderId === aggressorId && w.endTurn > this.turn,
@@ -1163,8 +1163,10 @@ export class Engine {
       return;
     }
     this.wars.push({ aggressorId, defenderId, startTurn: this.turn, endTurn: newEnd });
-    this.events.push({ type: "warDeclared", aggressorId, defenderId });
-    this.log(`  WAR DECLARED: ${this.name(aggressorId)} invades ${this.name(defenderId)}'s territory`);
+    if (!silent) {
+      this.events.push({ type: "warDeclared", aggressorId, defenderId });
+      this.log(`  WAR DECLARED: ${this.name(aggressorId)} invades ${this.name(defenderId)}'s territory`);
+    }
   }
 
   /** Combat strength an attacker can bring to bear on a target system (ships/privateers in range). */
@@ -1239,7 +1241,15 @@ export class Engine {
         const defense = this.invasionDefenseForce(sys);
         this.declareOrExtendWar(corp.id, defenderId);
         this.addGrudge(defenderId, corp.id, 3); // invasion is the gravest grievance
-        for (const ally of this.corps) if (this.areAllied(defenderId, ally.id)) this.addGrudge(ally.id, corp.id, 1);
+        // Defensive pact (Section 23): the defender's allies are drawn into the war against the
+        // aggressor and will counter-attack it (penalty-free, as defenders).
+        for (const ally of this.corps) {
+          if (!this.areAllied(defenderId, ally.id)) continue;
+          this.declareOrExtendWar(corp.id, ally.id, true);
+          this.addGrudge(ally.id, corp.id, 3);
+          this.events.push({ type: "pactInvoked", protectorId: ally.id, aggressorId: corp.id, allyId: defenderId });
+          this.log(`  PACT: ${this.name(ally.id)} joins the war against ${this.name(corp.id)} to defend ${this.name(defenderId)}`);
+        }
         const captured = attack >= Math.max(1, defense) * t.captureRatio;
         if (captured) {
           const prevOwner = this.corps.find((c) => c.id === defenderId);

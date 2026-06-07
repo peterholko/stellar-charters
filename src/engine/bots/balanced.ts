@@ -13,6 +13,7 @@ import {
   maybeAlliance,
   maybeBuildDepot,
   maybeConquest,
+  maybeDefendAlly,
   maybeBuildExtractor,
   maybeBuildHydroponics,
   maybeBuildMegastructure,
@@ -67,6 +68,7 @@ export class BalancedBot implements Bot {
     // ally for cover — opportunistic conquest of a weak neighbour (Section 23).
     orders.push(...financierOrders(view, this.state, { sinceTurn: 24 }));
     orders.push(...maybeAlliance(view));
+    orders.push(...maybeDefendAlly(view, this.state)); // honour pacts even before going offensive
     if (view.turn >= 16) orders.push(...maybeConquest(view, this.state));
 
     return orders;

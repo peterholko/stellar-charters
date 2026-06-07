@@ -92,6 +92,13 @@ export type TurnEvent =
       bId: string;
     }
   | {
+      type: "pactInvoked";
+      /** The ally drawn into the war to defend `allyId`. */
+      protectorId: string;
+      aggressorId: string;
+      allyId: string;
+    }
+  | {
       type: "acquisition";
       acquirerId: string;
       targetId: string;

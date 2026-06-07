@@ -984,11 +984,19 @@ galaxy's check on it: get too big and you become everyone's target.
 
 ### Defensive alliances
 
-Charters may form **mutual defensive alliances** (both sides must pledge). When an ally's system is
-invaded, the ally's warships in range **reinforce the defense**, often turning a winnable assault
-into a bloody repulse. Allies cannot invade one another. An alliance is cheap insurance and a way
-for smaller charters to make themselves too costly to conquer — and for the galaxy to gang up on an
-over-mighty aggressor.
+Charters may form **mutual defensive alliances** (both sides must pledge), and a pact is a real
+obligation, not a gesture. When an ally's system is invaded:
+
+- the ally's warships in range **reinforce the defense**, often turning a winnable assault into a
+  bloody repulse; and
+- **every ally is drawn into the war against the aggressor** — they become belligerents (paying no
+  tariff, since they are defenders) and their fleets **counter-attack the aggressor's territory**.
+  An attacker who overcommits its fleet to an invasion can find its own undefended worlds seized in
+  return. Even an otherwise-peaceful charter honours the pact and takes up arms in a defensive war.
+
+Allies cannot invade one another. An alliance is therefore genuine collective security: striking one
+member means going to war with the whole bloc — cheap insurance for smaller charters, and the
+galaxy's mechanism for ganging up on an over-mighty aggressor.
 
 ### Resolution placement
 

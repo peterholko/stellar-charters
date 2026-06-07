@@ -105,6 +105,11 @@ export function buildDigest(report: TurnReport, view: PlayerView, me: string): D
         if (e.aId === me || e.bId === me) lines.push({ tone: "good", scope: "me", title: `Alliance formed`, body: `Defensive pact with ${corpName(e.aId === me ? e.bId : e.aId)}.` });
         else lines.push({ tone: "info", scope: "world", title: `Alliance`, body: `${corpName(e.aId)} and ${corpName(e.bId)} formed a defensive alliance.` });
         break;
+      case "pactInvoked":
+        if (e.protectorId === me) lines.push({ tone: "warn", scope: "me", title: `Pact invoked`, body: `${corpName(e.allyId)} was invaded — you join the war against ${corpName(e.aggressorId)}.` });
+        else if (e.aggressorId === me) lines.push({ tone: "warn", scope: "me", title: `Pact triggered`, body: `${corpName(e.protectorId)} joins the war to defend ${corpName(e.allyId)}.` });
+        else if (e.allyId === me) lines.push({ tone: "good", scope: "me", title: `Ally answers the call`, body: `${corpName(e.protectorId)} joins the war on your side against ${corpName(e.aggressorId)}.` });
+        break;
       case "acquisition":
         if (e.acquirerId === me) lines.push({ tone: "good", scope: "me", art: "event-acquisition", title: `Acquisition`, body: `You absorbed ${corpName(e.targetId)}'s charter.` });
         else if (e.targetId === me) lines.push({ tone: "bad", scope: "me", art: "event-acquisition", title: `You were acquired`, body: `${corpName(e.acquirerId)} took control of your charter.` });

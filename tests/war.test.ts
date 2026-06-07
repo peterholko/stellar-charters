@@ -102,6 +102,21 @@ describe("war & conquest (Section 23)", () => {
     expect(war).toBeLessThan(peace); // but the war tariff skims the proceeds
   });
 
+  it("draws an ally into the war when their partner is invaded — a defensive pact", () => {
+    // S1 (corp-1) is allied with S2 (corp-2). corp-0 invades S1; the ally has no ships in range
+    // so the assault still lands, but corp-2 is pulled into the war against the aggressor.
+    const { eng, a, d, third } = setup({ attackerCombat: 30, ally2: true, ally2Combat: 0 });
+    eng.setHumanOrders(a.id, [{ kind: "invade", systemId: "s1" }]);
+    eng.stepTurn();
+    expect(eng.galaxy.system("s1").owner).toBe(a.id); // captured
+    // The aggressor is now at war with BOTH the defender and its ally.
+    expect(eng.activeWars.some((w) => w.aggressorId === a.id && w.defenderId === d.id)).toBe(true);
+    expect(eng.activeWars.some((w) => w.aggressorId === a.id && w.defenderId === third.id)).toBe(true);
+    // The aggressor pays the war tariff; the drawn-in ally (a defender) does not.
+    expect(eng.warTariffFor(a.id)).toBeGreaterThan(0);
+    expect(eng.warTariffFor(third.id)).toBe(0);
+  });
+
   it("a defensive alliance reinforces the defender, turning a capture into a repel", () => {
     // Without the ally, attack 20 vs defense ~2 would capture; the ally's 40 combat at adjacent
     // S2 reinforces S1's defense past the capture threshold.

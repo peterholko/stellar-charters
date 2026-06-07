@@ -10,6 +10,7 @@ import {
   bidList,
   freeOperatorOrders,
   maybeAlliance,
+  maybeDefendAlly,
   maybeBuildDepot,
   maybeBuildExtractor,
   maybeBuildHydroponics,
@@ -57,8 +58,10 @@ export class MinerBot implements Bot {
     // Cheap stationary platforms first, then mobile escort fleets.
     orders.push(...maybeBuildPlatforms(view));
     orders.push(...maybeBuildWarships(view));
-    // Peaceful miners take a defensive alliance for protection (Section 23).
+    // Peaceful miners take a defensive alliance for protection — and honour it: if attacked or an
+    // ally is, they counter-attack the aggressor (Section 23).
     orders.push(...maybeAlliance(view));
+    orders.push(...maybeDefendAlly(view, this.state));
     return orders;
   }
 }

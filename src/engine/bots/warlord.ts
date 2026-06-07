@@ -16,6 +16,7 @@ import {
   maybeBuildPlatforms,
   maybeBuildWarships,
   maybeConquest,
+  maybeDefendAlly,
   maybeFrontier,
   maybeResearchRange,
   maybeSabotage,
@@ -43,6 +44,7 @@ export class WarlordBot implements Bot {
     orders.push(...maybeFrontier(view));
     // Military first: build a fleet, then mass it and conquer.
     orders.push(...maybeBuildWarships(view));
+    orders.push(...maybeDefendAlly(view, this.state));
     orders.push(...maybeConquest(view, this.state));
     // Bleed rivals between campaigns.
     if (view.turn >= 6) orders.push(...planRaid(view, { fundFactor: 1.4 }));
