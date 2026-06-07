@@ -306,6 +306,8 @@ input, select { font-family: inherit; }
 .boptlist { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
 .bopt { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem; border-radius: 0.5rem; background: var(--panel); border: 1px solid var(--line-soft); }
 .bopt--maxed { opacity: 0.6; }
+.bopt__art { width: 40px; height: 40px; flex: none; border-radius: var(--radius-sm); object-fit: cover; }
+.bopt__art.artslot { font-size: 0.5rem; }
 .bopt__info { flex: 1; min-width: 0; }
 .bopt__top { display: flex; align-items: baseline; gap: 0.4rem; }
 .bopt__top strong { font-size: 0.78rem; text-transform: capitalize; }

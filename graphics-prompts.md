@@ -227,4 +227,40 @@ dark UI theme, consistent with the Exchange and Convoy Card.
 
 ---
 
+## F. Colony Building Icons (Section 24/27)
+
+The six structures the player raises on a planet's colony screen. One cohesive
+icon set; drop the exported PNGs into `web/public/assets/` as `building-factory.png`,
+`building-reactor.png`, `building-agridome.png`, `building-miningrig.png`,
+`building-habitat.png`, `building-powergrid.png` (each 1:1, transparent).
+
+### Colony Building Icon Set
+A set of six matching colony-building icons for a near-future corporate-sci-fi 4X
+game, presented as a clean **2×3 contact sheet on a transparent background**, each
+icon isolated in its own cell at identical scale, identical 3/4 isometric camera,
+identical key light from the upper-left, and a shared cold-metal palette with one
+warm signal accent. Each is a small, readable hero structure planted on a circular
+slab of planetary ground, like a build-menu thumbnail:
+1. **Factory** — a boxy automated refinery/processor with intake hoppers, conveyor
+   arms and an exhaust stack venting faint vapor; amber signal lights.
+2. **Reactor** — a squat fusion reactor: a glowing teal containment core inside a
+   ribbed alloy shell with coolant fins and warning chevrons.
+3. **Agri-dome** — a transparent geodesic greenhouse dome over green crop terraces,
+   soft internal grow-lights, condensation on the glass.
+4. **Mining rig** — a fortified extraction derrick over a mineshaft: a drilling
+   tower, ore conveyor, and armored revetments (it doubles as defense).
+5. **Habitat** — a clustered residential arcology: stacked living modules with lit
+   windows, a small park ring, antennae.
+6. **Power grid** — a substation: capacitor banks, transformer pylons, and humming
+   conduits feeding a small distribution mast.
+Utilitarian industrial hardware with weathered panels, rivets and corporate decals;
+crisp readable silhouettes; subtle ground shadow under each; no text labels on the
+art. *Aspect: each icon 1:1 · transparent background · consistent set.*
+
+> Append the **Shared Style Suffix** and the **Negative Prompt** above. If your tool
+> generates one image per prompt, reuse this exact spec for each building individually
+> (same camera, light, palette, slab) so the six stay a matched set.
+
+---
+
 *Source of truth for terminology and concepts: `game-design-doc.md` (v2.2).*

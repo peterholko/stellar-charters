@@ -30,6 +30,14 @@ export const artManifest: Record<string, ArtMeta> = {
   "infra-hydroponics": { label: "Hydroponics", ratio: 1 },
   "infra-platform": { label: "Defense platform", ratio: 1 },
 
+  // colony buildings (the planet build menu, Section 24/27)
+  "building-factory": { label: "Factory", ratio: 1 },
+  "building-reactor": { label: "Reactor", ratio: 1 },
+  "building-agridome": { label: "Agri-dome", ratio: 1 },
+  "building-miningrig": { label: "Mining rig", ratio: 1 },
+  "building-habitat": { label: "Habitat", ratio: 1 },
+  "building-powergrid": { label: "Power grid", ratio: 1 },
+
   // warp routes (route inspector)
   "route-stable": { label: "Stable warp lane", ratio: 16 / 9 },
   "route-unstable": { label: "Unstable warp lane", ratio: 16 / 9 },

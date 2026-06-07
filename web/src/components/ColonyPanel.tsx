@@ -15,7 +15,7 @@ import {
 import { store } from "../match/store";
 import { formatCr, planetTypeLabel, populationLabel, resourceLabels } from "../match/format";
 import { ActionButton, Badge, Bar } from "../ui/primitives";
-import { PlanetTypeArt, StarArt } from "../theme/ArtSlot";
+import { ArtSlot, PlanetTypeArt, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 
 /** "8 alloys + 6 metals" — the materials a colony building consumes besides credits (Section 27). */
@@ -278,6 +278,8 @@ function ColonyQueue({ colony, rate }: { colony: ColonyInfo; rate: number }) {
 
 interface BuildOpt {
   key: string;
+  /** Art-slot id for the building's icon (placeholder until the PNG is generated). */
+  art: string;
   name: string;
   desc: string;
   /** e.g. "×2" for countables, "Lv 1/4" for upgrade tracks. */
@@ -313,7 +315,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
       const ins = resList(r.inputs);
       const outs = resList(r.outputs);
       opts.push({
-        key: `f-${r.id}`,
+        key: `f-${r.id}`, art: "building-factory",
         name: `${r.id} factory`,
         desc: `Each turn refines ${ins} → ${outs} (needs power).`,
         have: `×${b.processors[r.id] ?? 0}`,
@@ -327,7 +329,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
   }
   if (canBuildOnBody("reactor", type)) {
     opts.push({
-      key: "reactor", name: "Reactor",
+      key: "reactor", art: "building-reactor", name: "Reactor",
       desc: `Adds +${t.reactorPowerOutput} power; burns helium-3 to keep this system's factories running.`,
       have: `×${b.reactors}`,
       costNote: `${formatCr(t.reactorCost)} + ${matsLabel(t.buildResources.reactor)}`,
@@ -337,7 +339,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
   }
   if (canBuildOnBody("agridome", type)) {
     opts.push({
-      key: "agridome", name: "Agri-dome",
+      key: "agridome", art: "building-agridome", name: "Agri-dome",
       desc: `Converts ice into food (×${agriMult} on a ${(planetTypeLabel[type as keyof typeof planetTypeLabel] ?? "world").toLowerCase()}); local food fuels population growth.`,
       have: `×${b.hydroponics}`,
       costNote: `${formatCr(t.hydroponicsCost)} + ${matsLabel(t.buildResources.agridome)}`,
@@ -348,7 +350,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
   if (canBuildOnBody("mining", type)) {
     const lvl = b.miningRigs, cost = inf.miningCreditCost * (lvl + 1);
     opts.push({
-      key: "mining", name: "Mining rig",
+      key: "mining", art: "building-miningrig", name: "Mining rig",
       desc: "Fortifies the system against raids and trims its per-turn upkeep, each level.",
       have: `Lv ${lvl}/${inf.cap}`,
       costNote: `${formatCr(cost)} + ${inf.miningMetalsCost * (lvl + 1)} metals`,
@@ -359,7 +361,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
   if (canBuildOnBody("habitat", type)) {
     const lvl = b.habitats, cost = inf.habitatCreditCost * (lvl + 1);
     opts.push({
-      key: "habitat", name: "Habitat",
+      key: "habitat", art: "building-habitat", name: "Habitat",
       desc: "Speeds this colony's population growth and raises the tax it pays, each level.",
       have: `Lv ${lvl}/${inf.cap}`,
       costNote: `${formatCr(cost)} + ${inf.habitatSilicatesCost * (lvl + 1)} silicates`,
@@ -370,7 +372,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
   if (canBuildOnBody("power", type)) {
     const lvl = b.powerGrid, cost = inf.powerCreditCost * (lvl + 1);
     opts.push({
-      key: "power", name: "Power grid",
+      key: "power", art: "building-powergrid", name: "Power grid",
       desc: `Adds +${inf.powerCapacityPerLevel} baseline power per level — a cheaper standby than reactors.`,
       have: `Lv ${lvl}/${inf.cap}`,
       costNote: `${formatCr(cost)} + ${inf.powerHelium3Cost * (lvl + 1)} helium-3`,
@@ -385,6 +387,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
       <div className="boptlist">
         {opts.map((o) => (
           <div key={o.key} className={`bopt${o.maxed ? " bopt--maxed" : ""}`}>
+            <ArtSlot slot={o.art} className="bopt__art" />
             <div className="bopt__info">
               <div className="bopt__top"><strong>{o.name}</strong><span className="bopt__have">{o.have}</span></div>
               <p className="bopt__desc">{o.desc}</p>
