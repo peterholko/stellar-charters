@@ -10,6 +10,7 @@ import {
   type PlayerView,
 } from "@engine";
 import { Panel, PanelTitle, Badge } from "../ui/primitives";
+import { ArtSlot } from "../theme/ArtSlot";
 
 /**
  * Research screen (Section 28): the six Divisions as a tree. Pick projects into a single ordered
@@ -64,8 +65,11 @@ export function Research() {
         {RESEARCH_DIVISIONS.map((div) => (
           <Panel key={div.id} className="division">
             <div className="division__head">
-              <h3>{div.name}</h3>
-              <span className="division__blurb">{div.blurb}</span>
+              <ArtSlot slot={`research-${div.id}`} className="division__icon" />
+              <div className="division__headtext">
+                <h3>{div.name}</h3>
+                <span className="division__blurb">{div.blurb}</span>
+              </div>
             </div>
             <div className="division__techs">
               {RESEARCH_TREE.filter((tk) => tk.division === div.id)
@@ -104,7 +108,10 @@ function TechNode({ tech, state, queuePos, claimedBy, onClick }: { tech: Researc
   const clickable = state === "open" || state === "queued" || state === "active";
   return (
     <button type="button" className={`tech tech--${state}${tech.secret ? " tech--secret" : ""}`} disabled={!clickable} onClick={onClick}>
-      <div className="tech__top"><strong>{tech.name}</strong>{tag}</div>
+      <div className="tech__top">
+        {tech.secret && <ArtSlot slot={`secret-${tech.id}`} className="tech__emblem" />}
+        <strong>{tech.name}</strong>{tag}
+      </div>
       <p className="tech__desc">{tech.desc}</p>
       {tech.secret ? <span className="tech__secret">★ Secret project — galaxy-unique race</span>
         : tech.choiceGroup ? <span className="tech__choice">choose one in this branch</span> : null}

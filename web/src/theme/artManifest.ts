@@ -39,6 +39,22 @@ export const artManifest: Record<string, ArtMeta> = {
   "building-powergrid": { label: "Power grid", ratio: 1 },
   "building-lab": { label: "Research lab", ratio: 1 },
 
+  // research divisions (the Research screen, Section 28)
+  "research-prospectus": { label: "Prospectus", ratio: 1 },
+  "research-fabrication": { label: "Fabrication", ratio: 1 },
+  "research-navigation": { label: "Navigation", ratio: 1 },
+  "research-colonial": { label: "Colonial", ratio: 1 },
+  "research-security": { label: "Security", ratio: 1 },
+  "research-acquisitions": { label: "Acquisitions", ratio: 1 },
+
+  // secret-project emblems (galaxy-unique capstones, Section 28 Phase 3)
+  "secret-pro-antimatter": { label: "Antimatter Containment", ratio: 1 },
+  "secret-fab-nanofab": { label: "Nanofabrication", ratio: 1 },
+  "secret-nav-wormhole": { label: "Wormhole Engineering", ratio: 1 },
+  "secret-col-arcology": { label: "Arcology", ratio: 1 },
+  "secret-sec-orbital": { label: "Orbital Dominance", ratio: 1 },
+  "secret-acq-insider": { label: "Insider Networks", ratio: 1 },
+
   // warp routes (route inspector)
   "route-stable": { label: "Stable warp lane", ratio: 16 / 9 },
   "route-unstable": { label: "Unstable warp lane", ratio: 16 / 9 },
