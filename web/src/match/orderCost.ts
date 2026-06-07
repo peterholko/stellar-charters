@@ -1,6 +1,14 @@
 import { bodyTypeOfKey, factoryCostMult, primaryBodyKey, type Order, type PlayerView } from "@engine";
 import { resourceLabels } from "./format";
 
+/** "8 alloys + 6 metals" — materials a build consumes besides credits (Section 27). */
+function mats(costs: Record<string, number | undefined>): string {
+  return Object.entries(costs)
+    .filter(([, n]) => (n ?? 0) > 0)
+    .map(([r, n]) => `${n} ${(resourceLabels[r as keyof typeof resourceLabels] ?? r).toLowerCase()}`)
+    .join(" + ");
+}
+
 export type OrderTone = "build" | "trade" | "raid" | "finance" | "research" | "claim";
 
 export interface OrderInfo {
@@ -107,20 +115,20 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
     case "buildDepot":
       return { label: "Build Trade Depot", detail: `at ${name(order.systemId)}`, cost: t.depotCost, tone: "build" };
     case "buildHydroponics":
-      return { label: "Build agri-dome", detail: `at ${name(order.systemId)}`, cost: t.hydroponicsCost, tone: "build" };
+      return { label: "Build agri-dome", detail: `at ${name(order.systemId)} · ${mats(t.buildResources.agridome)}`, cost: t.hydroponicsCost, tone: "build" };
     case "buildProcessor": {
       const recipe = t.recipes.find((r) => r.id === order.recipeId);
       const sys = g.systems.get(order.systemId);
       const mult = sys ? factoryCostMult(bodyTypeOfKey(sys, order.bodyKey ?? primaryBodyKey(sys))) : 1;
       return {
         label: `Build ${order.recipeId} factory`,
-        detail: `at ${name(order.systemId)} · ${t.buildAlloyCost} alloys`,
+        detail: `at ${name(order.systemId)} · ${mats(t.buildResources.factory)}`,
         cost: Math.round((recipe?.buildCost ?? 0) * mult),
         tone: "build",
       };
     }
     case "buildReactor":
-      return { label: "Build reactor", detail: `at ${name(order.systemId)} · ${t.buildAlloyCost} alloys`, cost: t.reactorCost, tone: "build" };
+      return { label: "Build reactor", detail: `at ${name(order.systemId)} · ${mats(t.buildResources.reactor)}`, cost: t.reactorCost, tone: "build" };
     case "upgradeInfrastructure": {
       const inf = t.infrastructure;
       const trackLabel = order.track === "mining" ? "Mining rig" : order.track === "habitat" ? "Habitat" : "Power grid";

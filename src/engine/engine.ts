@@ -637,8 +637,11 @@ export class Engine {
             const bodyKey = order.bodyKey ?? primaryBodyKey(sys);
             // Agri-domes need a livable surface (Section 24) — not a gas giant, lava world, or belt.
             if (!canBuildOnBody("agridome", bodyTypeOfKey(sys, bodyKey))) break;
-            if (corp.credits < this.config.tuning.hydroponicsCost) break;
-            corp.credits -= this.config.tuning.hydroponicsCost;
+            const domeMats = this.config.tuning.buildResources.agridome; // silicates + metals (Section 27)
+            const domeBill = this.resourceBill(corp, domeMats);
+            if (corp.credits < this.config.tuning.hydroponicsCost + domeBill) break;
+            this.consumeResources(corp, domeMats);
+            corp.credits -= this.config.tuning.hydroponicsCost + domeBill;
             this.enqueueBuild(sys, bodyKey, "agridome"); // completes over the construction queue (Phase 4a)
             this.log(`  ${corp.name} queues hydroponics at ${sys.name}`);
             break;
@@ -655,10 +658,11 @@ export class Engine {
             // Factory build cost depends on the host world's type (Section 24): metal-rich rocky/lava
             // worlds are cheap to tool up, oceans and orbital-over-giants cost a premium.
             const recipeCost = Math.round(recipe.buildCost * factoryCostMult(bodyTypeOfKey(sys, procKey)));
-            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
-            if (corp.credits < recipeCost + alloyBill) break;
-            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
-            corp.credits -= recipeCost + alloyBill;
+            const facMats = t.buildResources.factory; // alloys + metals (Section 27)
+            const facBill = this.resourceBill(corp, facMats);
+            if (corp.credits < recipeCost + facBill) break;
+            this.consumeResources(corp, facMats);
+            corp.credits -= recipeCost + facBill;
             this.enqueueBuild(sys, procKey, "factory", recipe.id); // Phase 4a: queues, completes later
             this.log(`  ${corp.name} queues a ${recipe.id} processor at ${sys.name}`);
             break;
@@ -669,10 +673,11 @@ export class Engine {
             const t = this.config.tuning;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
-            if (corp.credits < t.reactorCost + alloyBill) break;
-            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
-            corp.credits -= t.reactorCost + alloyBill;
+            const reactorMats = t.buildResources.reactor; // alloys + silicates (Section 27)
+            const reactorBill = this.resourceBill(corp, reactorMats);
+            if (corp.credits < t.reactorCost + reactorBill) break;
+            this.consumeResources(corp, reactorMats);
+            corp.credits -= t.reactorCost + reactorBill;
             this.enqueueBuild(sys, order.bodyKey ?? primaryBodyKey(sys), "reactor"); // Phase 4a
             this.log(`  ${corp.name} queues a reactor at ${sys.name}`);
             break;
@@ -2006,6 +2011,18 @@ export class Engine {
     let local = 0;
     for (const id of corp.ownedSystemIds) local += this.galaxy.system(id).stockpile[resource];
     return Math.max(0, need - local) * this.market.prices[resource];
+  }
+
+  /** Total exchange cost to cover the shortfall of a multi-resource build bill (Section 27). */
+  private resourceBill(corp: Corporation, costs: Partial<Record<Resource, number>>): number {
+    let total = 0;
+    for (const r of RESOURCES) total += this.strategicBill(corp, r, costs[r] ?? 0);
+    return total;
+  }
+
+  /** Consume a multi-resource build bill from local stockpiles, buying any shortfall (Section 27). */
+  private consumeResources(corp: Corporation, costs: Partial<Record<Resource, number>>): void {
+    for (const r of RESOURCES) this.consumeStrategic(corp, r, costs[r] ?? 0);
   }
 
   /** Consume up to `need` of a build resource from local stockpiles (shortfall is bought). */

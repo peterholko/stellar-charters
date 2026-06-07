@@ -1104,6 +1104,19 @@ too** — every archetype keeps one scout in its fleet and repeatedly dispatches
 unsurveyed reachable system (`maybeSurvey`); a 42-turn game sees ~130 survey runs across eight
 charters, with scouts criss-crossing into rival space and returning home.
 
+## Construction Materials
+
+**Section 27.** Colony buildings cost **materials as well as credits**, tying the extraction economy to
+development — you spend the metals/silicates/alloys you mine to raise structures. Each colony building
+draws a per-kind bill (`Tuning.buildResources`) from the charter's stockpiles, buying any shortfall at
+the exchange like every other build (so it's a soft requirement, not a hard gate): a **factory** is
+heavy industry (alloys + metals), a **reactor** an alloy shell with silicate shielding (alloys +
+silicates), an **agri-dome** a silicate-and-metal pressure dome (previously it cost credits only).
+Mining-rig / habitat / power-grid upgrades already consumed their scaling raw (metals / silicates /
+helium-3). The colony build menu and order tray show each building's materials alongside its credit
+cost. A 30-game / 8-player sweep stays green (leader/median ≈12, metals price-floor 0%, food-growth
+91%) — the added demand sink mildly compresses the runaway leader.
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

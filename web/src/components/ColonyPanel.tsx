@@ -17,6 +17,14 @@ import { ActionButton, Badge, Bar } from "../ui/primitives";
 import { PlanetTypeArt, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 
+/** "8 alloys + 6 metals" — the materials a colony building consumes besides credits (Section 27). */
+function matsLabel(costs: Record<string, number | undefined>): string {
+  return Object.entries(costs)
+    .filter(([, n]) => (n ?? 0) > 0)
+    .map(([r, n]) => `${n} ${(resourceLabels[r as keyof typeof resourceLabels] ?? r).toLowerCase()}`)
+    .join(" + ");
+}
+
 /**
  * The colony screen (Section 24): the system is a container; each planet / belt / star is a
  * first-class colony you develop. For an owned system this is the Master-of-Orion-style management
@@ -297,7 +305,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
                 key={r.id}
                 label={`${r.id} factory`}
                 count={b.processors[r.id] ?? 0}
-                costNote={`${formatCr(cost)} + ${t.buildAlloyCost} alloys${factoryMult !== 1 ? ` (${type} ×${factoryMult})` : ""}`}
+                costNote={`${formatCr(cost)} + ${matsLabel(t.buildResources.factory)}${factoryMult !== 1 ? ` (${type} ×${factoryMult})` : ""}`}
                 afford={credits >= cost}
                 onClick={() => store.stage({ kind: "buildProcessor", systemId: sys.id, recipeId: r.id, bodyKey: colony.key })}
               />
@@ -307,7 +315,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
           <BuildChip
             label="Reactor"
             count={b.reactors}
-            costNote={`${formatCr(t.reactorCost)} + ${t.buildAlloyCost} alloys`}
+            costNote={`${formatCr(t.reactorCost)} + ${matsLabel(t.buildResources.reactor)}`}
             afford={credits >= t.reactorCost}
             onClick={() => store.stage({ kind: "buildReactor", systemId: sys.id, bodyKey: colony.key })}
           />
@@ -316,7 +324,7 @@ function ColonyBuilds({ colony, sys, view }: { colony: ColonyInfo; sys: System; 
           <BuildChip
             label="Agri-dome"
             count={b.hydroponics}
-            costNote={`${formatCr(t.hydroponicsCost)} · food ×${agriMult}`}
+            costNote={`${formatCr(t.hydroponicsCost)} + ${matsLabel(t.buildResources.agridome)} · food ×${agriMult}`}
             afford={credits >= t.hydroponicsCost}
             onClick={() => store.stage({ kind: "buildHydroponics", systemId: sys.id, bodyKey: colony.key })}
           />

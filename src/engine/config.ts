@@ -161,6 +161,16 @@ export interface Tuning {
   shipComponentCost: Record<RangeTier, number>;
   /** Flat alloy cost to construct any building (depot, platform, processor, reactor). */
   buildAlloyCost: number;
+  /**
+   * Construction materials each colony building consumes besides credits (Section 27): drawn from
+   * the charter's stockpiles, with any shortfall bought at the exchange. Ties the extraction economy
+   * to development — you spend the metals/silicates/alloys you mine to raise structures.
+   */
+  buildResources: {
+    factory: Partial<Record<Resource, number>>;
+    reactor: Partial<Record<Resource, number>>;
+    agridome: Partial<Record<Resource, number>>;
+  };
   /** Extra components a Trade Depot consumes when built (advanced infrastructure). */
   depotComponentCost: number;
   /** Fuel each ship burns per turn to stay operational (Section 07b fleet sink). */
@@ -347,6 +357,14 @@ export const DEFAULT_TUNING: Tuning = {
   shipAlloyCost: { 1: 2, 2: 4, 3: 8, 4: 18, 5: 38, 6: 64, 7: 95, 8: 140 },
   shipComponentCost: { 1: 0, 2: 1, 3: 2, 4: 4, 5: 6, 6: 9, 7: 12, 8: 16 },
   buildAlloyCost: 4,
+  // Each colony building draws real materials besides credits (Section 27): a factory is heavy
+  // industry (alloys + metals), a reactor needs an alloy shell + silicate shielding, an agri-dome a
+  // silicate-and-metal pressure dome. Shortfalls are bought at the exchange like every other bill.
+  buildResources: {
+    factory: { alloys: 8, metals: 6 },
+    reactor: { alloys: 8, silicates: 5 },
+    agridome: { silicates: 8, metals: 5 },
+  },
   depotComponentCost: 3,
   fuelPerShipPerTurn: 0.5,
   reactorCost: 700,
