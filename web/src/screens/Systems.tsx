@@ -51,7 +51,11 @@ export function Systems() {
                   className={`syslist__row${s.id === selSys ? " is-active" : ""}`}
                   onClick={() => pickSystem(s.id)}
                 >
-                  <PlanetArt archetype={systemArchetype(s)} className="syslist__art" />
+                  {s.bodies?.starType ? (
+                    <StarArt starType={s.bodies.starType} className="syslist__art" />
+                  ) : (
+                    <PlanetArt archetype={systemArchetype(s)} className="syslist__art" />
+                  )}
                   <div className="syslist__text">
                     <strong>{s.name}</strong>
                     <span className="syslist__sub">
