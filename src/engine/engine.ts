@@ -63,6 +63,7 @@ import {
 import type { Bot, BotFactory, PlayerView } from "./bots/bot.js";
 import { HybridBot } from "./bots/hybrid.js";
 import type { TurnEvent, TurnReport } from "./report.js";
+import { computeOutcome, type GameOutcome } from "./standings.js";
 
 export interface EngineOptions {
   /** Optional per-turn text logger for `--verbose` single-game runs. */
@@ -282,6 +283,16 @@ export class Engine {
   /** True once the match has played its final turn. */
   get isOver(): boolean {
     return this.turn >= this.config.turns;
+  }
+
+  /**
+   * Live victory standings + final outcome (Section 29). Read-only over current state, so it
+   * adds no resolution logic and is safe to call any turn. Note `outcome.over` can be true before
+   * `isOver` (a decisive monopoly ends the game early); consumers that gate on the turn limit
+   * should check `outcome.over`, not just `isOver`.
+   */
+  get outcome(): GameOutcome {
+    return computeOutcome(this.corps, this.galaxy, this.config.tuning, this.turn, this.config.turns);
   }
 
   /** The current turn number (0 before the first turn, then 1..N as turns resolve). */

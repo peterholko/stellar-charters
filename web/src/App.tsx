@@ -16,6 +16,7 @@ import { Finance } from "./screens/Finance";
 import { Research } from "./screens/Research";
 import { Turn } from "./screens/Turn";
 import { Report } from "./screens/Report";
+import { Standings, VICTORY } from "./screens/Standings";
 
 const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "dashboard", label: "Command", icon: "dashboard" },
@@ -28,6 +29,7 @@ const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "research", label: "Research", icon: "flask" },
   { id: "turn", label: "Turn", icon: "send" },
   { id: "report", label: "Report", icon: "report" },
+  { id: "standings", label: "Standings", icon: "trending" },
 ];
 
 function Screen({ nav }: { nav: ViewId }) {
@@ -42,6 +44,7 @@ function Screen({ nav }: { nav: ViewId }) {
     case "research": return <Research />;
     case "turn": return <Turn />;
     case "report": return <Report />;
+    case "standings": return <Standings />;
   }
 }
 
@@ -189,34 +192,42 @@ function InProgress({ username }: { username: string }) {
 }
 
 function OverModal() {
-  const { view, humanCorpId } = useApp();
-  if (!view) return null;
-  const standings = [...view.corporations].sort((a, b) => b.valuation - a.valuation);
-  const winner = standings[0]!;
-  const myRank = standings.findIndex((c) => c.id === humanCorpId) + 1;
+  const { outcome, humanCorpId } = useApp();
+  if (!outcome || outcome.standings.length === 0) return null;
+  const { standings, winnerId, victoryType } = outcome;
+  const winner = standings.find((c) => c.corpId === winnerId) ?? standings[0]!;
+  const myRank = standings.findIndex((c) => c.corpId === humanCorpId) + 1;
+  const youWon = winner.corpId === humanCorpId;
+  const vic = victoryType ? VICTORY[victoryType] : null;
   return (
     <div className="over">
       <div className="over__panel">
-        <p className="eyebrow">Charter Mandate Concluded</p>
-        <h1>{winner.id === humanCorpId ? "Hegemony Achieved" : "Match Complete"}</h1>
+        <p className="eyebrow">{outcome.decisive ? "Decisive Victory" : "Charter Mandate Concluded"}</p>
+        <h1>{youWon ? "Hegemony Achieved" : "Match Complete"}</h1>
+        {vic && <p className="over__victory"><strong>{vic.title}</strong> — {youWon ? "you held " : `${winner.name} held `}{vic.blurb}.</p>}
         <p className="over__sub">
-          {winner.id === humanCorpId
+          {youWon
             ? "Your charter dominates the frontier."
             : `${winner.name} holds the strongest charter. You finished #${myRank} of ${standings.length}.`}
         </p>
         <ol className="over__board">
-          {standings.map((c, i) => (
-            <li key={c.id} className={c.id === humanCorpId ? "is-me" : ""}>
-              <span>{i + 1}</span>
-              <CorpCrest corpId={c.id} size={22} className="over__crest" />
-              <strong>{c.name}{c.id === humanCorpId ? " (you)" : ""}</strong>
-              <em>{formatCr(c.valuation)}</em>
+          {standings.slice(0, 5).map((c) => (
+            <li key={c.corpId} className={c.corpId === humanCorpId ? "is-me" : ""}>
+              <span>{c.corpId === winnerId ? "★" : c.rank}</span>
+              <CorpCrest corpId={c.corpId} size={22} className="over__crest" />
+              <strong>{c.name}{c.corpId === humanCorpId ? " (you)" : ""}</strong>
+              <em>{c.score.toLocaleString()} pts</em>
             </li>
           ))}
         </ol>
-        <button type="button" className="primary-btn" onClick={() => store.newMatch()}>
-          <Icon name="bolt" size={15} /> New match
-        </button>
+        <div className="over__actions">
+          <button type="button" className="ghost-btn" onClick={() => store.setNav("standings")}>
+            <Icon name="trending" size={15} /> Full standings
+          </button>
+          <button type="button" className="primary-btn" onClick={() => store.newMatch()}>
+            <Icon name="bolt" size={15} /> New match
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import {
   RESOURCES,
   type ClientPlayer,
   type ClientState,
+  type GameOutcome,
   type GamePhase,
   type Order,
   type PlayerView,
@@ -22,7 +23,8 @@ export type ViewId =
   | "finance"
   | "research"
   | "turn"
-  | "report";
+  | "report"
+  | "standings";
 
 export type ThemeId = "terminal" | "used-future" | "clean";
 
@@ -57,6 +59,8 @@ export interface AppState {
   resolving: boolean;
   /** Galaxy-unique secret projects already claimed (Section 28, Phase 3): techId → corp name. */
   claimedSecrets: Record<string, string>;
+  /** Live victory standings + final outcome (Section 29). */
+  outcome: GameOutcome | null;
   // ----- multiplayer / lobby -----
   mySeat: string | null;
   isHost: boolean;
@@ -106,6 +110,7 @@ class Store {
     theme: loadTheme(),
     resolving: false,
     claimedSecrets: {},
+    outcome: null,
     mySeat: null,
     isHost: false,
     players: [],
@@ -163,12 +168,14 @@ class Store {
       staged: [],
       resolving: false,
       claimedSecrets: cs.claimedSecrets ?? {},
+      outcome: cs.outcome ?? null,
       mySeat: cs.mySeat,
       isHost: cs.isHost,
       players: cs.players,
       totalSeats: cs.totalSeats,
       submittedCount: cs.submittedCount,
-      ...(opts?.nav ? { nav: opts.nav } : advanced ? { nav: "report" as ViewId } : {}),
+      // On the turn the game ends, jump to the results board; otherwise to the turn report.
+      ...(opts?.nav ? { nav: opts.nav } : advanced ? { nav: (cs.phase === "over" ? "standings" : "report") as ViewId } : {}),
     });
     this.maybePoll();
   }

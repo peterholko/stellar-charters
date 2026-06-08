@@ -29,6 +29,7 @@ import {
 } from "./types.js";
 import { systemBuildings } from "./bodies.js";
 import { SECRET_TECH_IDS } from "./research.js";
+import type { GameOutcome } from "./standings.js";
 
 export type GamePhase = "play" | "over";
 
@@ -200,6 +201,8 @@ export interface ClientState {
   claimedSecrets: Record<string, string>;
   /** Exchange tariff you (the viewing charter) pay as a war aggressor; 0 if not at war. */
   warTariff: number;
+  /** Live victory standings + final outcome (Section 29): ranked scoreboard, winner once over. */
+  outcome: GameOutcome;
   reports: TurnReport[];
   // ----- multiplayer / lobby (filled by the server) -----
   /** This client's seat, or null if it hasn't joined. */
@@ -215,7 +218,8 @@ export interface ClientState {
 }
 
 export function gamePhase(engine: Engine): GamePhase {
-  return engine.isOver ? "over" : "play";
+  // "over" at the turn limit *or* on a decisive monopoly (Section 29).
+  return engine.outcome.over ? "over" : "play";
 }
 
 export function buildClientState(
@@ -378,6 +382,7 @@ export function buildClientState(
     wars: engine.activeWars.map((w) => ({ ...w })),
     claimedSecrets,
     warTariff: engine.warTariffFor(humanCorpId),
+    outcome: engine.outcome,
     reports,
     // Multiplayer fields default here; the server overrides them with DB membership.
     mySeat: humanCorpId,

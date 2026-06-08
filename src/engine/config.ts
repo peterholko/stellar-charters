@@ -324,6 +324,20 @@ export interface Tuning {
     stockpileFrac: number;
     earningsMomentumWeight: number;
   };
+  /** Victory scoring (Section 29). Final standing = valuation + these prestige bonuses, so
+   *  non-economic strategies (conquest, tech, wonders) get a climax even when raw cash trails. */
+  victory: {
+    /** Prestige per controlled charter system (rewards the land rush + conquest beyond raw value). */
+    systemPoints: number;
+    /** Prestige per completed (non-secret) tech. */
+    techPoints: number;
+    /** Prestige per galaxy-unique secret project owned (rare, decisive). */
+    secretPoints: number;
+    /** Prestige per megastructure (on top of its valuation — a wonder is a standing). */
+    megastructurePoints: number;
+    /** Earliest turn a last-charter-standing monopoly ends the game decisively. */
+    monopolyMinTurn: number;
+  };
 }
 
 export const DEFAULT_TUNING: Tuning = {
@@ -489,6 +503,13 @@ export const DEFAULT_TUNING: Tuning = {
     extractorValue: 70,
     stockpileFrac: 0.5,
     earningsMomentumWeight: 4,
+  },
+  victory: {
+    systemPoints: 3000,
+    techPoints: 800,
+    secretPoints: 15000,
+    megastructurePoints: 5000,
+    monopolyMinTurn: 12,
   },
 };
 

@@ -1158,6 +1158,34 @@ shows which rival has claimed each. Capstones are reachable but rare — a focus
 roughly half of games; the 30-game sweep holds with capstone effects live (leader/median ≈13, all flags
 green).
 
+## Victory & End-Game
+
+**Section 29.** A match needs a climax. Valuation (Section 17) already measures economic strength, but
+a pure-cash crown gives conquest, tech-rush, and wonder strategies no moment of their own — so the
+**final standing is `valuation + prestige`**, where prestige rewards the achievements valuation
+under-counts: charter **systems** held (×`victory.systemPoints`), **techs** unlocked (×`techPoints`),
+galaxy-unique **secret projects** owned (×`secretPoints`, much larger — they are rare and decisive),
+and **megastructures** raised (×`megastructurePoints`, on top of their valuation). `computeOutcome`
+(`standings.ts`) is a pure, deterministic read-model over engine state — identical on simulator,
+worker, and browser — so a finished game's result is reproducible from its seed like everything else.
+Ranking breaks exact ties by valuation, then corpId.
+
+**How you win.** The category that carries the winner's lead *names* the victory:
+
+- **Market Dominance** (`economic`) — the default crown: outvalue every rival.
+- **Conquest** — hold the most chartered systems (sole leader, by a clear margin); take them by war.
+- **Technological Ascendancy** — research deepest and claim a galaxy-unique secret project.
+- **Galactic Wonder** — raise the most megastructures.
+- **Monopoly** — a *decisive early win*: the moment exactly one charter outlasts all rivals (the rest
+  collapsed to Free Operators) on or after `victory.monopolyMinTurn`, the game ends on the spot and
+  that charter wins regardless of score.
+
+The game is **over** at the turn limit *or* on a decisive monopoly (`outcome.over` — the worker ends
+the DB game on either, not just the turn count). The client serves the live `GameOutcome`
+(`ClientState.outcome`) every turn, so the **Standings** screen is a running scoreboard all game, and
+on the final turn it leads with the winner and how they won (the `OverModal` echoes it). Scoring is a
+read-model only — it changes no resolution, so the balance sweep is unaffected.
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

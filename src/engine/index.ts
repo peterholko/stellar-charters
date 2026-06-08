@@ -78,6 +78,7 @@ export {
 } from "./raiding.js";
 export { Engine, type EngineOptions } from "./engine.js";
 export { type TurnEvent, type TurnReport } from "./report.js";
+export { computeOutcome, type GameOutcome, type Standing, type VictoryPath } from "./standings.js";
 export { HumanBot } from "./bots/human.js";
 export {
   buildClientState,
