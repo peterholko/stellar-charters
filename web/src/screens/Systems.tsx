@@ -9,7 +9,7 @@ import {
   sumPotential,
   systemArchetype,
 } from "../match/format";
-import { coloniesOf, type ColonyInfo, type PlayerView, type System } from "@engine";
+import { coloniesOf, type ColonyInfo, type PlayerView, type StarType, type System } from "@engine";
 import { ColonyCard, PowerMeter, colonyNames } from "../components/ColonyPanel";
 import { PlanetArt, PlanetTypeArt, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
@@ -120,7 +120,7 @@ function SystemView({ sys, view, canBuild, onPickBody }: { sys: System; view: Pl
       <h4 className="composition__title">Worlds ({colonies.length})</h4>
       <div className="roster">
         {colonies.map((c) => (
-          <WorldRow key={c.key} colony={c} name={names.get(c.key) ?? c.bodyLabel} onClick={() => onPickBody(c.key)} />
+          <WorldRow key={c.key} colony={c} starType={sys.bodies?.starType} name={names.get(c.key) ?? c.bodyLabel} onClick={() => onPickBody(c.key)} />
         ))}
       </div>
     </Panel>
@@ -128,7 +128,7 @@ function SystemView({ sys, view, canBuild, onPickBody }: { sys: System; view: Pl
 }
 
 /** A single high-level world row in the system roster (clickable → full detail). */
-function WorldRow({ colony, name, onClick }: { colony: ColonyInfo; name: string; onClick: () => void }) {
+function WorldRow({ colony, starType, name, onClick }: { colony: ColonyInfo; starType?: StarType; name: string; onClick: () => void }) {
   const typeLabel =
     colony.kind === "belt" ? "Asteroid belt"
     : colony.kind === "star" ? colony.bodyLabel
@@ -145,7 +145,9 @@ function WorldRow({ colony, name, onClick }: { colony: ColonyInfo; name: string;
 
   return (
     <button type="button" className="roster__row" onClick={onClick}>
-      {colony.kind === "planet" ? (
+      {colony.kind === "star" && starType ? (
+        <StarArt starType={starType} className="roster__art" />
+      ) : colony.kind === "planet" ? (
         <PlanetTypeArt planetType={colony.bodyType as never} className="roster__art" />
       ) : (
         <span className={`roster__art${colony.kind === "belt" ? " colony__belt" : ""}`} aria-hidden />

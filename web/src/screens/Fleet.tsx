@@ -22,35 +22,6 @@ export function Fleet() {
 
   return (
     <div className="fleet">
-      {/* Range tech ladder */}
-      <Panel className="fleet__tech">
-        <PanelTitle icon="radar" eyebrow="Research" title="Range-Tech Ladder" />
-        <div className="ladder">
-          {TIERS.map((tier) => {
-            const owned = me.rangeTier >= tier;
-            const next = tier === me.rangeTier + 1;
-            return (
-              <div key={tier} className={`ladder__rung ${owned ? "is-owned" : next ? "is-next" : "is-locked"}`}>
-                <div className="ladder__tier">R{tier}</div>
-                <div className="ladder__info">
-                  <strong>Range {tier}</strong>
-                  <span>{tier === 1 ? "Inner ring" : tier === 2 ? "Frontier lanes" : tier === 3 ? "Deep frontier" : "Corporate fleet"}</span>
-                </div>
-                {owned ? (
-                  <Badge tone="positive">Online</Badge>
-                ) : next ? (
-                  <button type="button" className="mini-btn" title="Warp Drive is now a Navigation research tech" onClick={() => store.setNav("research")}>
-                    Research →
-                  </button>
-                ) : (
-                  <Badge tone="neutral">Locked</Badge>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </Panel>
-
       {/* Build yard */}
       <Panel className="fleet__yard">
         <PanelTitle icon="ship" eyebrow="Shipyard" title="Build Warship" />
@@ -100,12 +71,13 @@ export function Fleet() {
               {me.ships.map((s, i) => (
                 <div key={i} className="roster__row">
                   <Icon name={s.raider ? "skull" : "shield"} size={15} />
-                  <span>Range {s.rangeTier} {s.raider ? "raider" : "escort"}</span>
+                  <span>{s.raider ? "Raider" : "Escort"}</span>
                   <span className="roster__sub">
                     {s.transit
                       ? `→ ${view.galaxy.system(s.transit.path[s.transit.path.length - 1]!).name}${s.transit.attack ? " (assault)" : ""}`
                       : s.stationedAt ? view.galaxy.system(s.stationedAt).name : "unstationed"}
                   </span>
+                  <Badge tone="info">Range {s.rangeTier}</Badge>
                   <Badge tone={s.transit ? "warn" : "neutral"}>{s.transit ? "in transit" : `cbt ${s.combat}`}</Badge>
                 </div>
               ))}
