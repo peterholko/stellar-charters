@@ -6,6 +6,8 @@
  */
 import { MAX_RANGE_TIER, MEGASTRUCTURE_KINDS, RESOURCES, type MegastructureKind, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
 import { EXTRACTOR_CAP, effectiveYields, potentialYields, systemBuildings, buildingTotal, coloniesOf, canBuildOnBody, agriFoodMult, factoryCostMult, type BuildingKind } from "../bodies.js";
+import { computeOutcome, type VictoryPath } from "../standings.js";
+import { SECRET_TECH_IDS, canResearch, techById, RESEARCH_TREE } from "../research.js";
 import type { PlayerView } from "./bot.js";
 
 /** Current per-turn output of a system (worked sites, net of depletion/stellar). */
@@ -326,6 +328,8 @@ export function maybeBuildExtractor(view: PlayerView): Order[] {
  */
 export function maybeSabotage(view: PlayerView): Order[] {
   if (!view.me.ships.some((s) => s.raider) && view.me.privateers.length === 0) return [];
+  const threat = strategicPosture(view).threatId;
+  const cands: { sys: System; siteKey: string; richness: number }[] = [];
   for (const sys of view.galaxy.allSystems()) {
     if (sys.owner === null || sys.owner === view.me.id) continue;
     const reachable =
@@ -341,9 +345,17 @@ export function maybeSabotage(view: PlayerView): Order[] {
       .filter((s) => s.extractorLevel > 0 && s.disabledUntil <= view.turn)
       .sort((a, b) => b.richness - a.richness)[0];
     if (!worked) continue;
-    return [{ kind: "sabotage", systemId: sys.id, siteKey: worked.key }];
+    cands.push({ sys, siteKey: worked.key, richness: worked.richness });
   }
-  return [];
+  if (cands.length === 0) return [];
+  // Kneecap whoever is winning first (Section 29 coalition play); otherwise the richest extractor.
+  cands.sort((a, b) => {
+    const at = a.sys.owner === threat ? 1 : 0;
+    const bt = b.sys.owner === threat ? 1 : 0;
+    return bt - at || b.richness - a.richness;
+  });
+  const pick = cands[0]!;
+  return [{ kind: "sabotage", systemId: pick.sys.id, siteKey: pick.siteKey }];
 }
 
 const STAGE_ORDER = ["outpost", "settlement", "colony", "city", "metropolis"];
@@ -531,14 +543,52 @@ function buildWarshipAt(view: PlayerView, systemId: string): Order[] {
   return [];
 }
 
-/** The dominant rival (the hegemon) the galaxy should gang up on, if one stands clearly above. */
+/** A bot's read of the victory race (Section 29): where it stands and who, if anyone, is winning. */
+export interface Posture {
+  /** 1-based rank by victory score. */
+  myRank: number;
+  amLeader: boolean;
+  /** The victory path this corp is currently best positioned for (flavour + steering). */
+  myPath: VictoryPath;
+  /** The rival the field should coordinate against: the clear score leader, esp. near a win. */
+  threatId?: string;
+  /** That threat is closing on an outright win (commanding lead, late game, or a looming monopoly). */
+  threatUrgent: boolean;
+}
+
+/**
+ * Read the live standings the same way the end-game does (Section 29) and decide this bot's posture:
+ * its rank/path, and — crucially — whether one rival is *winning* and should be ganged up on. Driving
+ * coalition warfare off the real victory score (not raw valuation) makes bots play to deny a win, which
+ * both reads as smarter and curbs runaway leaders. Threat detection waits a few turns so early-game
+ * score noise doesn't trigger a phantom hegemon.
+ */
+export function strategicPosture(view: PlayerView): Posture {
+  const o = computeOutcome(view.corporations, view.galaxy, view.config.tuning, view.turn, view.config.turns);
+  const meRow = o.standings.find((s) => s.corpId === view.me.id);
+  const leader = o.standings[0];
+  const second = o.standings[1];
+  const charters = o.standings.filter((s) => s.hasCharter);
+  const posture: Posture = {
+    myRank: meRow?.rank ?? o.standings.length,
+    amLeader: leader?.corpId === view.me.id,
+    myPath: meRow?.path ?? "economic",
+    threatUrgent: false,
+  };
+  if (view.turn >= 8 && leader && leader.corpId !== view.me.id && leader.hasCharter) {
+    const lead = leader.score / Math.max(1, second?.score ?? 1);
+    const turnsLeft = view.config.turns - view.turn;
+    if (lead >= 1.35 || (charters.length <= 2 && leader.hasCharter)) posture.threatId = leader.corpId;
+    if (posture.threatId && (lead >= 1.7 || turnsLeft <= 8 || charters.length <= 2 || leader.secrets >= 1)) {
+      posture.threatUrgent = true;
+    }
+  }
+  return posture;
+}
+
+/** The dominant rival the galaxy should gang up on (the score leader closing on a win), if any. */
 function hegemonId(view: PlayerView): string | undefined {
-  const charters = view.corporations.filter((c) => c.hasCharter && c.ownedSystemIds.length > 0);
-  if (charters.length < 3) return undefined;
-  const vals = charters.map((c) => c.valuation).sort((a, b) => a - b);
-  const median = vals[Math.floor(vals.length / 2)] ?? 0;
-  const top = charters.reduce((m, c) => (c.valuation > m.valuation ? c : m));
-  return top.id !== view.me.id && top.valuation > Math.max(1, median) * 1.6 ? top.id : undefined;
+  return strategicPosture(view).threatId;
 }
 
 /** Pick (and persist) a valuable, reachable rival system worth conquering — favouring grudges
@@ -829,11 +879,48 @@ export function maybeResearch(view: PlayerView, plan: string[] | undefined): Ord
   }
 
   // (Re)set the research queue only when it drifts from the doctrine (e.g. after a tech completes).
-  const desired = plan.filter((id) => !me.research.completed.includes(id));
+  const desired = adaptSecretRace(view, plan.filter((id) => !me.research.completed.includes(id)));
   const cur = me.research.queue;
   const same = desired.length === cur.length && desired.every((id, i) => cur[i] === id);
   if (!same && desired.length > 0) orders.push({ kind: "setResearch", queue: desired });
   return orders;
+}
+
+/** Secret capstones already locked by some other charter (a lost galaxy-unique race — Section 28). */
+function rivalLockedSecrets(view: PlayerView): Set<string> {
+  const locked = new Set<string>();
+  for (const c of view.corporations) {
+    if (c.id === view.me.id) continue;
+    for (const id of c.research.completed) if (SECRET_TECH_IDS.includes(id)) locked.add(id);
+  }
+  return locked;
+}
+
+/**
+ * Don't pour RP into a secret a rival already owns (it's galaxy-unique). Drop any locked capstone from
+ * the doctrine tail and, if the bot is still in the race, retarget to the best *open* secret it can
+ * actually reach — preferring a division it has already invested in. Keeps the tech race live instead
+ * of stubbornly chasing a lost project.
+ */
+function adaptSecretRace(view: PlayerView, desired: string[]): string[] {
+  const locked = rivalLockedSecrets(view);
+  const nonSecret = desired.filter((id) => !SECRET_TECH_IDS.includes(id));
+  const myOpenSecret = desired.find((id) => SECRET_TECH_IDS.includes(id) && !locked.has(id));
+  if (myOpenSecret) return desired; // current target still winnable — leave the plan as-is
+  if (!desired.some((id) => SECRET_TECH_IDS.includes(id))) return desired; // doctrine queued no secret
+
+  // Our planned capstone got sniped — find a reachable replacement (prereqs met by what we'll have).
+  const willHave = [...view.me.research.completed, ...nonSecret];
+  const myDivCounts: Record<string, number> = {};
+  for (const id of view.me.research.completed) {
+    const t = techById(id);
+    if (t) myDivCounts[t.division] = (myDivCounts[t.division] ?? 0) + 1;
+  }
+  const replacement = RESEARCH_TREE
+    .filter((t) => t.secret && !locked.has(t.id) && !view.me.research.completed.includes(t.id))
+    .filter((t) => canResearch(t, willHave))
+    .sort((a, b) => (myDivCounts[b.division] ?? 0) - (myDivCounts[a.division] ?? 0))[0];
+  return replacement ? [...nonSecret, replacement.id] : nonSecret;
 }
 
 /**

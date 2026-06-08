@@ -1186,6 +1186,17 @@ the DB game on either, not just the turn count). The client serves the live `Gam
 on the final turn it leads with the winner and how they won (the `OverModal` echoes it). Scoring is a
 read-model only — it changes no resolution, so the balance sweep is unaffected.
 
+**Bots play the victory race.** `strategicPosture` (`bots/strategy.ts`) reads the same live standings
+to decide each bot's posture: its rank/path, and whether one rival is *winning* and should be ganged
+up on. Coalition warfare now keys off the **victory score** (the score leader closing on a win — a
+commanding lead, the late game, or a looming two-charter monopoly), not raw valuation, so conquest
+targeting, alliance avoidance, and raider sabotage all converge on whoever is actually about to win.
+Bots also run the secret-project race adaptively — `maybeResearch` abandons a galaxy-unique capstone
+a rival has already locked and retargets to the best *reachable open* secret in a division it has
+invested in. The effect is empty seats that read as real rivals and a coalition that curbs runaway
+leaders: a 30-game / 8-player sweep improves leader/median (~13 → ~12.8) with every other flag green,
+while the victory-type spread stays varied (technology / monopoly / conquest / economic all firing).
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  
