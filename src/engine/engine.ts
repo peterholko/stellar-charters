@@ -194,6 +194,20 @@ export class Engine {
       const j = Math.floor(this.rng.next() * (i + 1));
       [pool[i], pool[j]] = [pool[j]!, pool[i]!];
     }
+    // Then bias starts toward the Wormhole Hub: rank by charted Range-1 distance (hops, then
+    // transit time) and seat charters on the nearest systems. The hub is a sparse junction now,
+    // so not everyone can be hub-adjacent — but everyone starts as close as the map allows, with a
+    // short, defensible supply line to the Exchange. (A rival never severs that line: warp paths
+    // ignore ownership, so convoys still transit rival systems — a rival can only pressure the lane
+    // via interdiction/raids, not block it.) A stable sort keeps the shuffle's order within each
+    // equidistant band, so which near-hub systems are used still varies per seed.
+    const hubId = this.galaxy.hubId;
+    const hopsToHub = (id: string): number => {
+      const path = this.galaxy.shortestWarpPath(hubId, id, 1);
+      return path ? path.routes.length * 1000 + path.transitTime : Number.MAX_SAFE_INTEGER;
+    };
+    const rank = new Map(pool.map((s) => [s.id, hopsToHub(s.id)]));
+    pool.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
     this.corps.forEach((corp, idx) => {
       const sys = pool[idx];
       if (!sys) return;
