@@ -229,14 +229,14 @@ dark UI theme, consistent with the Exchange and Convoy Card.
 
 ## F. Colony Building Icons (Section 24/27)
 
-The six structures the player raises on a planet's colony screen. One cohesive
+The seven structures the player raises on a planet's colony screen. One cohesive
 icon set; drop the exported PNGs into `web/public/assets/` as `building-factory.png`,
 `building-reactor.png`, `building-agridome.png`, `building-miningrig.png`,
-`building-habitat.png`, `building-powergrid.png` (each 1:1, transparent).
+`building-habitat.png`, `building-powergrid.png`, `building-lab.png` (each 1:1, transparent).
 
 ### Colony Building Icon Set
-A set of six matching colony-building icons for a near-future corporate-sci-fi 4X
-game, presented as a clean **2×3 contact sheet on a transparent background**, each
+A set of seven matching colony-building icons for a near-future corporate-sci-fi 4X
+game, presented as a clean **contact sheet on a transparent background**, each
 icon isolated in its own cell at identical scale, identical 3/4 isometric camera,
 identical key light from the upper-left, and a shared cold-metal palette with one
 warm signal accent. Each is a small, readable hero structure planted on a circular
@@ -253,6 +253,8 @@ slab of planetary ground, like a build-menu thumbnail:
    windows, a small park ring, antennae.
 6. **Power grid** — a substation: capacitor banks, transformer pylons, and humming
    conduits feeding a small distribution mast.
+7. **Research lab** — a sealed laboratory module: a domed cleanroom with glowing
+   instrument bays, a sensor/antenna array, and a faint holographic readout above it.
 Utilitarian industrial hardware with weathered panels, rivets and corporate decals;
 crisp readable silhouettes; subtle ground shadow under each; no text labels on the
 art. *Aspect: each icon 1:1 · transparent background · consistent set.*

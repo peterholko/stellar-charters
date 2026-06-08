@@ -48,8 +48,8 @@ export function ResourceIcon({
 }
 
 /**
- * Chartered-corporation crest. Renders `/assets/corp-crest-<seat>.png`, falling back to the
- * seat colour dot for seats without a crest (only 6 crests exist; seats 7–8 use the dot).
+ * Chartered-corporation crest. Renders `/assets/corp-crest-<seat>.png` (crests 0–7 ship for all
+ * eight seats), falling back to the seat colour dot if a crest asset is ever missing.
  */
 export function CorpCrest({
   corpId,

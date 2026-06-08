@@ -1,12 +1,14 @@
 import { useState, type CSSProperties } from "react";
 import { artManifest } from "./artManifest";
+import { slotGlyph, SlotGlyphTile } from "./slotGlyph";
 import type { SystemArchetype } from "../match/format";
 import type { PlanetType, StarType } from "@engine";
 
 /**
- * A themed placeholder for generated art. It first tries `/assets/<slot>.png`; if that
- * asset hasn't been generated yet it falls back to a labelled procedural placeholder, so
- * the layout is always intact and every slot announces what art belongs there.
+ * A themed placeholder for generated art. It first tries `/assets/<slot>.png`; if that asset
+ * hasn't been generated yet it falls back to a procedural tile — a category glyph for slots that
+ * have one (colony buildings, research divisions, secret projects), or a labelled grid otherwise.
+ * Either way the layout is always intact, and a dropped-in PNG transparently takes over.
  */
 export function ArtSlot({
   slot,
@@ -29,6 +31,19 @@ export function ArtSlot({
         loading="lazy"
         onError={() => setFailed(true)}
       />
+    );
+  }
+  const glyph = slotGlyph(slot);
+  if (glyph) {
+    return (
+      <div
+        className={`artslot slotglyph slotglyph--${glyph.domain}${glyph.secret ? " slotglyph--secret" : ""} ${className ?? ""}`}
+        style={style}
+        role="img"
+        aria-label={meta?.label ?? slot}
+      >
+        <SlotGlyphTile glyph={glyph} />
+      </div>
     );
   }
   return (

@@ -5,13 +5,13 @@ import { CorpCrest } from "../theme/art";
 import { Icon } from "../ui/icons";
 import { formatCr } from "../match/format";
 
-/** Display label + blurb for each victory path (Section 29). */
-export const VICTORY: Record<VictoryPath, { title: string; blurb: string; tone: "accent" | "positive" | "negative" | "warn" }> = {
-  economic: { title: "Market Dominance", blurb: "the richest charter in the galaxy", tone: "positive" },
-  conquest: { title: "Conquest", blurb: "the most chartered systems held by force", tone: "negative" },
-  technology: { title: "Technological Ascendancy", blurb: "the deepest research and secret projects", tone: "accent" },
-  wonder: { title: "Galactic Wonder", blurb: "the grandest megastructures ever raised", tone: "warn" },
-  monopoly: { title: "Monopoly", blurb: "the last charter left standing", tone: "negative" },
+/** Display label + blurb for each victory path (Section 29). `short` is the compact column badge. */
+export const VICTORY: Record<VictoryPath, { title: string; short: string; blurb: string; tone: "accent" | "positive" | "negative" | "warn" }> = {
+  economic: { title: "Market Dominance", short: "Market", blurb: "the richest charter in the galaxy", tone: "positive" },
+  conquest: { title: "Conquest", short: "Conquest", blurb: "the most chartered systems held by force", tone: "negative" },
+  technology: { title: "Technological Ascendancy", short: "Tech", blurb: "the deepest research and secret projects", tone: "accent" },
+  wonder: { title: "Galactic Wonder", short: "Wonder", blurb: "the grandest megastructures ever raised", tone: "warn" },
+  monopoly: { title: "Monopoly", short: "Monopoly", blurb: "the last charter left standing", tone: "negative" },
 };
 
 /**
@@ -90,7 +90,7 @@ function Row({ s, you, winner, pct }: { s: Standing; you: boolean; winner: boole
       <span>{s.techs}</span>
       <span>{s.secrets > 0 ? <Badge tone="accent">{s.secrets}</Badge> : "—"}</span>
       <span>{s.megastructures > 0 ? s.megastructures : "—"}</span>
-      <span><Badge tone={VICTORY[s.path].tone}>{VICTORY[s.path].title.split(" ")[0]}</Badge></span>
+      <span className="standings__path"><Badge tone={VICTORY[s.path].tone}>{VICTORY[s.path].short}</Badge></span>
     </div>
   );
 }

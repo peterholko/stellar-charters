@@ -1,9 +1,13 @@
-import { Component, StrictMode, type ReactNode } from "react";
+import { Component, StrictMode, Suspense, lazy, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { AuthGate } from "./auth/AuthGate";
 import "./theme/tokens.css";
 import "./styles.css";
+
+// Dev-only visual harness (own lazy chunk, never loaded in production since devPreview is always false).
+const devPreview = import.meta.env.DEV && window.location.pathname === "/preview";
+const PreviewGallery = lazy(() => import("./dev/PreviewGallery").then((m) => ({ default: m.PreviewGallery })));
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   override state = { error: null as Error | null };
@@ -27,9 +31,15 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary>
-      <AuthGate>
-        <App />
-      </AuthGate>
+      {devPreview ? (
+        <Suspense fallback={null}>
+          <PreviewGallery />
+        </Suspense>
+      ) : (
+        <AuthGate>
+          <App />
+        </AuthGate>
+      )}
     </ErrorBoundary>
   </StrictMode>,
 );
