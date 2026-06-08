@@ -268,51 +268,145 @@ function relax(placed: Placed[]): void {
 
 // ----- routes -----
 
+// A warp junction is a hazard, not a hub airport: every system carries only a handful of tunnels.
+const HARD_MAX_TUNNELS = 5; // no system may ever exceed this many warp tunnels (5 is rare)
+
+/** A system's target tunnel count: mostly 2–3, 4 occasional, 5 extremely rare; deep spurs sparser. */
+function softTunnelCap(rng: Rng, region: SystemRegion): number {
+  const roll = rng.float(0, 1);
+  let cap = roll < 0.45 ? 2 : roll < 0.82 ? 3 : roll < 0.97 ? 4 : 5;
+  if (region === "frontier") cap = Math.min(cap, 3); // exposed spurs stay thin
+  if (region === "abyss") cap = Math.min(cap, 2); // the deepest are near dead-ends
+  return cap;
+}
+
+/** The hub is a modest junction, not a hairball: 3–4 charted gateways, 5 only rarely. */
+function hubTunnelCap(rng: Rng): number {
+  const roll = rng.float(0, 1);
+  return roll < 0.5 ? 3 : roll < 0.9 ? 4 : 5;
+}
+
+/** Smallest absolute angle between two bearings, accounting for wraparound. */
+function angleGap(a: number, b: number): number {
+  const d = Math.abs(a - b) % (Math.PI * 2);
+  return Math.min(d, Math.PI * 2 - d);
+}
+
+/**
+ * The core worlds the hub spokes directly to: the nearest core in each of `count` angular sectors
+ * around the disc, so the hub's few gateways are spread across the arms (every arm gets a short
+ * protected lane to the Exchange) instead of clustering on one side. Tops up with the next-nearest
+ * worlds if the core is too clumped to fill every sector.
+ */
+function hubSpokeTargets(hub: Placed, core: Placed[], count: number): Placed[] {
+  const ranked = core
+    .map((c) => ({ c, d: dist(hub, c), ang: Math.atan2(c.sys.position!.y, c.sys.position!.x) }))
+    .sort((x, y) => x.d - y.d || (x.c.sys.id < y.c.sys.id ? -1 : 1));
+  const minSep = ((Math.PI * 2) / Math.max(1, count)) * 0.6;
+  const picked: typeof ranked = [];
+  for (const cand of ranked) {
+    if (picked.length >= count) break;
+    if (picked.every((p) => angleGap(p.ang, cand.ang) >= minSep)) picked.push(cand);
+  }
+  for (const cand of ranked) {
+    if (picked.length >= count) break;
+    if (!picked.includes(cand)) picked.push(cand);
+  }
+  return picked.map((p) => p.c);
+}
+
 function buildRoutes(rng: Rng, placed: Placed[]): ScenarioRoute[] {
   const routes: ScenarioRoute[] = [];
   const seen = new Set<string>();
+  const degree = new Map<string, number>();
+  for (const p of placed) degree.set(p.sys.id, 0);
   const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const deg = (p: Placed) => degree.get(p.sys.id)!;
+
+  // Per-system tunnel budget (capped so the map reads as a sparse lane network, not a star burst).
+  const cap = new Map<string, number>();
+  for (const p of placed) cap.set(p.sys.id, softTunnelCap(rng, p.region));
+  const hub = placed.find((p) => p.region === "hub")!;
+  cap.set(hub.sys.id, hubTunnelCap(rng));
+  const capOf = (p: Placed) => cap.get(p.sys.id)!;
+
   const add = (r: ScenarioRoute) => {
     const k = key(r.a, r.b);
     if (seen.has(k)) return;
     seen.add(k);
     routes.push(r);
+    degree.set(r.a, degree.get(r.a)! + 1);
+    degree.set(r.b, degree.get(r.b)! + 1);
+  };
+  const canAdd = (a: Placed, b: Placed, max: number) =>
+    a.sys.id !== b.sys.id && !seen.has(key(a.sys.id, b.sys.id)) && deg(a) < max && deg(b) < max;
+
+  // The right lane shape for a pair: hub→spoke, core↔core ring, or an uncharted deep tunnel into
+  // whichever endpoint sits in the deeper band (range scales with that outer world's depth).
+  const depthOf = (p: Placed) => (p.region === "abyss" ? 2 : p.region === "frontier" ? 1 : 0);
+  const laneFor = (a: Placed, b: Placed): ScenarioRoute => {
+    if (a.region === "hub" || b.region === "hub") return spokeRoute(rng, hub, a.region === "hub" ? b : a);
+    if (depthOf(a) === 0 && depthOf(b) === 0) return ringRoute(rng, a, b);
+    const outer = depthOf(a) >= depthOf(b) ? a : b;
+    const anchor = outer === a ? b : a;
+    return deepRoute(rng, anchor, outer, outer.region === "abyss" ? "abyss" : "frontier");
   };
 
-  const hub = placed.find((p) => p.region === "hub")!;
+  // Attach `node` to the nearest member of `pool` with spare capacity — preferring the soft cap,
+  // falling back to the hard ceiling so connectivity is always guaranteed without ever exceeding 5.
+  const connect = (node: Placed, pool: Placed[]): void => {
+    const ranked = pool
+      .filter((p) => p.sys.id !== node.sys.id && !seen.has(key(node.sys.id, p.sys.id)))
+      .map((p) => ({ p, d: dist(node, p) }))
+      .sort((x, y) => x.d - y.d || (x.p.sys.id < y.p.sys.id ? -1 : 1));
+    const target =
+      ranked.find((e) => deg(e.p) < capOf(e.p) && deg(node) < capOf(node))?.p ??
+      ranked.find((e) => deg(e.p) < HARD_MAX_TUNNELS && deg(node) < HARD_MAX_TUNNELS)?.p;
+    if (target) add(laneFor(node, target));
+  };
+
   const core = placed.filter((p) => p.region === "core");
   const frontier = placed.filter((p) => p.region === "frontier");
   const abyss = placed.filter((p) => p.region === "abyss");
+  const byHubDist = (a: Placed, b: Placed) => dist(hub, a) - dist(hub, b) || (a.sys.id < b.sys.id ? -1 : 1);
 
-  // Charted hub spokes: every core world has a short protected lane to the hub, so every
-  // random start can reach (and sell at) the hub from turn one. Transit scales with distance.
-  for (const c of core) {
+  // ---- Charted core backbone (Range 1) ----
+  // A handful of hub gateways, spread across the arms, then every other core world chains in to the
+  // nearest already-connected core/hub with spare capacity. The result is a charted spanning tree:
+  // every core world is reachable from the hub on Range-1 lanes, but the hub itself stays sparse.
+  const connected: Placed[] = [hub];
+  const inSet = new Set<string>([hub.sys.id]);
+  for (const c of hubSpokeTargets(hub, core, capOf(hub))) {
     add(spokeRoute(rng, hub, c));
+    connected.push(c);
+    inSet.add(c.sys.id);
   }
-
-  // Charted core cross-links: each core world links to its 1–2 nearest core neighbours,
-  // giving the core an irregular network (cycles + shortcuts) rather than a clean ring.
+  for (const c of core.filter((x) => !inSet.has(x.sys.id)).sort(byHubDist)) {
+    connect(c, connected);
+    connected.push(c);
+    inSet.add(c.sys.id);
+  }
+  // A few charted cross-links so the core is a network (cycles + shortcuts), not a brittle tree —
+  // only where both ends still have soft-cap room, so degrees stay mostly 2–3.
   for (const c of core) {
-    const neighbours = nearest(c, core, 2);
-    add(ringRoute(rng, c, neighbours[0]!));
-    if (neighbours[1] && rng.chance(0.55)) add(ringRoute(rng, c, neighbours[1]!));
+    for (const n of nearest(c, core, 2)) {
+      if (rng.chance(0.28) && canAdd(c, n, Math.min(capOf(c), capOf(n)))) add(ringRoute(rng, c, n));
+    }
   }
 
-  // Uncharted frontier tunnels (Range 2–4): each rare-isotope world hangs off its nearest core
-  // world on an exposed, lightly-policed lane that must be surveyed before it can be used. The
-  // deeper into the band the world sits, the higher the range needed to reach it.
-  for (const f of frontier) {
-    const anchor = nearest(f, core, 1)[0]!;
-    add(deepRoute(rng, anchor, f, "frontier"));
+  // ---- Uncharted deep spurs ----
+  // Frontier (Range 2–4): each rare-isotope world hangs off its nearest core/frontier on an exposed,
+  // survey-gated tunnel. Abyss (Range 3–6): each antimatter world hangs off its nearest frontier (or
+  // core) on the wildest lanes. Both attach via `connect`, so no spur ever overruns the tunnel cap.
+  const frontierPool = [...core];
+  for (const f of [...frontier].sort(byHubDist)) {
+    connect(f, frontierPool);
+    frontierPool.push(f);
   }
-
-  // Uncharted abyss tunnels (Range 3–6): each antimatter world hangs off its nearest frontier
-  // world (or nearest core if no frontier exists) on the wildest lanes in the galaxy — the
-  // deepest demand capital-grade range to traverse. (Range 7–8 hulls stay a combat/escort flex.)
-  const abyssAnchors = frontier.length > 0 ? frontier : core;
-  for (const a of abyss) {
-    const anchor = nearest(a, abyssAnchors, 1)[0]!;
-    add(deepRoute(rng, anchor, a, "abyss"));
+  const abyssPool = frontier.length > 0 ? [...frontier, ...core] : [...core];
+  for (const a of [...abyss].sort(byHubDist)) {
+    connect(a, abyssPool);
+    abyssPool.push(a);
   }
 
   return routes;
