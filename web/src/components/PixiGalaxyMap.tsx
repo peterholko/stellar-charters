@@ -455,6 +455,14 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       points = layoutPoints(galaxy);
       bounds = computeBounds(points);
       unit = Math.max(1, Math.hypot(bounds.w, bounds.h) / 150);
+      // Hard guarantee: no two system glyphs may render touching. Generation enforces a
+      // minimum spacing in world coords, but the display-only LAYOUT_SPREAD remap above is
+      // non-linear and doesn't preserve it (the rim gets compressed). Push any overlapping
+      // glyphs apart in *render* space — using their on-screen radii — so a visible gap always
+      // remains at any zoom (camera scales points and glyphs together). `unit` is left at the
+      // pre-relax value so glyph sizes stay fixed; only the camera bounds are recomputed.
+      enforceGlyphSeparation(points, sys, galaxy.hubId, unit);
+      bounds = computeBounds(points);
       resizeBg();
       rebuildBackground(pal);
       fitCamera();
@@ -730,6 +738,67 @@ function nodeRadius(region: string, unit: number): number {
   if (region === "frontier") return unit * 1.3;
   if (region === "abyss") return unit * 1.2;
   return unit * 1.4;
+}
+
+/**
+ * Deterministic relaxation that guarantees no two system glyphs render touching. The required
+ * centre-to-centre distance for a pair is each glyph's drawn radius (scaled past its halo/ring
+ * decorations by GLYPH_FOOTPRINT) plus a fixed visible gap. Overlapping pairs are pushed apart
+ * (the hub stays pinned at the origin); a few dozen passes converge because generation already
+ * separates most systems and only the few true overlaps move. Pure function of the input points,
+ * so the layout stays seed-deterministic. Operates in the same world space the glyphs draw in, so
+ * the gap holds at every camera zoom.
+ */
+function enforceGlyphSeparation(
+  points: Map<string, { x: number; y: number }>,
+  systems: ReadonlyArray<{ id: string; position?: { region?: string } }>,
+  hubId: string,
+  unit: number,
+): void {
+  const GLYPH_FOOTPRINT = 1.6; // clear the faint halo (1.35·r) + owner/star rings (1.7·r)
+  const GAP = unit * 1.1; // a visible lane of empty space between any two glyphs
+  const MAX_ITERS = 200;
+  const list = systems.map((s) => ({
+    p: points.get(s.id),
+    r: nodeRadius(s.position?.region ?? (s.id === hubId ? "hub" : "core"), unit) * GLYPH_FOOTPRINT,
+    hub: s.id === hubId,
+  })).filter((e): e is { p: { x: number; y: number }; r: number; hub: boolean } => !!e.p);
+
+  for (let iter = 0; iter < MAX_ITERS; iter++) {
+    let moved = false;
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i]!;
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j]!;
+        const minD = a.r + b.r + GAP;
+        let dx = b.p.x - a.p.x;
+        let dy = b.p.y - a.p.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist >= minD) continue;
+        if (dist < 1e-6) {
+          // Coincident points — separate along a stable per-pair axis so it stays deterministic.
+          const ang = (((i * 73856093) ^ (j * 19349663)) % 628) / 100;
+          dx = Math.cos(ang);
+          dy = Math.sin(ang);
+          dist = 1;
+        }
+        const overlap = minD - dist;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        if (a.hub) {
+          b.p.x += ux * overlap; b.p.y += uy * overlap;
+        } else if (b.hub) {
+          a.p.x -= ux * overlap; a.p.y -= uy * overlap;
+        } else {
+          const h = overlap / 2;
+          a.p.x -= ux * h; a.p.y -= uy * h;
+          b.p.x += ux * h; b.p.y += uy * h;
+        }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
 }
 
 /** Draw a system's luminous glyph; shape varies by region/archetype so worlds read distinctly. */
