@@ -454,7 +454,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       signature = sig;
       points = layoutPoints(galaxy);
       bounds = computeBounds(points);
-      unit = Math.max(1, Math.hypot(bounds.w, bounds.h) / 125);
+      unit = Math.max(1, Math.hypot(bounds.w, bounds.h) / 150);
       resizeBg();
       rebuildBackground(pal);
       fitCamera();
@@ -663,16 +663,45 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 // Geometry + drawing helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Display-only spread factor for the procedural galaxy. The generator packs a dense core
+ * inside a sparse halo, so fit-to-view shrinks the centre into an unreadable ball of
+ * overlapping glyphs. Remapping each system's hub-distance by r^SPREAD (SPREAD < 1) pushes
+ * the inner systems outward and evens out the radial density. The rim systems stay put, so
+ * the overall bounds are unchanged. Purely cosmetic — engine transit distances are never
+ * derived from this map; lanes, convoys, and hit-testing all read from it, so they stay
+ * consistent.
+ */
+const LAYOUT_SPREAD = 0.62;
+
 function layoutPoints(galaxy: PlayerView["galaxy"]): Map<string, { x: number; y: number }> {
   const all = galaxy.allSystems();
   const hasPositions = all.every((s) => s.position);
-  if (hasPositions) {
-    const m = new Map<string, { x: number; y: number }>();
-    for (const s of all) m.set(s.id, { x: s.position!.x, y: s.position!.y });
-    return m;
+  if (!hasPositions) {
+    // Legacy scenarios carry no coordinates — fall back to the radial layout (0..100 space).
+    return computeLayout(galaxy);
   }
-  // Legacy scenarios carry no coordinates — fall back to the radial layout (0..100 space).
-  return computeLayout(galaxy);
+  const hub = all.find((s) => s.id === galaxy.hubId)?.position;
+  const hx = hub?.x ?? 0;
+  const hy = hub?.y ?? 0;
+  let maxR = 0;
+  for (const s of all) {
+    const r = Math.hypot(s.position!.x - hx, s.position!.y - hy);
+    if (r > maxR) maxR = r;
+  }
+  const m = new Map<string, { x: number; y: number }>();
+  for (const s of all) {
+    const dx = s.position!.x - hx;
+    const dy = s.position!.y - hy;
+    const r = Math.hypot(dx, dy);
+    if (r < 1e-6 || maxR < 1e-6) {
+      m.set(s.id, { x: hx, y: hy });
+      continue;
+    }
+    const k = (maxR * Math.pow(r / maxR, LAYOUT_SPREAD)) / r;
+    m.set(s.id, { x: hx + dx * k, y: hy + dy * k });
+  }
+  return m;
 }
 
 function computeBounds(points: Map<string, { x: number; y: number }>): {
