@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { Engine } from "../src/engine/engine.js";
+import { getBodyBuildings, primaryBodyKey } from "../src/engine/bodies.js";
 import { loadScenario, type GameConfig } from "../src/engine/config.js";
 import type { Bot, BotFactory, PlayerView } from "../src/engine/bots/bot.js";
 import type { BidOrder, Order, System } from "../src/engine/types.js";
@@ -69,7 +70,7 @@ function engineWith(setup: (sys: System) => void, highPower = true): Engine {
 describe("production chains", () => {
   it("runs a recipe to completion when inputs are fully supplied", () => {
     const e = engineWith((sys) => {
-      sys.processors = { fuel: 1 };
+      getBodyBuildings(sys, primaryBodyKey(sys)).processors = { fuel: 1 };
       sys.stockpile.ice = 2;
       sys.stockpile.helium3 = 1;
     });
@@ -82,7 +83,7 @@ describe("production chains", () => {
 
   it("pro-rates output to the limiting input when inputs are short", () => {
     const e = engineWith((sys) => {
-      sys.processors = { fuel: 1 };
+      getBodyBuildings(sys, primaryBodyKey(sys)).processors = { fuel: 1 };
       sys.stockpile.ice = 1; // half the ice the recipe wants (2)
       sys.stockpile.helium3 = 5; // plenty
     });
@@ -96,7 +97,7 @@ describe("production chains", () => {
 
   it("chains a tier-1 output into a tier-2 recipe in the same turn", () => {
     const e = engineWith((sys) => {
-      sys.processors = { fuel: 1, polymers: 1 };
+      getBodyBuildings(sys, primaryBodyKey(sys)).processors = { fuel: 1, polymers: 1 };
       sys.stockpile.ice = 2;
       sys.stockpile.helium3 = 1; // → fuel 3 (recipe ordered before polymers)
       sys.stockpile.silicates = 2; // polymers wants silicates2 + fuel1
@@ -111,7 +112,7 @@ describe("production chains", () => {
   it("browns out when processor power draw exceeds capacity, and a reactor restores it", () => {
     // Two alloys processors draw 4 power; base power is only 2 → powerFactor 0.5 (half output).
     const brown = engineWith((sys) => {
-      sys.processors = { alloys: 2 };
+      getBodyBuildings(sys, primaryBodyKey(sys)).processors = { alloys: 2 };
       sys.stockpile.metals = 100;
       sys.stockpile.helium3 = 100;
     }, false);
@@ -120,8 +121,9 @@ describe("production chains", () => {
 
     // A reactor lifts capacity to meet the draw → full output.
     const lit = engineWith((sys) => {
-      sys.processors = { alloys: 2 };
-      sys.reactors = 1;
+      const bb = getBodyBuildings(sys, primaryBodyKey(sys));
+      bb.processors = { alloys: 2 };
+      bb.reactors = 1;
       sys.stockpile.metals = 100;
       sys.stockpile.helium3 = 100;
     }, false);

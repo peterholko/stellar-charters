@@ -10,7 +10,11 @@ import type { Engine } from "./engine.js";
 import type { TurnReport } from "./report.js";
 import {
   RESOURCES,
+  type BodyBuildings,
   type BodyKind,
+  type ColonyPopulation,
+  type CorpResearch,
+  type QueueItem,
   type MegastructureKind,
   type PlanetType,
   type War,
@@ -23,8 +27,27 @@ import {
   type Stockpile,
   type SystemPosition,
 } from "./types.js";
+import { systemBuildings } from "./bodies.js";
+import { SECRET_TECH_IDS } from "./research.js";
+import type { GameOutcome } from "./standings.js";
 
 export type GamePhase = "play" | "over";
+
+/** Deep-copy a per-body building map so the client snapshot never aliases live engine state. */
+function cloneBodyBuildings(bb: Record<string, BodyBuildings>): Record<string, BodyBuildings> {
+  const out: Record<string, BodyBuildings> = {};
+  for (const [key, b] of Object.entries(bb)) {
+    out[key] = { ...b, processors: { ...b.processors } };
+  }
+  return out;
+}
+
+/** Deep-copy a per-body construction queue so the client snapshot never aliases live engine state. */
+function cloneBuildQueues(q: Record<string, QueueItem[]>): Record<string, QueueItem[]> {
+  const out: Record<string, QueueItem[]> = {};
+  for (const [key, items] of Object.entries(q)) out[key] = items.map((it) => ({ ...it }));
+  return out;
+}
 
 /** A human seat in a (possibly shared) game. */
 export interface ClientPlayer {
@@ -78,6 +101,13 @@ export interface ClientSystem {
   innerRing: boolean;
   owner: string | null;
   populationStage: PopulationStage;
+  /** Per-body building map (Section 24): bodyKey → counts. The colony screen renders from this. */
+  bodyBuildings: Record<string, BodyBuildings>;
+  /** Per-body construction queues (Section 24, Phase 4a): bodyKey → pending builds with progress. */
+  buildQueues: Record<string, QueueItem[]>;
+  /** Per-body population (Section 24, Phase 4b): bodyKey → stage/progress/unrest for populated worlds. */
+  colonyPop: Record<string, ColonyPopulation>;
+  /** System-wide aggregate of hydroponics across all bodies — convenience for compact UI badges. */
   hydroponics: number;
   platforms: number;
   /** Megastructures built here (Section 22). */
@@ -126,6 +156,12 @@ export interface ClientCorp {
   ships?: Ship[];
   privateers?: Privateer[];
   recentEarnings?: number[];
+  /** Systems this charter has scouted with a survey vessel (Section 25); self-only. */
+  surveyedSystemIds?: string[];
+  /** Research progress (Section 28); self-only. */
+  research?: CorpResearch;
+  /** Research points generated per turn from labs + population (Section 28); self-only. */
+  rpPerTurn?: number;
 }
 
 export interface ClientConvoy {
@@ -161,8 +197,12 @@ export interface ClientState {
   convoys: ClientConvoy[];
   /** Active wars between charters (Section 23). */
   wars: War[];
+  /** Galaxy-unique secret projects already claimed (Section 28, Phase 3): techId → corp name. */
+  claimedSecrets: Record<string, string>;
   /** Exchange tariff you (the viewing charter) pay as a war aggressor; 0 if not at war. */
   warTariff: number;
+  /** Live victory standings + final outcome (Section 29): ranked scoreboard, winner once over. */
+  outcome: GameOutcome;
   reports: TurnReport[];
   // ----- multiplayer / lobby (filled by the server) -----
   /** This client's seat, or null if it hasn't joined. */
@@ -178,7 +218,8 @@ export interface ClientState {
 }
 
 export function gamePhase(engine: Engine): GamePhase {
-  return engine.isOver ? "over" : "play";
+  // "over" at the turn limit *or* on a decisive monopoly (Section 29).
+  return engine.outcome.over ? "over" : "play";
 }
 
 export function buildClientState(
@@ -188,12 +229,15 @@ export function buildClientState(
   reports: TurnReport[],
 ): ClientState {
   const g = engine.galaxy;
-  const owned = new Set(
-    engine.corps.find((c) => c.id === humanCorpId)?.ownedSystemIds ?? [],
-  );
+  const me = engine.corps.find((c) => c.id === humanCorpId);
+  const owned = new Set(me?.ownedSystemIds ?? []);
+  const surveyed = new Set(me?.surveyedSystemIds ?? []);
 
   const systems: ClientSystem[] = g.allSystems().map((s) => {
     const mine = s.owner === humanCorpId || owned.has(s.id);
+    // A survey vessel (Section 25) grants full deposit intel on a system — richness AND reserves —
+    // even in rival territory. Owning it, or its deposits being publicly worked, also reveals.
+    const scouted = mine || surveyed.has(s.id);
     const sites: ClientSite[] = s.sites.map((site) => ({
       key: site.key,
       bodyKind: site.bodyKind,
@@ -205,10 +249,11 @@ export function buildClientState(
       accessibility: site.accessibility,
       extractorLevel: site.extractorLevel,
       disabledUntil: site.disabledUntil,
-      prospected: site.prospected,
-      // Fog of war: richness known once surveyed; depletion intel is owner-only.
-      richness: site.prospected ? site.richness : null,
-      reservesRemaining: mine && site.prospected ? site.reservesRemaining : null,
+      prospected: site.prospected || scouted,
+      // Fog of war: richness is public once a deposit is worked/assayed, or known if you own/scouted
+      // the system; reserves (depletion intel) stay private — only the owner or a surveyor sees them.
+      richness: site.prospected || scouted ? site.richness : null,
+      reservesRemaining: scouted ? site.reservesRemaining : null,
     }));
     // Only ship the flat yields for legacy/authored systems; body-driven systems render from
     // `sites` and would otherwise waste an all-zero 11-key object per system, every poll.
@@ -227,7 +272,10 @@ export function buildClientState(
       innerRing: s.innerRing,
       owner: s.owner,
       populationStage: s.populationStage,
-      hydroponics: s.hydroponics,
+      bodyBuildings: cloneBodyBuildings(s.bodyBuildings),
+      buildQueues: cloneBuildQueues(s.buildQueues),
+      colonyPop: Object.fromEntries(Object.entries(s.colonyPop).map(([k, p]) => [k, { ...p }])),
+      hydroponics: systemBuildings(s).hydroponics,
       platforms: s.platforms,
       megastructures: [...s.megastructures],
       hasDepot: s.hasDepot,
@@ -275,6 +323,20 @@ export function buildClientState(
       base.ships = c.ships.map((s) => ({ ...s }));
       base.privateers = c.privateers.map((p) => ({ ...p }));
       base.recentEarnings = [...c.recentEarnings];
+      base.surveyedSystemIds = [...c.surveyedSystemIds];
+      base.research = {
+        completed: [...c.research.completed], queue: [...c.research.queue],
+        invested: { ...c.research.invested }, banked: c.research.banked,
+      };
+      const tune = engine.config.tuning;
+      let rp = 0;
+      for (const sid of c.ownedSystemIds) {
+        const s = g.systems.get(sid);
+        if (!s) continue;
+        rp += systemBuildings(s).labs * tune.labRpOutput;
+        for (const pop of Object.values(s.colonyPop)) rp += tune.researchPopBase[pop.stage];
+      }
+      base.rpPerTurn = rp;
     }
     return base;
   });
@@ -301,6 +363,10 @@ export function buildClientState(
   const prices = {} as Record<Resource, number>;
   for (const r of RESOURCES) prices[r] = engine.market.prices[r];
 
+  // Which galaxy-unique secret projects are already claimed, and by whom (Section 28, Phase 3).
+  const claimedSecrets: Record<string, string> = {};
+  for (const c of engine.corps) for (const id of c.research.completed) if (SECRET_TECH_IDS.includes(id)) claimedSecrets[id] = c.name;
+
   return {
     gameId,
     scenarioId: engine.config.scenario.id ?? "legacy",
@@ -314,7 +380,9 @@ export function buildClientState(
     corps,
     convoys,
     wars: engine.activeWars.map((w) => ({ ...w })),
+    claimedSecrets,
     warTariff: engine.warTariffFor(humanCorpId),
+    outcome: engine.outcome,
     reports,
     // Multiplayer fields default here; the server overrides them with DB membership.
     mySeat: humanCorpId,

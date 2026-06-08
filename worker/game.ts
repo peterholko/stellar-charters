@@ -204,7 +204,9 @@ function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn
     corps: [],
     convoys: [],
     wars: [],
+    claimedSecrets: {},
     warTariff: 0,
+    outcome: { standings: [], over: phase === "over", decisive: false, winnerId: null, victoryType: null },
     reports: [],
     mySeat: null,
     isHost: false,
@@ -290,7 +292,8 @@ async function submit(request: Request, env: Env, user: SessionUser): Promise<Re
   for (const m of mem) engine.setHumanOrders(m.corp_id, upcoming.get(m.corp_id) ?? null);
   engine.stepTurn();
   const newTurn = engine.currentTurn;
-  const newStatus = engine.isOver ? "ended" : "active";
+  // The game ends at the turn limit or on a decisive monopoly — one charter outlasting all rivals (Section 29).
+  const newStatus = engine.outcome.over ? "ended" : "active";
 
   const upd = await env.DB.prepare(
     "UPDATE games SET turn=?, status=?, updated_ts=? WHERE id=? AND turn=?",

@@ -23,7 +23,9 @@ import {
   maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
-  maybeResearchRange,
+  maybeResearch,
+  RESEARCH_PLANS,
+  maybeSurvey,
   maybeUpgradeInfrastructure,
   planRaid,
   sellSurplus,
@@ -44,8 +46,9 @@ export class BalancedBot implements Bot {
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
     orders.push(...maybeBuildExtractor(view));
+    orders.push(...maybeResearch(view, RESEARCH_PLANS.balanced));
     orders.push(...maybeExpand(view));
-    orders.push(...maybeResearchRange(view));
+    orders.push(...maybeSurvey(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildHydroponics(view));

@@ -70,7 +70,16 @@ export function reconstructView(state: ClientState): PlayerView {
     if (!sys) continue;
     sys.owner = cs.owner;
     sys.populationStage = cs.populationStage;
-    sys.hydroponics = cs.hydroponics;
+    sys.bodyBuildings = {};
+    for (const [key, b] of Object.entries(cs.bodyBuildings)) {
+      sys.bodyBuildings[key] = { ...b, processors: { ...b.processors } };
+    }
+    sys.buildQueues = {};
+    for (const [key, items] of Object.entries(cs.buildQueues)) {
+      sys.buildQueues[key] = items.map((it) => ({ ...it }));
+    }
+    sys.colonyPop = {};
+    for (const [key, p] of Object.entries(cs.colonyPop)) sys.colonyPop[key] = { ...p };
     sys.platforms = cs.platforms;
     sys.megastructures = [...cs.megastructures];
     sys.hasDepot = cs.hasDepot;
@@ -121,6 +130,8 @@ export function reconstructView(state: ClientState): PlayerView {
     ownedSystemIds: c.ownedSystemIds,
     ships: c.ships ?? [],
     privateers: c.privateers ?? [],
+    surveyedSystemIds: c.surveyedSystemIds ?? [],
+    research: c.research ?? { completed: [], queue: [], invested: {}, banked: 0 },
     rangeTier: c.rangeTier,
     valuation: c.valuation,
     sharePrice: c.sharePrice,

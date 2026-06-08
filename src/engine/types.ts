@@ -188,7 +188,7 @@ export type BodyKind = "planet" | "belt" | "star";
  * site. `extractorLevel` 0 means unworked (no output); building extractors raises it.
  * `reservesRemaining` depletes as the site is mined (null = renewable). `disabledUntil` is the
  * first turn the site is online again after sabotage / a stellar outage. `prospected` is true
- * once the owner has assayed it (knows exact richness/reserves; otherwise only a coarse hint).
+ * once the deposit is worked or its system surveyed (knows exact richness/reserves; otherwise only a coarse hint).
  */
 export interface ExtractionSite {
   /** Stable key, e.g. "planet:2:metals", "belt:0:silicates", "star:antimatter". */
@@ -224,6 +224,62 @@ export const MEGASTRUCTURE_KINDS: readonly MegastructureKind[] = [
   "ringworld",
 ];
 
+/**
+ * The buildings on a single planet/belt (Section 24). Re-homed from the system: factories run the
+ * production chains, reactors + power grid supply power, agri-domes make food, and the raw-fed
+ * upgrade tracks harden/grow the body. Construction is per-body; the system aggregates the totals.
+ */
+export interface BodyBuildings {
+  /** Processor (factory) modules by recipe id (each runs one chain recipe per turn, Section 07b). */
+  processors: Record<string, number>;
+  /** Reactor modules (each adds power capacity, burns helium3). */
+  reactors: number;
+  /** Hydroponic (agri-dome) modules (each adds food production). */
+  hydroponics: number;
+  /** Mining-rig upgrade level (metals-fed): fortification / upkeep (Section 07c). */
+  miningRigs: number;
+  /** Habitat upgrade level (silicates-fed): population growth + tax (Section 07c). */
+  habitats: number;
+  /** Power-grid upgrade level (helium3-fed): local power capacity (Section 07c). */
+  powerGrid: number;
+  /** Research Lab modules (each produces research points per turn, Section 28). */
+  labs: number;
+}
+
+export function emptyBodyBuildings(): BodyBuildings {
+  return { processors: {}, reactors: 0, hydroponics: 0, miningRigs: 0, habitats: 0, powerGrid: 0, labs: 0 };
+}
+
+/** Per-colony population (Section 24, Phase 4b): each habitable / agri-domed body grows its own
+ *  population, feeds from the shared system stockpile, and pays its own tax. */
+export interface ColonyPopulation {
+  stage: PopulationStage;
+  /** Progress (0..growthThreshold) toward the next stage. */
+  progress: number;
+  /** Social unrest (0..1) from starvation on this body. */
+  unrest: number;
+}
+
+export function emptyColonyPopulation(): ColonyPopulation {
+  return { stage: "outpost", progress: 0, unrest: 0 };
+}
+
+/** The building kinds that run through a colony's construction queue (Section 24, Phase 4a). System
+ *  structures (platforms, depot, megastructures) and per-site extractors stay instant-on-affordability. */
+export type QueueBuildingKind = "factory" | "reactor" | "agridome" | "mining" | "habitat" | "power" | "lab";
+
+/** One item in a colony's build queue. Credits + resources are charged when the item is *queued*;
+ *  the building materialises once `cpDone` reaches `cpCost`, gated by the colony's construction rate. */
+export interface QueueItem {
+  kind: QueueBuildingKind;
+  /** Recipe id for a factory (`kind === "factory"`). */
+  recipeId?: string;
+  /** Construction points required to finish (Section 24). */
+  cpCost: number;
+  /** Construction points accumulated so far. */
+  cpDone: number;
+}
+
 export interface System {
   id: string;
   name: string;
@@ -240,23 +296,33 @@ export interface System {
   sites: ExtractionSite[];
   claimCost: number;
   upkeep: number;
+  /**
+   * System-level population AGGREGATE (Section 24, Phase 4b): the highest stage / its progress /
+   * peak unrest across the system's populated colonies (`colonyPop`). Kept for valuation,
+   * megastructure gating, and the system pop-meter; the authoritative per-body state is `colonyPop`.
+   */
   populationStage: PopulationStage;
-  /** Progress (0..100) toward the next population stage (Section 08). */
+  /** Progress (0..100) toward the next population stage of the leading colony (Section 08). */
   populationProgress: number;
-  /** Social unrest (0..1) from starvation; lowers tax and production. */
+  /** Peak social unrest across the system's colonies (0..1); lowers tax and production. */
   unrest: number;
-  /** Number of hydroponic modules built (each adds food production). */
-  hydroponics: number;
-  /** Processor modules by recipe id (each runs one chain recipe per turn, Section 07b). */
-  processors: Record<string, number>;
-  /** Number of reactor modules built here (each adds power capacity, burns helium3). */
-  reactors: number;
-  /** Mining-rig upgrade level (metals-fed): raises this system's extraction yields (Section 07c). */
-  miningRigs: number;
-  /** Habitat upgrade level (silicates-fed): raises population growth and tax here (Section 07c). */
-  habitats: number;
-  /** Power-grid upgrade level (helium3-fed): adds local power capacity (Section 07c). */
-  powerGrid: number;
+  /**
+   * Per-body population (Section 24, Phase 4b): bodyKey → its colony's stage/progress/unrest. Only
+   * habitable bodies (or those with an agri-dome) appear here; pure-industrial worlds host no people.
+   */
+  colonyPop: Record<string, ColonyPopulation>;
+  /**
+   * Buildings, owned per-body (Section 24): each planet/belt keyed by its body key
+   * ("planet:2", "belt:0", "star:0") holds its own factories/reactors/agri-domes/upgrades. The
+   * system aggregates these (shared stockpile + pooled power), but construction is per-body.
+   */
+  bodyBuildings: Record<string, BodyBuildings>;
+  /**
+   * Per-body construction queues (Section 24, Phase 4a): each body key maps to its FIFO list of
+   * pending builds. A colony pours `construction.pointsPerTurn` into the front item each turn; when
+   * it finishes, the building lands in `bodyBuildings` and the leftover points roll to the next item.
+   */
+  buildQueues: Record<string, QueueItem[]>;
   /** Number of stationary defense platforms built here (each adds raid defense). */
   platforms: number;
   /** Megastructures built here (Section 22) — the metals/alloys demand sink + valuation race. */
@@ -343,6 +409,8 @@ export interface ShipTransit {
   launchedTurn: number;
   /** Destination is a non-allied rival system → resolve a battle on arrival. */
   attack: boolean;
+  /** Survey vessel only (Section 25): system to fly home to after surveying the destination. */
+  surveyReturnTo?: string;
 }
 
 export interface Ship {
@@ -353,8 +421,27 @@ export interface Ship {
   raider: boolean;
   /** System this ship is based at (defends it and escorts its convoys); "" while in transit. */
   stationedAt: string;
+  /** An unarmed survey vessel (Section 25): scouts a target system, then returns. Never fights. */
+  surveyor?: boolean;
   /** Movement state when the ship is travelling between systems (Section 23). */
   transit?: ShipTransit;
+}
+
+/** A charter's research state (Section 28). RP flows into `queue[0]` each turn; finished techs move to
+ *  `completed`; leftover RP banks when the queue is empty. */
+export interface CorpResearch {
+  /** Completed tech ids (their effects are live). */
+  completed: string[];
+  /** Ordered active+pending tech ids; `queue[0]` is the active project. */
+  queue: string[];
+  /** Research points invested so far into each in-progress tech. */
+  invested: Record<string, number>;
+  /** Unspent research points (rolls over when the queue is empty). */
+  banked: number;
+}
+
+export function emptyCorpResearch(): CorpResearch {
+  return { completed: [], queue: [], invested: {}, banked: 0 };
 }
 
 export interface Privateer {
@@ -386,6 +473,11 @@ export interface Corporation {
   ownedSystemIds: string[];
   ships: Ship[];
   privateers: Privateer[];
+  /** Systems this charter has scouted with a survey vessel (Section 25): grants full deposit intel
+   *  (richness + reserves) on them, even in rival territory. Owned systems are always fully known. */
+  surveyedSystemIds: string[];
+  /** Research progress (Section 28): completed techs, the active+queued projects, and banked RP. */
+  research: CorpResearch;
   /** Best range tier the corporation can field (from research/licensing). */
   rangeTier: RangeTier;
   /** Latest computed valuation (Section 17). */
@@ -462,9 +554,12 @@ export interface BuildShipOrder {
   systemId: string;
 }
 
-export interface ResearchRangeOrder {
-  kind: "researchRange";
-  targetTier: RangeTier;
+/** Terraform a non-habitable owned world so it can host a population (Section 28, Phase 2). Requires
+ *  the Terraforming research. */
+export interface TerraformOrder {
+  kind: "terraform";
+  systemId: string;
+  bodyKey: string;
 }
 
 export interface HirePrivateerOrder {
@@ -497,6 +592,8 @@ export interface BuildDepotOrder {
 export interface BuildHydroponicsOrder {
   kind: "buildHydroponics";
   systemId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface BuildProcessorOrder {
@@ -504,11 +601,15 @@ export interface BuildProcessorOrder {
   systemId: string;
   /** Id of the recipe (Tuning.recipes) this processor runs. */
   recipeId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface BuildReactorOrder {
   kind: "buildReactor";
   systemId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface UpgradeInfrastructureOrder {
@@ -516,11 +617,27 @@ export interface UpgradeInfrastructureOrder {
   systemId: string;
   /** Which raw-fed upgrade track to advance one level (Section 07c). */
   track: "mining" | "habitat" | "power";
+  /** Planet/belt to upgrade (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
 }
 
 export interface BuildPlatformOrder {
   kind: "buildPlatform";
   systemId: string;
+}
+
+/** Build a Research Lab on a colony (Section 28): produces research points each turn. */
+export interface BuildLabOrder {
+  kind: "buildLab";
+  systemId: string;
+  /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
+  bodyKey?: string;
+}
+
+/** Set the charter's research queue (Section 28): the ordered list of tech ids to pursue, active first. */
+export interface SetResearchOrder {
+  kind: "setResearch";
+  queue: string[];
 }
 
 /** Build a megastructure on an owned system (Section 22): a huge metals/alloys sink. */
@@ -535,13 +652,6 @@ export interface BuildExtractorOrder {
   kind: "buildExtractor";
   systemId: string;
   /** ExtractionSite.key identifying the deposit to work. */
-  siteKey: string;
-}
-
-/** Survey one of an owned system's deposits to reveal its true richness/reserves (Section 21). */
-export interface AssayOrder {
-  kind: "assay";
-  systemId: string;
   siteKey: string;
 }
 
@@ -581,6 +691,23 @@ export interface MoveFleetOrder {
   toSystemId: string;
 }
 
+/** Build a survey vessel — an unarmed scout — at an owned system (Section 25). */
+export interface BuildSurveyShipOrder {
+  kind: "buildSurveyShip";
+  systemId: string;
+}
+
+/**
+ * Dispatch an idle survey vessel from `fromSystemId` to scout `targetSystemId` (Section 25). It
+ * travels the cheapest charted path, surveys the whole target system on arrival (revealing every
+ * deposit's richness + reserves to this charter, even in rival territory), then returns home.
+ */
+export interface SurveySystemOrder {
+  kind: "surveySystem";
+  fromSystemId: string;
+  targetSystemId: string;
+}
+
 /** Pledge a mutual defensive alliance with another charter (Section 23). Allied only once
  *  both charters have pledged each other. */
 export interface AlliancePledgeOrder {
@@ -612,7 +739,7 @@ export type Order =
   | ClaimOrder
   | SurveyOrder
   | BuildShipOrder
-  | ResearchRangeOrder
+  | TerraformOrder
   | HirePrivateerOrder
   | InterdictOrder
   | TargetConvoyOrder
@@ -623,13 +750,16 @@ export type Order =
   | BuildReactorOrder
   | UpgradeInfrastructureOrder
   | BuildPlatformOrder
+  | BuildLabOrder
+  | SetResearchOrder
   | BuildMegastructureOrder
   | BuildExtractorOrder
-  | AssayOrder
   | SabotageOrder
   | InvadeOrder
   | RedeployShipOrder
   | MoveFleetOrder
+  | BuildSurveyShipOrder
+  | SurveySystemOrder
   | AlliancePledgeOrder
   | AllianceBreakOrder
   | BuySharesOrder

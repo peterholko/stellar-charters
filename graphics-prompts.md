@@ -227,4 +227,88 @@ dark UI theme, consistent with the Exchange and Convoy Card.
 
 ---
 
+## F. Colony Building Icons (Section 24/27)
+
+The seven structures the player raises on a planet's colony screen. One cohesive
+icon set; drop the exported PNGs into `web/public/assets/` as `building-factory.png`,
+`building-reactor.png`, `building-agridome.png`, `building-miningrig.png`,
+`building-habitat.png`, `building-powergrid.png`, `building-lab.png` (each 1:1, transparent).
+
+### Colony Building Icon Set
+A set of seven matching colony-building icons for a near-future corporate-sci-fi 4X
+game, presented as a clean **contact sheet on a transparent background**, each
+icon isolated in its own cell at identical scale, identical 3/4 isometric camera,
+identical key light from the upper-left, and a shared cold-metal palette with one
+warm signal accent. Each is a small, readable hero structure planted on a circular
+slab of planetary ground, like a build-menu thumbnail:
+1. **Factory** — a boxy automated refinery/processor with intake hoppers, conveyor
+   arms and an exhaust stack venting faint vapor; amber signal lights.
+2. **Reactor** — a squat fusion reactor: a glowing teal containment core inside a
+   ribbed alloy shell with coolant fins and warning chevrons.
+3. **Agri-dome** — a transparent geodesic greenhouse dome over green crop terraces,
+   soft internal grow-lights, condensation on the glass.
+4. **Mining rig** — a fortified extraction derrick over a mineshaft: a drilling
+   tower, ore conveyor, and armored revetments (it doubles as defense).
+5. **Habitat** — a clustered residential arcology: stacked living modules with lit
+   windows, a small park ring, antennae.
+6. **Power grid** — a substation: capacitor banks, transformer pylons, and humming
+   conduits feeding a small distribution mast.
+7. **Research lab** — a sealed laboratory module: a domed cleanroom with glowing
+   instrument bays, a sensor/antenna array, and a faint holographic readout above it.
+Utilitarian industrial hardware with weathered panels, rivets and corporate decals;
+crisp readable silhouettes; subtle ground shadow under each; no text labels on the
+art. *Aspect: each icon 1:1 · transparent background · consistent set.*
+
+> Append the **Shared Style Suffix** and the **Negative Prompt** above. If your tool
+> generates one image per prompt, reuse this exact spec for each building individually
+> (same camera, light, palette, slab) so the six stay a matched set.
+
+---
+
+## G. Research Art (Section 28)
+
+Two sets for the Research screen. Drop the exported PNGs into `web/public/assets/`:
+the six **division icons** as `research-prospectus.png`, `research-fabrication.png`,
+`research-navigation.png`, `research-colonial.png`, `research-security.png`,
+`research-acquisitions.png`; the six **secret-project emblems** as
+`secret-pro-antimatter.png`, `secret-fab-nanofab.png`, `secret-nav-wormhole.png`,
+`secret-col-arcology.png`, `secret-sec-orbital.png`, `secret-acq-insider.png`.
+Each 1:1, transparent. (`ArtSlot` shows a labelled placeholder until they exist.)
+
+### Research Division Icons (set of 6)
+A cohesive set of six **circular emblem icons** for the research "Divisions" of a
+near-future corporate-sci-fi 4X game, on a **transparent 2×3 contact sheet**, each
+in its own cell at identical scale, identical front-facing flat-emblem treatment, a
+shared gunmetal-and-ice palette with one warm signal accent, and a thin etched ring
+border — like crisp corporate department insignia / HUD glyphs:
+1. **Prospectus** (extraction sciences) — a deposit core / ore-cross-section with a drill bit.
+2. **Fabrication** (industrial engineering) — interlocking gears over a factory hopper.
+3. **Navigation** (warp dynamics) — a warp-lane spiral / wormhole ring with a course vector.
+4. **Colonial** (xenobiology & statecraft) — a domed habitat over a leaf / world.
+5. **Security** (naval doctrine) — a hull-plate shield crossed with a cannon barrel.
+6. **Acquisitions** (market intelligence) — an upward market arrow fused with an eye / spy lens.
+Bold readable silhouettes, minimal detail, consistent line weight; no text.
+*Aspect: each 1:1 · transparent background · matched set.*
+
+### Secret-Project Emblems (set of 6)
+A set of six **prestigious, ornate "secret project" medallions** — rarer and more
+elaborate than the division icons (they're galaxy-unique endgame wonders) — on a
+**transparent 2×3 contact sheet**, each a glowing circular medallion with a faint
+energy aura and a fine engraved border, same cold palette with a stronger luminous
+accent unique to each:
+1. **Antimatter Containment** — a magnetically-suspended antimatter spark in a torus (violet glow).
+2. **Nanofabrication** — a self-replicating nanite lattice / fractal foundry (teal glow).
+3. **Wormhole Engineering** — an artificial wormhole gate bending starlight (cyan glow).
+4. **Arcology** — a colossal ecumenopolis spire-city under a dome (warm gold glow).
+5. **Orbital Dominance** — an orbital battle-station raining bombardment beams on a world (red glow).
+6. **Insider Networks** — an all-seeing market eye over a web of data conduits (amber glow).
+Concept-art quality, cohesive lighting, crisp silhouettes; no text.
+*Aspect: each 1:1 · transparent background · matched set.*
+
+> Append the **Shared Style Suffix** and **Negative Prompt** above to each. If your
+> tool emits one image per prompt, generate each icon/emblem individually with the
+> same framing, palette, and ring treatment so each set stays uniform.
+
+---
+
 *Source of truth for terminology and concepts: `game-design-doc.md` (v2.2).*

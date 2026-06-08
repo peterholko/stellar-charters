@@ -9,11 +9,24 @@
  * available only in the next order window. Newly launched convoys therefore do not
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
-import type { GameConfig } from "./config.js";
+import { constructionCpCost, type GameConfig } from "./config.js";
+import { RESEARCH_TREE, SECRET_TECH_IDS, canResearch, researchMods, techById, type ResearchMods } from "./research.js";
 import {
   EXTRACTOR_CAP,
+  agriFoodMult,
+  bodyTypeOfKey,
+  buildingTotal,
+  canBuildOnBody,
+  canHostPopulation,
+  coloniesOf,
   effectiveYields,
+  factoryCostMult,
+  getBodyBuildings,
+  planetLabel,
+  primaryBodyKey,
+  siteBodyKey,
   siteOutput,
+  systemBuildings,
   systemHasHabitableBody,
   systemSeed,
 } from "./bodies.js";
@@ -33,11 +46,15 @@ import {
 } from "./metrics.js";
 import {
   RESOURCES,
+  emptyColonyPopulation,
+  emptyCorpResearch,
   type Convoy,
   type Corporation,
   type MegastructureKind,
   type Order,
   type PopulationStage,
+  type QueueBuildingKind,
+  type QueueItem,
   type Resource,
   type Ship,
   type System,
@@ -46,10 +63,24 @@ import {
 import type { Bot, BotFactory, PlayerView } from "./bots/bot.js";
 import { HybridBot } from "./bots/hybrid.js";
 import type { TurnEvent, TurnReport } from "./report.js";
+import { computeOutcome, type GameOutcome } from "./standings.js";
 
 export interface EngineOptions {
   /** Optional per-turn text logger for `--verbose` single-game runs. */
   log?: (line: string) => void;
+}
+
+/** Human-readable name for a queued build (Section 24, Phase 4a). */
+function queueLabel(item: QueueItem): string {
+  switch (item.kind) {
+    case "factory": return `${item.recipeId ?? "factory"} processor`;
+    case "reactor": return "Reactor";
+    case "agridome": return "Hydroponics module";
+    case "mining": return "mining upgrade";
+    case "habitat": return "habitat upgrade";
+    case "power": return "power upgrade";
+    case "lab": return "Research lab";
+  }
 }
 
 /** Display names for megastructures (Section 22). */
@@ -109,6 +140,8 @@ export class Engine {
         ownedSystemIds: [],
         ships: [{ rangeTier: 1, combat: 0, raider: false, stationedAt: "" }],
         privateers: [],
+        surveyedSystemIds: [],
+        research: emptyCorpResearch(),
         rangeTier: 1,
         valuation: 0,
         sharePrice: 0,
@@ -180,11 +213,23 @@ export class Engine {
    */
   private ensureStartHabitable(sys: System): void {
     if (systemHasHabitableBody(sys)) return;
+    const hasFood = sys.sites.some((s) => s.resource === "food");
     if (sys.bodies && sys.bodies.planets.length > 0) {
-      const p = sys.bodies.planets.find((pl) => pl.type === "ocean") ?? sys.bodies.planets[0]!;
+      // Establish the habitat dome on ONE real planet (Section 24, Phase 4b: a single population
+      // seed, not a separate synthetic body), so the home system has exactly one starting colony.
+      const idx = sys.bodies.planets.findIndex((pl) => pl.type === "ocean");
+      const pIdx = idx >= 0 ? idx : 0;
+      const p = sys.bodies.planets[pIdx]!;
       p.habitable = true;
-    }
-    if (!sys.sites.some((s) => s.resource === "food")) {
+      if (!hasFood) {
+        sys.sites.push({
+          key: `planet:${pIdx}:food`, bodyKind: "planet", bodyType: p.type, bodyLabel: planetLabel(p.type),
+          orbit: p.orbit, habitable: true, resource: "food", richness: 6, reservesRemaining: null,
+          accessibility: 1, extractorLevel: 1, prospected: true, disabledUntil: 0,
+        });
+      }
+    } else if (!hasFood) {
+      // Legacy/bodyless systems: fall back to a synthetic habitat-dome colony.
       sys.sites.push({
         key: "home:food", bodyKind: "planet", bodyType: "ocean", bodyLabel: "Habitat dome",
         orbit: 0, habitable: true, resource: "food", richness: 6, reservesRemaining: null,
@@ -238,6 +283,16 @@ export class Engine {
   /** True once the match has played its final turn. */
   get isOver(): boolean {
     return this.turn >= this.config.turns;
+  }
+
+  /**
+   * Live victory standings + final outcome (Section 29). Read-only over current state, so it
+   * adds no resolution logic and is safe to call any turn. Note `outcome.over` can be true before
+   * `isOver` (a decisive monopoly ends the game early); consumers that gate on the turn limit
+   * should check `outcome.over`, not just `isOver`.
+   */
+  get outcome(): GameOutcome {
+    return computeOutcome(this.corps, this.galaxy, this.config.tuning, this.turn, this.config.turns);
   }
 
   /** The current turn number (0 before the first turn, then 1..N as turns resolve). */
@@ -346,6 +401,10 @@ export class Engine {
       orderCounts[corp.id] = orders.length;
     }
 
+    // 1.4 Construction: advance each colony's build queue (Section 24, Phase 4a) BEFORE new orders
+    // are queued, so a build only progresses on the turns after it was ordered (no same-turn chain).
+    this.advanceConstruction();
+
     // 1.5 Administrative builds (claims, surveys, ships, research, depots, finance).
     this.resolveAdministrative(ordersByCorp);
 
@@ -371,6 +430,9 @@ export class Engine {
     const popStats = this.resolvePopulationAndUpkeep();
     this.lastTaxLevied = popStats.taxLevied;
 
+    // 8.5 Research: generate points (labs + population) and advance each charter's tech queue (Section 28).
+    this.resolveResearch();
+
     // 9. Valuation + share prices.
     this.updateValuations();
 
@@ -387,6 +449,84 @@ export class Engine {
 
     // 10. Report.
     this.recordSnapshot(this.turn, orderCounts, launchInfo, raidStats, equityStats);
+  }
+
+  /** Construction-point cost of one queued building kind (Section 24, Phase 4a). */
+  private constructionCost(kind: QueueBuildingKind, recipeId?: string): number {
+    const tier = kind === "factory" && recipeId
+      ? this.config.tuning.recipes.find((r) => r.id === recipeId)?.tier ?? 1
+      : 1;
+    return constructionCpCost(this.config.tuning, kind, tier);
+  }
+
+  /** Land a finished queue item into its colony's buildings (Section 24, Phase 4a). */
+  private completeBuild(sys: System, bodyKey: string, item: QueueItem): void {
+    const bb = getBodyBuildings(sys, bodyKey);
+    switch (item.kind) {
+      case "factory": if (item.recipeId) bb.processors[item.recipeId] = (bb.processors[item.recipeId] ?? 0) + 1; break;
+      case "reactor": bb.reactors += 1; break;
+      case "agridome": bb.hydroponics += 1; break;
+      case "mining": bb.miningRigs += 1; break;
+      case "habitat": bb.habitats += 1; break;
+      case "power": bb.powerGrid += 1; break;
+      case "lab": bb.labs += 1; break;
+    }
+  }
+
+  /**
+   * Pour each colony's per-turn construction points into the front of its build queue (Section 24,
+   * Phase 4a). Finished items land in `bodyBuildings`; leftover points roll to the next item, so a
+   * colony with spare capacity chains short builds. Charging happened at queue time — this is timing.
+   */
+  private advanceConstruction(): void {
+    const baseRate = this.config.tuning.construction.pointsPerTurn;
+    if (baseRate <= 0) return;
+    for (const sys of this.galaxy.allSystems()) {
+      // Modular Construction (Section 28) speeds the owning charter's build queues.
+      const owner = this.corps.find((c) => c.id === sys.owner);
+      const rate = baseRate * (owner ? this.mods(owner).constructionRateMult : 1);
+      for (const [bodyKey, queue] of Object.entries(sys.buildQueues)) {
+        if (queue.length === 0) continue;
+        let points = rate;
+        while (points > 0 && queue.length > 0) {
+          const item = queue[0]!;
+          const need = item.cpCost - item.cpDone;
+          if (points >= need) {
+            points -= need;
+            queue.shift();
+            this.completeBuild(sys, bodyKey, item);
+            this.events.push({ type: "build", corpId: sys.owner ?? "", what: queueLabel(item), systemId: sys.id });
+          } else {
+            item.cpDone += points;
+            points = 0;
+          }
+        }
+        if (queue.length === 0) delete sys.buildQueues[bodyKey];
+      }
+    }
+  }
+
+  /** Append a build to a colony's queue, charging it now (Section 24, Phase 4a). */
+  private enqueueBuild(sys: System, bodyKey: string, kind: QueueBuildingKind, recipeId?: string): void {
+    (sys.buildQueues[bodyKey] ??= []).push({ kind, recipeId, cpCost: this.constructionCost(kind, recipeId), cpDone: 0 });
+  }
+
+  /** Count of a building kind already built + still queued on a body, for cap checks (Phase 4a). */
+  private builtPlusQueued(sys: System, bodyKey: string, kind: QueueBuildingKind, recipeId?: string): number {
+    const bb = sys.bodyBuildings[bodyKey];
+    let built = 0;
+    if (bb) {
+      built =
+        kind === "factory" ? (recipeId ? bb.processors[recipeId] ?? 0 : 0)
+        : kind === "reactor" ? bb.reactors
+        : kind === "agridome" ? bb.hydroponics
+        : kind === "mining" ? bb.miningRigs
+        : kind === "habitat" ? bb.habitats
+        : kind === "lab" ? bb.labs
+        : bb.powerGrid;
+    }
+    const queued = (sys.buildQueues[bodyKey] ?? []).filter((q) => q.kind === kind && (kind !== "factory" || q.recipeId === recipeId)).length;
+    return built + queued;
   }
 
   private resolveAdministrative(ordersByCorp: Map<string, Order[]>): void {
@@ -417,8 +557,10 @@ export class Engine {
           case "survey": {
             const route = this.galaxy.routes.get(order.routeId);
             if (!route || route.charted) break;
-            if (corp.credits < this.config.tuning.surveyCost) break;
-            corp.credits -= this.config.tuning.surveyCost;
+            // Lane Stabilization research (Section 28) discounts charting.
+            const surveyCost = Math.round(this.config.tuning.surveyCost * this.mods(corp).surveyCostMult);
+            if (corp.credits < surveyCost) break;
+            corp.credits -= surveyCost;
             route.charted = true;
             this.events.push({ type: "build", corpId: corp.id, what: "Charted warp route" });
             this.log(`  ${corp.name} charts route ${route.id}`);
@@ -429,8 +571,10 @@ export class Engine {
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break; // must base it at an owned system
             if (order.rangeTier > corp.rangeTier) break;
+            // Capital Shipyards research (Section 28) discounts capital hulls (Range 5+).
+            const hullMult = order.rangeTier >= 5 ? this.mods(corp).capitalHullCostMult : 1;
             const cost =
-              t.shipCost[order.rangeTier] + (order.raider ? t.raiderShipExtraCost : 0);
+              (t.shipCost[order.rangeTier] + (order.raider ? t.raiderShipExtraCost : 0)) * hullMult;
             // Higher-tier hulls require strategic resources — rare isotopes (Range 2+) and
             // antimatter (capital Range 4+ hulls) — drawn from the corp's own stockpiles
             // first, with any shortfall bought from the exchange. Controlling the frontier
@@ -465,17 +609,27 @@ export class Engine {
             );
             break;
           }
-          case "researchRange": {
-            const cost = this.config.tuning.rangeResearchCost[order.targetTier];
-            if (order.targetTier <= corp.rangeTier) break;
-            if (corp.credits < cost) break;
-            corp.credits -= cost;
-            corp.rangeTier = order.targetTier;
-            if (order.targetTier >= 2 && this.metrics.range2Turn[corp.id] === -1) {
-              this.metrics.range2Turn[corp.id] = this.turn;
-            }
-            this.events.push({ type: "build", corpId: corp.id, what: `Researched Range ${order.targetTier}` });
-            this.log(`  ${corp.name} researches Range ${order.targetTier}`);
+          case "terraform": {
+            // Terraforming (Section 28, Phase 2): make a non-habitable owned world habitable so it can
+            // grow a population. Requires the Terraforming tech; costs credits + materials.
+            if (corp.isFreeOperator) break;
+            if (!this.mods(corp).canTerraform) break;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id || !sys.bodies) break;
+            const m = order.bodyKey.match(/^planet:(\d+)$/);
+            const planet = m ? sys.bodies.planets[Number(m[1])] : undefined;
+            if (!planet || planet.habitable) break;
+            const t = this.config.tuning;
+            const mats = this.scaleMats(corp, t.buildResources.agridome);
+            const bill = this.resourceBill(corp, mats);
+            if (corp.credits < t.terraformCost + bill) break;
+            this.consumeResources(corp, mats);
+            corp.credits -= t.terraformCost + bill;
+            planet.habitable = true;
+            // Reflect it on the world's worked sites so the colony reads as habitable.
+            for (const site of sys.sites) if (siteBodyKey(site) === order.bodyKey) site.habitable = true;
+            this.events.push({ type: "build", corpId: corp.id, what: `Terraformed ${planet.type} world`, systemId: sys.id });
+            this.log(`  ${corp.name} terraforms a ${planet.type} world at ${sys.name}`);
             break;
           }
           case "hirePrivateer": {
@@ -513,11 +667,16 @@ export class Engine {
             if (corp.isFreeOperator) break;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            if (corp.credits < this.config.tuning.hydroponicsCost) break;
-            corp.credits -= this.config.tuning.hydroponicsCost;
-            sys.hydroponics += 1;
-            this.events.push({ type: "build", corpId: corp.id, what: "Hydroponics module", systemId: sys.id });
-            this.log(`  ${corp.name} builds hydroponics at ${sys.name}`);
+            const bodyKey = order.bodyKey ?? primaryBodyKey(sys);
+            // Agri-domes need a livable surface (Section 24) — not a gas giant, lava world, or belt.
+            if (!canBuildOnBody("agridome", bodyTypeOfKey(sys, bodyKey))) break;
+            const domeMats = this.scaleMats(corp, this.config.tuning.buildResources.agridome); // silicates + metals (Section 27)
+            const domeBill = this.resourceBill(corp, domeMats);
+            if (corp.credits < this.config.tuning.hydroponicsCost + domeBill) break;
+            this.consumeResources(corp, domeMats);
+            corp.credits -= this.config.tuning.hydroponicsCost + domeBill;
+            this.enqueueBuild(sys, bodyKey, "agridome"); // completes over the construction queue (Phase 4a)
+            this.log(`  ${corp.name} queues hydroponics at ${sys.name}`);
             break;
           }
           case "buildProcessor": {
@@ -528,13 +687,17 @@ export class Engine {
             if (!sys || sys.owner !== corp.id) break;
             const recipe = t.recipes.find((r) => r.id === order.recipeId);
             if (!recipe) break;
-            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
-            if (corp.credits < recipe.buildCost + alloyBill) break;
-            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
-            corp.credits -= recipe.buildCost + alloyBill;
-            sys.processors[recipe.id] = (sys.processors[recipe.id] ?? 0) + 1;
-            this.events.push({ type: "build", corpId: corp.id, what: `${recipe.id} processor`, systemId: sys.id });
-            this.log(`  ${corp.name} builds a ${recipe.id} processor at ${sys.name}`);
+            const procKey = order.bodyKey ?? primaryBodyKey(sys);
+            // Factory build cost depends on the host world's type (Section 24): metal-rich rocky/lava
+            // worlds are cheap to tool up, oceans and orbital-over-giants cost a premium.
+            const recipeCost = Math.round(recipe.buildCost * factoryCostMult(bodyTypeOfKey(sys, procKey)));
+            const facMats = this.scaleMats(corp, t.buildResources.factory); // alloys + metals (Section 27)
+            const facBill = this.resourceBill(corp, facMats);
+            if (corp.credits < recipeCost + facBill) break;
+            this.consumeResources(corp, facMats);
+            corp.credits -= recipeCost + facBill;
+            this.enqueueBuild(sys, procKey, "factory", recipe.id); // Phase 4a: queues, completes later
+            this.log(`  ${corp.name} queues a ${recipe.id} processor at ${sys.name}`);
             break;
           }
           case "buildReactor": {
@@ -543,13 +706,13 @@ export class Engine {
             const t = this.config.tuning;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
-            if (corp.credits < t.reactorCost + alloyBill) break;
-            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
-            corp.credits -= t.reactorCost + alloyBill;
-            sys.reactors += 1;
-            this.events.push({ type: "build", corpId: corp.id, what: "Reactor", systemId: sys.id });
-            this.log(`  ${corp.name} builds a reactor at ${sys.name}`);
+            const reactorMats = this.scaleMats(corp, t.buildResources.reactor); // alloys + silicates (Section 27)
+            const reactorBill = this.resourceBill(corp, reactorMats);
+            if (corp.credits < t.reactorCost + reactorBill) break;
+            this.consumeResources(corp, reactorMats);
+            corp.credits -= t.reactorCost + reactorBill;
+            this.enqueueBuild(sys, order.bodyKey ?? primaryBodyKey(sys), "reactor"); // Phase 4a
+            this.log(`  ${corp.name} queues a reactor at ${sys.name}`);
             break;
           }
           case "upgradeInfrastructure": {
@@ -558,17 +721,16 @@ export class Engine {
             const inf = this.config.tuning.infrastructure;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            let level: number;
-            let creditBase: number;
-            let rawRes: Resource;
-            let rawBase: number;
-            if (order.track === "mining") {
-              level = sys.miningRigs; creditBase = inf.miningCreditCost; rawRes = "metals"; rawBase = inf.miningMetalsCost;
-            } else if (order.track === "habitat") {
-              level = sys.habitats; creditBase = inf.habitatCreditCost; rawRes = "silicates"; rawBase = inf.habitatSilicatesCost;
-            } else {
-              level = sys.powerGrid; creditBase = inf.powerCreditCost; rawRes = "helium3"; rawBase = inf.powerHelium3Cost;
-            }
+            const upKey = order.bodyKey ?? primaryBodyKey(sys);
+            // Habitats need a livable surface, mining rigs a solid one (Section 24).
+            const upBuildKind = order.track === "mining" ? "mining" : order.track === "habitat" ? "habitat" : "power";
+            if (!canBuildOnBody(upBuildKind, bodyTypeOfKey(sys, upKey))) break;
+            const creditBase = order.track === "mining" ? inf.miningCreditCost : order.track === "habitat" ? inf.habitatCreditCost : inf.powerCreditCost;
+            const rawRes: Resource = order.track === "mining" ? "metals" : order.track === "habitat" ? "silicates" : "helium3";
+            const rawBase = order.track === "mining" ? inf.miningMetalsCost : order.track === "habitat" ? inf.habitatSilicatesCost : inf.powerHelium3Cost;
+            // The level this upgrade *reaches* counts what's built AND already queued (Phase 4a), so
+            // queuing two upgrades charges L1 then L2 and never overshoots the cap.
+            const level = this.builtPlusQueued(sys, upKey, upBuildKind);
             if (level >= inf.cap) break;
             const factor = level + 1; // cost scales with the level being reached
             const creditCost = creditBase * factor;
@@ -577,11 +739,8 @@ export class Engine {
             if (corp.credits < creditCost + rawBill) break;
             this.consumeStrategic(corp, rawRes, rawNeed);
             corp.credits -= creditCost + rawBill;
-            if (order.track === "mining") sys.miningRigs += 1;
-            else if (order.track === "habitat") sys.habitats += 1;
-            else sys.powerGrid += 1;
-            this.events.push({ type: "build", corpId: corp.id, what: `${order.track} upgrade`, systemId: sys.id });
-            this.log(`  ${corp.name} upgrades ${order.track} at ${sys.name} to L${level + 1}`);
+            this.enqueueBuild(sys, upKey, upBuildKind); // Phase 4a: completes via the construction queue
+            this.log(`  ${corp.name} queues ${order.track} upgrade at ${sys.name} to L${level + 1}`);
             break;
           }
           case "buildPlatform": {
@@ -598,6 +757,84 @@ export class Engine {
             this.metrics.platformsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Defense platform", systemId: sys.id });
             this.log(`  ${corp.name} builds a defense platform at ${sys.name}`);
+            break;
+          }
+          case "buildLab": {
+            // A Research Lab (Section 28): produces research points each turn once built.
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            const labKey = order.bodyKey ?? primaryBodyKey(sys);
+            if (!canBuildOnBody("lab", bodyTypeOfKey(sys, labKey))) break;
+            const labMats = this.scaleMats(corp, t.buildResources.lab);
+            const labBill = this.resourceBill(corp, labMats);
+            if (corp.credits < t.labCost + labBill) break;
+            this.consumeResources(corp, labMats);
+            corp.credits -= t.labCost + labBill;
+            this.enqueueBuild(sys, labKey, "lab"); // Phase 4a queue
+            this.log(`  ${corp.name} queues a research lab at ${sys.name}`);
+            break;
+          }
+          case "setResearch": {
+            // Set the charter's research queue (Section 28): keep only valid, prereq-reachable techs,
+            // de-duped, with completed ones dropped — the engine pours RP into queue[0] each turn.
+            if (corp.isFreeOperator) break;
+            const done = corp.research.completed;
+            const seen = new Set<string>();
+            const queue: string[] = [];
+            // Validate in order, treating earlier queued techs as "will be completed" for prereq checks.
+            const willHave = [...done];
+            for (const id of order.queue) {
+              const tech = techById(id);
+              if (!tech || seen.has(id) || done.includes(id)) continue;
+              if (!tech.prereqs.every((p) => willHave.includes(p))) continue;
+              // A galaxy-unique secret project a rival already finished can't be queued (Phase 3).
+              if (tech.secret) { const o = this.secretOwner(id); if (o !== null && o !== corp.id) continue; }
+              seen.add(id);
+              queue.push(id);
+              willHave.push(id);
+            }
+            corp.research.queue = queue;
+            break;
+          }
+          case "buildSurveyShip": {
+            // An unarmed scout (Section 25): cheap, no combat, used to survey systems.
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            if (corp.credits < t.surveyShipCost) break;
+            corp.credits -= t.surveyShipCost;
+            corp.ships.push({ rangeTier: corp.rangeTier, combat: 0, raider: false, surveyor: true, stationedAt: sys.id });
+            this.events.push({ type: "build", corpId: corp.id, what: "Survey vessel", systemId: sys.id });
+            this.log(`  ${corp.name} builds a survey vessel at ${sys.name}`);
+            break;
+          }
+          case "surveySystem": {
+            // Dispatch one idle survey vessel to scout `targetSystemId` (Section 25). It flies the
+            // cheapest charted path, surveys the system on arrival, then returns home — always
+            // peaceful (a scout never fights), so it can slip into rival territory for intel.
+            const from = this.galaxy.systems.get(order.fromSystemId);
+            const to = this.galaxy.systems.get(order.targetSystemId);
+            if (!from || !to || from.id === to.id) break;
+            const ship = corp.ships.find((s) => s.surveyor && !s.transit && s.stationedAt === from.id);
+            if (!ship) break;
+            const path = this.galaxy.shortestWarpPath(from.id, to.id, ship.rangeTier);
+            if (!path || path.routes.length === 0) break; // no charted path within range
+            const firstRoute = this.galaxy.routes.get(path.routes[0]!);
+            ship.stationedAt = "";
+            ship.transit = {
+              path: path.systems,
+              routeIds: path.routes,
+              position: 0,
+              segmentTurnsLeft: firstRoute ? firstRoute.transitTime : 1,
+              launchedTurn: this.turn,
+              attack: false,
+              surveyReturnTo: from.id,
+            };
+            this.events.push({ type: "build", corpId: corp.id, what: `Survey en route to ${to.name}`, systemId: to.id });
+            this.log(`  ${corp.name} dispatches a survey vessel from ${from.name} to scout ${to.name}`);
             break;
           }
           case "moveFleet": {
@@ -658,12 +895,14 @@ export class Engine {
             const spec = t.megastructures[order.structure];
             const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
             if (stages.indexOf(sys.populationStage) < stages.indexOf(spec.requiresStage)) break;
+            // Advanced Metallurgy research (Section 28) discounts megastructure construction.
+            const megaMult = this.mods(corp).megastructureCostMult;
             const metalsBill = this.strategicBill(corp, "metals", spec.metalsCost);
             const alloyBill = this.strategicBill(corp, "alloys", spec.alloyCost);
-            if (corp.credits < spec.creditCost + metalsBill + alloyBill) break;
+            if (corp.credits < spec.creditCost * megaMult + metalsBill + alloyBill) break;
             this.consumeStrategic(corp, "metals", spec.metalsCost);
             this.consumeStrategic(corp, "alloys", spec.alloyCost);
-            corp.credits -= spec.creditCost + metalsBill + alloyBill;
+            corp.credits -= spec.creditCost * megaMult + metalsBill + alloyBill;
             sys.megastructures.push(order.structure);
             this.events.push({ type: "build", corpId: corp.id, what: MEGASTRUCTURE_LABEL[order.structure], systemId: sys.id });
             this.log(`  ${corp.name} completes a ${MEGASTRUCTURE_LABEL[order.structure]} at ${sys.name}`);
@@ -689,19 +928,6 @@ export class Engine {
             site.prospected = true; // working a deposit reveals its true richness
             this.events.push({ type: "build", corpId: corp.id, what: `${site.resource} extractor`, systemId: sys.id });
             this.log(`  ${corp.name} builds a ${site.resource} extractor at ${sys.name} (L${site.extractorLevel})`);
-            break;
-          }
-          case "assay": {
-            // Survey a deposit to reveal its exact richness/reserves (Section 21).
-            if (corp.isFreeOperator) break;
-            const sys = this.galaxy.systems.get(order.systemId);
-            if (!sys || sys.owner !== corp.id) break;
-            const site = sys.sites.find((s) => s.key === order.siteKey);
-            if (!site || site.prospected) break;
-            if (corp.credits < this.config.tuning.assayCost) break;
-            corp.credits -= this.config.tuning.assayCost;
-            site.prospected = true;
-            this.events.push({ type: "build", corpId: corp.id, what: `Assayed ${site.resource} deposit`, systemId: sys.id });
             break;
           }
           case "alliancePledge": {
@@ -742,8 +968,11 @@ export class Engine {
     for (const sys of this.galaxy.allSystems()) {
       if (sys.owner === null) continue;
       if ((this.claimedTurn.get(sys.id) ?? 0) >= this.turn) continue; // claimed this turn
-      // Unrest from starvation drags extraction output down (Section 08).
-      const efficiency = 1 - t.unrestProductionPenalty * sys.unrest;
+      // Unrest from starvation drags extraction output down (Section 08); research (Section 28) lifts
+      // yield (Prospectus) and slows finite-deposit depletion.
+      const owner = this.corps.find((c) => c.id === sys.owner);
+      const rm = owner ? this.mods(owner) : researchMods([]);
+      const efficiency = (1 - t.unrestProductionPenalty * sys.unrest) * rm.yieldMult;
       // Body-driven extraction (Section 21): each worked site produces richness × extractor
       // efficiency × stellar modifier, clamped to its remaining reserves. Finite deposits
       // deplete by what they actually extract, so rich worlds eventually run dry.
@@ -756,16 +985,26 @@ export class Engine {
         if (extracted <= 0) continue;
         sys.stockpile[site.resource] += extracted;
         if (site.reservesRemaining !== null) {
-          site.reservesRemaining = Math.max(0, site.reservesRemaining - extracted);
+          // Deep-Core Drilling (Section 28) makes reserves drain slower than what's extracted.
+          site.reservesRemaining = Math.max(0, site.reservesRemaining - extracted * rm.depletionMult);
         }
       }
-      // Hydroponics convert ice into food (Section 08), within available ice.
-      if (sys.hydroponics > 0) {
-        const iceWanted = sys.hydroponics * t.hydroponicsIceUse;
+      // Agri-domes convert ice into food (Section 08), within available ice. Output now scales with
+      // the host world's type (Section 24): an ocean dome out-farms a barren one (`agriFoodMult`).
+      let domes = 0; // raw dome count drives ice draw
+      let effDomes = 0; // type-weighted domes drive food output
+      for (const c of coloniesOf(sys)) {
+        const n = c.buildings.hydroponics;
+        if (n <= 0) continue;
+        domes += n;
+        effDomes += n * agriFoodMult(c.bodyType);
+      }
+      if (domes > 0) {
+        const iceWanted = domes * t.hydroponicsIceUse;
         const iceUsed = Math.min(iceWanted, sys.stockpile.ice);
         sys.stockpile.ice -= iceUsed;
         const ratio = iceWanted > 0 ? iceUsed / iceWanted : 0;
-        sys.stockpile.food += sys.hydroponics * t.hydroponicsFoodOutput * ratio;
+        sys.stockpile.food += effDomes * t.hydroponicsFoodOutput * ratio;
       }
       // Production chains (Section 07b): reactors supply power, processors run recipes.
       this.resolveProcessors(sys, efficiency);
@@ -780,17 +1019,19 @@ export class Engine {
    */
   private resolveProcessors(sys: System, efficiency: number): void {
     const t = this.config.tuning;
+    // Processor/reactor/power-grid counts are aggregated across the system's bodies (Section 24).
+    const buildings = systemBuildings(sys);
     // Total power the system's processors want this turn.
     let powerNeed = 0;
-    for (const recipe of t.recipes) powerNeed += (sys.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    for (const recipe of t.recipes) powerNeed += (buildings.processors[recipe.id] ?? 0) * recipe.powerDraw;
     if (powerNeed <= 0) return; // no processors → nothing to power or run
 
     // Baseline power = free baseline + Power Grid upgrades (Section 07c); reactors fill the gap.
-    const baseline = t.basePowerPerSystem + sys.powerGrid * t.infrastructure.powerCapacityPerLevel;
+    const baseline = t.basePowerPerSystem + buildings.powerGrid * t.infrastructure.powerCapacityPerLevel;
     let powerCapacity = baseline;
     const fromReactors = Math.min(
       Math.max(0, powerNeed - baseline),
-      sys.reactors * t.reactorPowerOutput,
+      buildings.reactors * t.reactorPowerOutput,
     );
     if (fromReactors > 0) {
       const h3Want = (fromReactors / t.reactorPowerOutput) * t.reactorHelium3Use;
@@ -800,9 +1041,12 @@ export class Engine {
       powerCapacity += fromReactors * fuelledFrac;
     }
     const powerFactor = Math.max(0, Math.min(1, powerCapacity / powerNeed));
+    // Assembly Lines (Section 28) lift processor output without raising input draw.
+    const owner = this.corps.find((c) => c.id === sys.owner);
+    const factoryOutputMult = owner ? this.mods(owner).factoryOutputMult : 1;
 
     for (const recipe of t.recipes) {
-      const count = sys.processors[recipe.id] ?? 0;
+      const count = buildings.processors[recipe.id] ?? 0;
       if (count <= 0) continue;
       const scale = count * efficiency * powerFactor; // desired throughput
       if (scale <= 0) continue;
@@ -819,7 +1063,7 @@ export class Engine {
         sys.stockpile[res] -= (recipe.inputs[res] ?? 0) * scale * ratio;
       }
       for (const res of Object.keys(recipe.outputs) as Resource[]) {
-        sys.stockpile[res] += (recipe.outputs[res] ?? 0) * scale * ratio;
+        sys.stockpile[res] += (recipe.outputs[res] ?? 0) * scale * ratio * factoryOutputMult;
       }
     }
   }
@@ -874,6 +1118,7 @@ export class Engine {
       const corp = orderMeta.get(fill.order)!.corp;
       const price = fill.clearingPrice;
       const resource = fill.order.resource;
+      const marketEdge = this.mods(corp).marketEdge; // Market Algorithms (Section 28): better fills
 
       if (fill.order.side === "buy") {
         const path = this.galaxy.shortestWarpPath(
@@ -885,7 +1130,7 @@ export class Engine {
         const hops = path.routes.length;
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
         // War aggressors pay a tariff on Exchange trades (Section 23) — imports cost more.
-        const unitCost = (price + this.config.tuning.shippingFeePerHop * hops * shipMult) * (1 + this.warTariffFor(corp.id));
+        const unitCost = (price * (1 - marketEdge) + this.config.tuning.shippingFeePerHop * hops * shipMult) * (1 + this.warTariffFor(corp.id));
         const affordable = Math.min(
           fill.filledQuantity,
           Math.floor(corp.credits / Math.max(0.01, unitCost)),
@@ -925,7 +1170,7 @@ export class Engine {
         const shipMult = this.shippingMultiplier(path.systems, corp.id);
         const shipping = this.config.tuning.shippingFeePerHop * hops * qty * shipMult;
         // War aggressors pay a tariff on Exchange trades (Section 23) — exports earn less.
-        const payout = Math.max(0, (qty * price - shipping) * (1 - this.warTariffFor(corp.id)));
+        const payout = Math.max(0, (qty * price * (1 + marketEdge) - shipping) * (1 - this.warTariffFor(corp.id)));
         const value = qty * this.config.tuning.basePrices[resource];
         this.events.push({
           type: "fill",
@@ -1130,11 +1375,13 @@ export class Engine {
     const t = this.config.tuning;
     let def = sys.defense;
     def += sys.platforms * t.platformDefense;
-    def += sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+    def += buildingTotal(sys, "miningRigs") * t.infrastructure.miningDefenseBonusPerLevel;
     for (const m of sys.megastructures) def += t.megastructures[m].defenseBonus;
     if (sys.hasDepot) def += t.depotDefenseBonus;
     if (sys.owner) def += this.stationedDefense(sys.id, sys.owner);
-    return def;
+    // Hull Plating / Point-Defense research (Section 28) hardens the owner's systems.
+    const owner = this.corps.find((c) => c.id === sys.owner);
+    return owner ? def * this.mods(owner).defenseMult : def;
   }
 
   // ----- War & conquest (Section 23) -----
@@ -1214,7 +1461,7 @@ export class Engine {
       const route = this.galaxy.routeBetween(p.basedAt, target.id);
       if (route && route.charted && route.requiredRange <= attacker.rangeTier) force += p.strength;
     }
-    return force;
+    return force * this.mods(attacker).shipCombatMult; // Fire-Control research (Section 28)
   }
 
   /** A target system's total defensive strength, including allied reinforcement (Section 23). */
@@ -1294,12 +1541,15 @@ export class Engine {
       this.events.push({ type: "pactInvoked", protectorId: ally.id, aggressorId: attacker.id, allyId: defenderId });
       this.log(`  PACT: ${this.name(ally.id)} joins the war against ${this.name(attacker.id)} to defend ${this.name(defenderId)}`);
     }
-    const captured = attackForce >= Math.max(1, defense) * t.captureRatio;
+    // Orbital Dominance research (Section 28, Phase 3) lowers the attacker's capture threshold.
+    const captured = attackForce >= Math.max(1, defense) * t.captureRatio * this.mods(attacker).captureRatioMult;
     if (captured) {
       const prevOwner = this.corps.find((c) => c.id === defenderId);
       if (prevOwner) {
         prevOwner.ownedSystemIds = prevOwner.ownedSystemIds.filter((id) => id !== sys.id);
         for (const ship of prevOwner.ships) if (ship.stationedAt === sys.id) ship.stationedAt = "";
+        // Pillage R&D (Section 28): the conqueror seizes 1–3 random techs the loser holds that it lacks.
+        this.transferTech(prevOwner, attacker);
         if (prevOwner.ownedSystemIds.length === 0) {
           prevOwner.hasCharter = false;
           prevOwner.isFreeOperator = true;
@@ -1337,6 +1587,14 @@ export class Engine {
    * re-bases there — unless the destination is a non-allied rival system, in which case the
    * arriving ships give battle: a win captures and occupies the system, a loss falls back.
    */
+  /** Record that `corp` has fully scouted `sys` (Section 25): grants it richness + reserves intel
+   *  on every deposit there, even in rival territory. Owned systems are always fully known. */
+  private surveyReveal(corp: Corporation, sys: System): void {
+    if (!corp.surveyedSystemIds.includes(sys.id)) corp.surveyedSystemIds.push(sys.id);
+    this.events.push({ type: "build", corpId: corp.id, what: `Survey complete: ${sys.name}`, systemId: sys.id });
+    this.log(`  ${corp.name}'s survey vessel scouts ${sys.name} — full deposit intel acquired`);
+  }
+
   private resolveFleetMovement(): void {
     // Group ships that arrive at the same destination this turn so a fleet fights as one.
     const arrivals = new Map<string, { corp: Corporation; sys: System; ships: Ship[]; attack: boolean }>();
@@ -1364,6 +1622,27 @@ export class Engine {
           arrivals.set(key, g);
           ship.stationedAt = ""; // resolved below
           ship.transit = undefined;
+        } else if (ship.surveyor && sys) {
+          // A survey vessel (Section 25) reaches its target — even in rival space (it never fights).
+          // It scouts the whole system, then flies home; if it can't, it bases where it can.
+          this.surveyReveal(corp, sys);
+          const home = tr.surveyReturnTo;
+          const back = home && home !== dest && this.galaxy.systems.has(home)
+            ? this.galaxy.shortestWarpPath(dest, home, ship.rangeTier)
+            : null;
+          if (back && back.routes.length > 0) {
+            const firstRoute = this.galaxy.routes.get(back.routes[0]!);
+            ship.stationedAt = "";
+            ship.transit = {
+              path: back.systems, routeIds: back.routes, position: 0,
+              segmentTurnsLeft: firstRoute ? firstRoute.transitTime : 1,
+              launchedTurn: this.turn, attack: false, surveyReturnTo: undefined,
+            };
+          } else {
+            // Already home, or no way back — base in own/neutral space, never in a rival's system.
+            ship.stationedAt = sys.owner === corp.id || sys.owner === null ? dest : (home ?? dest);
+            ship.transit = undefined;
+          }
         } else {
           // Peaceful arrival (own/allied/neutral) — re-base here. (A would-be attack on a system
           // that is no longer hostile just becomes a peaceful move.)
@@ -1378,7 +1657,7 @@ export class Engine {
         for (const s of ships) s.stationedAt = sys.id; // target changed hands first — just occupy
         continue;
       }
-      const force = ships.reduce((sum, s) => sum + s.combat, 0);
+      const force = ships.reduce((sum, s) => sum + s.combat, 0) * this.mods(corp).shipCombatMult; // Section 28
       const fallback = sys.routeIds
         .map((rid) => this.galaxy.route(rid))
         .map((r) => (r.a === sys.id ? r.b : r.a))
@@ -1439,67 +1718,190 @@ export class Engine {
     }
   }
 
+  /** The live research modifiers a charter currently enjoys (Section 28). */
+  private mods(corp: Corporation): ResearchMods {
+    return researchMods(corp.research.completed);
+  }
+
+  /** Seize 1–3 random techs the conquered charter holds that the conqueror lacks (Section 28). A
+   *  pillaged tech bypasses choice-group lockouts — you can end up holding both sides of a fork. */
+  private transferTech(from: Corporation, to: Corporation): void {
+    // Secret projects are galaxy-unique and can't be seized or inherited — they stay with their maker.
+    const pool = from.research.completed.filter((id) => !to.research.completed.includes(id) && !SECRET_TECH_IDS.includes(id));
+    if (pool.length === 0) return;
+    const take = Math.min(pool.length, this.rng.int(1, 3));
+    for (let i = 0; i < take; i++) {
+      const id = pool.splice(this.rng.int(0, pool.length - 1), 1)[0]!;
+      to.research.completed.push(id);
+      this.events.push({ type: "research", corpId: to.id, techId: id });
+      this.log(`  ${to.name} seizes research from ${from.name}: ${techById(id)?.name ?? id}`);
+    }
+  }
+
+  /**
+   * Generate research points (Research Labs + populated colonies) and pour them into each charter's
+   * active research project (Section 28). Finished techs move to `completed`; leftover RP banks when
+   * the queue empties. Effects are read live via {@link mods}, so completing a tech needs no apply step.
+   */
+  private resolveResearch(): void {
+    const t = this.config.tuning;
+    for (const corp of this.corps) {
+      const r = corp.research;
+      if (corp.isFreeOperator) { r.banked = 0; continue; }
+      let rp = r.banked;
+      for (const sysId of corp.ownedSystemIds) {
+        const sys = this.galaxy.system(sysId);
+        rp += buildingTotal(sys, "labs") * t.labRpOutput;
+        for (const pop of Object.values(sys.colonyPop)) rp += t.researchPopBase[pop.stage];
+      }
+      while (rp > 0 && r.queue.length > 0) {
+        const id = r.queue[0]!;
+        const tech = techById(id);
+        if (!tech || r.completed.includes(id) || !canResearch(tech, r.completed)) { r.queue.shift(); continue; }
+        // Secret-project race (Phase 3): if a rival already claimed this galaxy-unique tech, the race
+        // is lost — drop it and bank back the RP already invested rather than waste it.
+        if (tech.secret && this.secretOwner(id) !== null) {
+          rp += r.invested[id] ?? 0;
+          delete r.invested[id];
+          r.queue.shift();
+          continue;
+        }
+        const need = tech.rpCost - (r.invested[id] ?? 0);
+        if (rp >= need) {
+          rp -= need;
+          delete r.invested[id];
+          r.queue.shift();
+          r.completed.push(id);
+          // Warp-Drive research raises the charter's range tier (Section 28, Phase 2).
+          if (tech.grantsRangeTier && tech.grantsRangeTier > corp.rangeTier) {
+            corp.rangeTier = tech.grantsRangeTier as typeof corp.rangeTier;
+            if (corp.rangeTier >= 2 && this.metrics.range2Turn[corp.id] === -1) this.metrics.range2Turn[corp.id] = this.turn;
+          }
+          if (id === "nav-wormhole") this.applyWormholeEngineering(corp); // Phase 3 secret-project effect
+          this.events.push({ type: "research", corpId: corp.id, techId: id });
+          this.log(`  ${corp.name} completes research: ${tech.name}${tech.secret ? " (secret project!)" : ""}`);
+        } else {
+          r.invested[id] = (r.invested[id] ?? 0) + rp;
+          rp = 0;
+        }
+      }
+      r.banked = rp; // leftover banks for next turn (e.g. an empty queue)
+    }
+    this.resolveEspionage();
+  }
+
+  /** Which charter (if any) has already completed a galaxy-unique secret project (Section 28, Phase 3). */
+  private secretOwner(techId: string): string | null {
+    for (const c of this.corps) if (c.research.completed.includes(techId)) return c.id;
+    return null;
+  }
+
+  /** Wormhole Engineering (Phase 3): instantly chart every warp lane touching the holder's systems. */
+  private applyWormholeEngineering(corp: Corporation): void {
+    for (const sysId of corp.ownedSystemIds) {
+      for (const rid of this.galaxy.system(sysId).routeIds) {
+        const route = this.galaxy.routes.get(rid);
+        if (route) route.charted = true;
+      }
+    }
+  }
+
+  /** Industrial Espionage (Phase 3): charters with a spy network steal one random tech they lack from
+   *  a random rival that holds it, every few turns. Secret projects can't be stolen (galaxy-unique). */
+  private resolveEspionage(): void {
+    if (this.turn % this.config.tuning.espionageInterval !== 0) return;
+    for (const corp of this.corps) {
+      if (corp.isFreeOperator || !this.mods(corp).stealsTech) continue;
+      const stealable = new Set<string>();
+      for (const rival of this.corps) {
+        if (rival.id === corp.id) continue;
+        for (const id of rival.research.completed) {
+          if (!corp.research.completed.includes(id) && !SECRET_TECH_IDS.includes(id)) stealable.add(id);
+        }
+      }
+      const pool = [...stealable];
+      if (pool.length === 0) continue;
+      const id = pool[this.rng.int(0, pool.length - 1)]!;
+      corp.research.completed.push(id);
+      this.events.push({ type: "research", corpId: corp.id, techId: id });
+      this.log(`  ESPIONAGE: ${corp.name} steals research: ${techById(id)?.name ?? id}`);
+    }
+  }
+
   private resolvePopulationAndUpkeep(): { taxLevied: number } {
     const t = this.config.tuning;
     const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
     let taxLevied = 0;
 
     for (const corp of this.corps) {
+      const rm = this.mods(corp); // research effects (Section 28): upkeep, growth, fleet fuel
       for (const sysId of corp.ownedSystemIds) {
         const sys = this.galaxy.system(sysId);
-        // Mining Rig fortification lowers a system's upkeep (Section 07c).
-        const upkeepFrac = Math.max(0, 1 - sys.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
-        corp.credits -= sys.upkeep * upkeepFrac;
+        // Building counts are aggregated across the system's bodies (Section 24).
+        const buildings = systemBuildings(sys);
+        // Mining Rig fortification lowers a system's upkeep (Section 07c). Upkeep is per-SYSTEM;
+        // Charter Reform research trims it further.
+        const upkeepFrac = Math.max(0, 1 - buildings.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
+        corp.credits -= sys.upkeep * upkeepFrac * rm.upkeepMult;
 
-        // Life support (ice) and food demand scale with population (Section 08).
-        const foodNeed = t.foodNeed[sys.populationStage];
-        const iceNeed = t.iceNeed[sys.populationStage];
-        const food = this.consumeOrImport(corp, sys, "food", foodNeed);
-        const ice = this.consumeOrImport(corp, sys, "ice", iceNeed);
-        const fed = food.met && ice.met;
-        if (!fed) this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
-        // Growth requires LOCAL food (garden/hydroponics/transfer), not emergency
-        // imports: imports keep a colony alive but only local supply lets it thrive.
-        // Habitability gate (Section 21): a population can only take root where there is a
-        // habitable world or an artificial habitat (hydroponics). Dead stars (white dwarf /
-        // neutron) and giant-only systems stay pure industrial outposts unless terraformed.
-        const habitable = systemHasHabitableBody(sys) || sys.hydroponics > 0;
-        const thriving = fed && food.local && habitable;
-
-        // Habitat upgrades raise both tax yield and growth speed (Section 07c); megastructures
-        // (space elevator / ringworld) accelerate growth further (Section 22).
-        const habitatTaxMult = 1 + sys.habitats * t.infrastructure.habitatTaxBonusPerLevel;
+        // Megastructures (space elevator / ringworld) accelerate growth across the whole system.
         const megaGrowth = sys.megastructures.reduce((s, m) => s + t.megastructures[m].growthBonus, 0);
-        const habitatGrowthMult = 1 + sys.habitats * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
 
-        // Tax: a fed, content population pays its charter holder (Sections 08/17).
-        if (fed) {
-          const tax = t.taxPerStage[sys.populationStage] * (1 - sys.unrest) * habitatTaxMult;
-          corp.credits += tax;
-          taxLevied += tax;
-        }
-
-        // Growth vs. unrest (Section 08 food/population loop).
-        if (fed) sys.unrest = Math.max(0, sys.unrest - t.unrestRecoveryPerFedTurn);
-        else sys.unrest = Math.min(1, sys.unrest + t.unrestPerStarvedTurn);
-
-        if (thriving) {
-          sys.populationProgress += t.growthRate[sys.populationStage] * habitatGrowthMult;
-          const idx = stages.indexOf(sys.populationStage);
-          if (sys.populationProgress >= t.growthThreshold && idx < stages.length - 1) {
-            sys.populationStage = stages[idx + 1]!;
-            sys.populationProgress = 0;
-            this.events.push({ type: "growth", corpId: corp.id, systemId: sys.id, newStage: sys.populationStage });
-            this.log(`  ${sys.name} grows to ${sys.populationStage}`);
+        // Per-colony population (Section 24, Phase 4b): each habitable / agri-domed body grows its
+        // own population, feeds from the shared system stockpile, and pays its own tax. Pure
+        // industrial worlds (giants, belts, dead rock) host no people and are skipped.
+        let starvedHere = false;
+        for (const colony of coloniesOf(sys)) {
+          if (!canHostPopulation(colony)) {
+            delete sys.colonyPop[colony.key]; // lost its dome / habitability → no population
+            continue;
           }
-        } else if (!fed) {
-          sys.populationProgress = Math.max(0, sys.populationProgress - 20);
+          const pop = (sys.colonyPop[colony.key] ??= emptyColonyPopulation());
+
+          // Life support (food + ice) scales with this colony's stage; drawn from the shared
+          // warehouse (decision 2a). Colonies are served in orbital order, so local food feeds the
+          // first ones and later colonies fall back to emergency imports if the system runs short.
+          const food = this.consumeOrImport(corp, sys, "food", t.foodNeed[pop.stage]);
+          const ice = this.consumeOrImport(corp, sys, "ice", t.iceNeed[pop.stage]);
+          const fed = food.met && ice.met;
+          if (!fed) starvedHere = true;
+          // Growth needs LOCAL food (the system's own gardens/domes, not emergency imports).
+          const thriving = fed && food.local;
+
+          // This colony's own habitat upgrades raise its tax yield + growth speed (Section 07c).
+          const habs = colony.buildings.habitats;
+          const habitatTaxMult = 1 + habs * t.infrastructure.habitatTaxBonusPerLevel;
+          const habitatGrowthMult = 1 + habs * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
+
+          if (fed) {
+            const tax = t.taxPerStage[pop.stage] * (1 - pop.unrest) * habitatTaxMult * rm.taxMult;
+            corp.credits += tax;
+            taxLevied += tax;
+            pop.unrest = Math.max(0, pop.unrest - t.unrestRecoveryPerFedTurn);
+          } else {
+            pop.unrest = Math.min(1, pop.unrest + t.unrestPerStarvedTurn);
+          }
+
+          if (thriving) {
+            pop.progress += t.growthRate[pop.stage] * habitatGrowthMult * rm.growthMult;
+            const idx = stages.indexOf(pop.stage);
+            if (pop.progress >= t.growthThreshold && idx < stages.length - 1) {
+              pop.stage = stages[idx + 1]!;
+              pop.progress = 0;
+              this.events.push({ type: "growth", corpId: corp.id, systemId: sys.id, newStage: pop.stage });
+              this.log(`  ${colony.bodyLabel} at ${sys.name} grows to ${pop.stage}`);
+            }
+          } else if (!fed) {
+            pop.progress = Math.max(0, pop.progress - 20);
+          }
         }
+        if (starvedHere) this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
+        this.syncSystemPopulation(sys);
       }
 
       // Fleet operation burns fuel each turn (Section 07b): a recurring sink that keeps the
       // fuel market live. Drawn from the corp's stockpiles first, shortfall bought at market.
-      const fuelNeed = corp.ships.length * t.fuelPerShipPerTurn;
+      const fuelNeed = corp.ships.length * t.fuelPerShipPerTurn * rm.shipFuelMult;
       if (fuelNeed > 0) {
         const fuelBill = this.strategicBill(corp, "fuel", fuelNeed);
         this.consumeStrategic(corp, "fuel", fuelNeed);
@@ -1511,6 +1913,30 @@ export class Engine {
       corp.privateers = corp.privateers.filter((p) => p.turnsLeft > 0);
     }
     return { taxLevied };
+  }
+
+  /**
+   * Roll the per-colony populations (Section 24, Phase 4b) up into the legacy system-level fields
+   * (`populationStage` = highest colony, `populationProgress` = that colony's progress, `unrest` =
+   * peak), so valuation, megastructure gating, the client payload, and the system pop-meter keep
+   * working off a single aggregate while the authoritative state lives per body.
+   */
+  private syncSystemPopulation(sys: System): void {
+    const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
+    let best: PopulationStage = "outpost";
+    let bestProgress = 0;
+    let peakUnrest = 0;
+    for (const pop of Object.values(sys.colonyPop)) {
+      if (stages.indexOf(pop.stage) > stages.indexOf(best) ||
+          (stages.indexOf(pop.stage) === stages.indexOf(best) && pop.progress > bestProgress)) {
+        best = pop.stage;
+        bestProgress = pop.progress;
+      }
+      peakUnrest = Math.max(peakUnrest, pop.unrest);
+    }
+    sys.populationStage = best;
+    sys.populationProgress = bestProgress;
+    sys.unrest = peakUnrest;
   }
 
   /**
@@ -1561,12 +1987,17 @@ export class Engine {
         const yieldTotal = RESOURCES.reduce((s, r) => s + ey[r], 0);
         value += yieldTotal * v.perSystemYieldValue;
         value += sys.sites.reduce((s, st) => s + st.extractorLevel, 0) * v.extractorValue;
-        value += v.populationValue[sys.populationStage] * (1 - sys.unrest);
+        // Each populated colony is valued on its own stage (Section 24, Phase 4b): a system with
+        // several habitable worlds is a richer prize than one with a single capital.
+        for (const pop of Object.values(sys.colonyPop)) {
+          value += v.populationValue[pop.stage] * (1 - pop.unrest);
+        }
         if (sys.hasDepot) value += v.depotValue;
-        value += sys.hydroponics * (v.depotValue * 0.25);
-        value += Object.values(sys.processors).reduce((s, n) => s + n, 0) * v.processorValue;
-        value += sys.reactors * v.reactorValue;
-        value += (sys.miningRigs + sys.habitats + sys.powerGrid) * v.infraLevelValue;
+        const buildings = systemBuildings(sys);
+        value += buildings.hydroponics * (v.depotValue * 0.25);
+        value += Object.values(buildings.processors).reduce((s, n) => s + n, 0) * v.processorValue;
+        value += buildings.reactors * v.reactorValue;
+        value += (buildings.miningRigs + buildings.habitats + buildings.powerGrid) * v.infraLevelValue;
         value += sys.platforms * this.config.tuning.platformCost;
         // Megastructures are prestige capital (Section 22).
         for (const m of sys.megastructures) value += this.config.tuning.megastructures[m].valuation;
@@ -1595,7 +2026,8 @@ export class Engine {
         const seller = this.largestHolder(target, corp.id);
         if (!seller) continue;
         const available = target.shareRegister[seller] ?? 0;
-        const price = target.sharePrice;
+        // Hostile Takeover research (Section 28) makes share raids cheaper for the buyer.
+        const price = target.sharePrice * this.mods(corp).acquisitionCostMult;
         const wanted = Math.min(order.shares, available);
         const affordable = Math.min(wanted, Math.floor(corp.credits / Math.max(0.01, price)));
         if (affordable <= 0) continue;
@@ -1618,6 +2050,7 @@ export class Engine {
       if ((target.shareRegister[holder] ?? 0) <= threshold) continue;
       const acquirer = this.corps.find((c) => c.id === holder);
       if (!acquirer || acquirer.id === target.id) continue;
+      this.transferTech(target, acquirer); // inherit 1–3 of the absorbed charter's techs (Section 28, Phase 3)
       this.absorb(acquirer, target);
       acquisitions += 1;
     }
@@ -1761,7 +2194,7 @@ export class Engine {
         // Stationary defense platforms harden the system's tunnel mouths (Section 15).
         def += sys.platforms * this.config.tuning.platformDefense;
         // Mining Rig fortification hardens the system's tunnel mouths (Section 07c).
-        def += sys.miningRigs * this.config.tuning.infrastructure.miningDefenseBonusPerLevel;
+        def += buildingTotal(sys, "miningRigs") * this.config.tuning.infrastructure.miningDefenseBonusPerLevel;
         // Megastructures (orbital station, etc.) harden the system's tunnel mouths (Section 22).
         for (const m of sys.megastructures) def += this.config.tuning.megastructures[m].defenseBonus;
         // Depot patrols harden connected tunnels against raiders (Section 12).
@@ -1779,6 +2212,27 @@ export class Engine {
     let local = 0;
     for (const id of corp.ownedSystemIds) local += this.galaxy.system(id).stockpile[resource];
     return Math.max(0, need - local) * this.market.prices[resource];
+  }
+
+  /** Scale a build's material bill by the charter's Lean-Manufacturing research (Section 28). */
+  private scaleMats(corp: Corporation, costs: Partial<Record<Resource, number>>): Partial<Record<Resource, number>> {
+    const mult = this.mods(corp).buildMaterialsMult;
+    if (mult === 1) return costs;
+    const out: Partial<Record<Resource, number>> = {};
+    for (const [r, n] of Object.entries(costs)) out[r as Resource] = Math.round((n ?? 0) * mult);
+    return out;
+  }
+
+  /** Total exchange cost to cover the shortfall of a multi-resource build bill (Section 27). */
+  private resourceBill(corp: Corporation, costs: Partial<Record<Resource, number>>): number {
+    let total = 0;
+    for (const r of RESOURCES) total += this.strategicBill(corp, r, costs[r] ?? 0);
+    return total;
+  }
+
+  /** Consume a multi-resource build bill from local stockpiles, buying any shortfall (Section 27). */
+  private consumeResources(corp: Corporation, costs: Partial<Record<Resource, number>>): void {
+    for (const r of RESOURCES) this.consumeStrategic(corp, r, costs[r] ?? 0);
   }
 
   /** Consume up to `need` of a build resource from local stockpiles (shortfall is bought). */

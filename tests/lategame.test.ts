@@ -103,7 +103,7 @@ class ShipyardBot implements Bot {
     return { kind: "bid", priorities: bidList(view, (s) => valueSystem(view, s)) };
   }
   decide(view: PlayerView): Order[] {
-    if (view.me.rangeTier < 2) return [{ kind: "researchRange", targetTier: 2 }];
+    if (view.me.rangeTier < 2) return []; // range now comes from research (Section 28); granted in setup
     if (!view.me.ships.some((s) => s.rangeTier === 2)) {
       const sys = view.me.ownedSystemIds[0];
       if (sys) return [{ kind: "buildShip", rangeTier: 2, raider: false, systemId: sys }];
@@ -138,6 +138,7 @@ describe("warships & rare-isotope hulls (Sections 04, 07, 13)", () => {
     const scenario = oneSystem({ rareIsotopes: 5, ice: 4 });
     scenario.tuning = { startingCredits: 20000 };
     const engine = new Engine(loadScenario(scenario), 1, new Map([["noop", () => new ShipyardBot()]]));
+    engine.corps[0]!.rangeTier = 2; // Warp-Drive research is folded into the tree now; grant range directly
     engine.run();
 
     const corp = engine.corps[0]!;

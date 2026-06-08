@@ -1015,6 +1015,188 @@ turn order with no same-turn chaining.
 
 Prototype the first 12 turns as a text or spreadsheet simulation with 4–8 players. Validate the opening auction, first exports, order fill UX, convoy visibility, warp-route traffic history, one-turn route interdiction, privateer economics, and Range 2 expansion before adding the full finance/takeover and Free Operator layers.
 
+## Planets as Colonies
+
+**Section 24.** Building on the Section 21 body-driven economy, planets and asteroid belts become
+first-class **colonies** you develop, and the system becomes a **container** for its bodies, its
+star, and the fleets stationed there — a Master-of-Orion-style colony layer. Buildings are owned by
+a body, not the system: each `System.bodyBuildings` maps a `bodyKey` (`planet:<i>` / `belt:<i>` /
+`star:0`, matching the Section 21 site-key prefixes) to that body's factory/reactor/agri-dome/
+habitat/mining-rig/power-grid counts. The system still holds the **single shared stockpile** its
+colonies fill and its convoys/depot ship from, and population/food/tax/conquest stay system-level —
+so this re-home is balance-neutral by construction (`coloniesOf` is a pure read-model; the engine's
+production, valuation, defense, and upkeep read the same totals via `systemBuildings` /
+`buildingTotal`, just nested one level deeper). Build orders carry an optional `bodyKey`; an order
+without one targets the system's primary body, so older replay logs resolve unchanged.
+
+### Planet-type affinities
+
+A world's **type** now shapes what you build on it, making the colony screen a real decision:
+
+- **Gating** — agri-domes and habitats need a livable surface (rocky / desert / ocean / barren);
+  lava worlds are too hostile; gas/ice giants and belts host only orbital industry (factories,
+  reactors, power grid) and, for belts and solid worlds, mining-rig fortification; the star hosts
+  nothing. (`canBuildOnBody`.)
+- **Farmland** — agri-dome food output scales with the host world: ocean ×1.5, rocky ×1.0,
+  desert ×0.85, barren ×0.65 (`agriFoodMult`), so ocean worlds are the breadbaskets.
+- **Industry** — factory build cost scales with the world: lava ×0.8 and rocky ×0.85 are the cheap
+  metal-rich workshops, belts ×0.9, oceans ×1.2 and orbital-over-giants ×1.1 a premium
+  (`factoryCostMult`).
+
+Bots pick the best valid body per build (domes to the richest farmland, factories to the cheapest
+industrial world). A 100-game / 8-player sweep shows the affinity layer leaves the macro balance
+unchanged (leader/median ≈ 16.9, metals price-floor 0%, food-growth 90%) while making planet variety
+drive build decisions. The colony screen (web `ColonyPanel`) is the management UI: pick a body, work
+its deposits, and build its structures, with a system-wide power meter since reactors/power pool at
+the container.
+
+### Construction queue (Phase 4a)
+
+Colony buildings (factory / reactor / agri-dome / mining-rig / habitat / power-grid) no longer appear
+instantly: ordering one charges its credits + resources up front and appends it to the host body's
+**construction queue** (`System.buildQueues`). Each turn a colony pours `construction.pointsPerTurn`
+(100) into the front item; when its `cpCost` is met the building lands and leftover points roll to
+the next item, so a colony serialises a batch of builds (a factory is ~2 turns, an agri-dome ~1).
+System structures (platforms, depot, megastructures) and per-site extractors stay instant. Charging
+at queue time keeps the economic sink unchanged — only *timing* shifts — and the queue advances
+before new orders each turn, so nothing chains the turn it's ordered. Bots won't re-pay for a build
+that's still in flight. Slowing development slightly **compresses the leader's snowball**: a 100-game
+sweep moves leader/median from ≈16.9 to ≈14.8 with every other risk flag still green.
+
+### Per-planet population (Phase 4b)
+
+Population is now **per colony**, not per system. Each habitable world — or any world given an
+agri-dome — grows its own population (`System.colonyPop`: bodyKey → stage / progress / unrest),
+feeds from the **shared** system warehouse (decision 2a), and **pays its own tax** scaled by its own
+habitat upgrades. Pure-industrial worlds (gas/ice giants, belts, dead rock with no dome) host no
+people. The home system is seeded with exactly one population colony — its habitable world (or, on a
+bodyless legacy map, a synthetic habitat dome). Colonies are fed in orbital order, so a system that
+out-runs its local food sees its outer colonies fall back to emergency imports (which keep them alive
+but not growing). The legacy system-level `populationStage` / `populationProgress` / `unrest` are kept
+as an **aggregate** (highest colony / its progress / peak unrest) so valuation, megastructure gating,
+and the system pop-meter keep working; valuation sums each colony's population value, so **a system
+with several habitable worlds is a genuinely richer prize** than one with a single capital — the
+intended payoff. The colony screen shows each populated world's stage + a growth bar.
+
+This is the deepest change and was swept hardest: a 100-game / 8-player run holds leader/median ≈14.2
+with every risk flag green (metals floor 0%, food-growth 91%, raiding/takeover healthy), so rewarding
+multi-habitable systems did not destabilise the economy.
+
+## Survey Vessels
+
+**Section 25.** Prospecting moves from per-deposit busywork to a **system-level scouting loop**. A
+charter builds an unarmed **survey vessel** (`surveyShipCost`, `Ship.surveyor`) at one of its systems
+and dispatches it to scout any reachable system (`surveySystem` order). The vessel travels the
+cheapest charted path turn-by-turn — reusing the Section 23 mobile-fleet machinery — surveys the
+**whole** target system on arrival (revealing every deposit's richness AND remaining reserves), then
+flies home. A scout never fights, so it can slip into a **rival's** territory for intelligence ahead
+of expansion or invasion; if it can't reach home it bases in the nearest own/neutral system rather
+than stranding in enemy space.
+
+Knowledge is **per-charter fog of war**: a survey records the system in `Corporation.surveyedSystemIds`
+and `buildClientState` reveals that charter's intel only to it — surveying does **not** flip a
+deposit's global "publicly worked" flag, so the intel stays private (unlike a worked deposit, whose
+richness is public to all). A charter always has full intel on systems it **owns**, so the survey
+vessel is purely about scouting *other* systems — frontier worlds you're weighing for a claim, or a
+rival's economy before you move on it. The old per-deposit **assay** action is **removed** entirely:
+owners see their own deposits automatically, and everyone else uses survey vessels. **Bots fly them
+too** — every archetype keeps one scout in its fleet and repeatedly dispatches it to the nearest
+unsurveyed reachable system (`maybeSurvey`); a 42-turn game sees ~130 survey runs across eight
+charters, with scouts criss-crossing into rival space and returning home.
+
+## Construction Materials
+
+**Section 27.** Colony buildings cost **materials as well as credits**, tying the extraction economy to
+development — you spend the metals/silicates/alloys you mine to raise structures. Each colony building
+draws a per-kind bill (`Tuning.buildResources`) from the charter's stockpiles, buying any shortfall at
+the exchange like every other build (so it's a soft requirement, not a hard gate): a **factory** is
+heavy industry (alloys + metals), a **reactor** an alloy shell with silicate shielding (alloys +
+silicates), an **agri-dome** a silicate-and-metal pressure dome (previously it cost credits only).
+Mining-rig / habitat / power-grid upgrades already consumed their scaling raw (metals / silicates /
+helium-3). The colony build menu and order tray show each building's materials alongside its credit
+cost. A 30-game / 8-player sweep stays green (leader/median ≈12, metals price-floor 0%, food-growth
+91%) — the added demand sink mildly compresses the runaway leader.
+
+The colony build menu is **descriptive** (Civ-style): every option spells out what the building does,
+its credit + materials cost, and **how long it takes to raise** — a clear per-kind spread of
+construction turns (agri-dome fast, power-grid / mining-rig quick, habitat moderate, reactor slow,
+factory slowest), with a **factory scaling by its recipe tier** (`constructionCpCost` — a tier-3
+components plant takes twice the turns of a tier-1 refinery). Build time and the queue both read from
+the same `Tuning.construction` points so the UI's "~N turns" matches what the engine resolves.
+
+## Research & Specialization
+
+**Section 28.** Six corporate research **Divisions** (Prospectus / Fabrication / Navigation / Colonial
+/ Security / Acquisitions), each a short tier spine with **pick-one choice nodes**. A charter pools
+**Research Points** from **Research Labs** (a new per-colony building) + populated colonies, and pours
+them into one **active project at a time** with a queue (`setResearch` order). Completed techs' effects
+are read live via `researchMods` (extraction yield/depletion, factory output, construction speed,
+build-material cost, population growth, upkeep, defense, ship combat, fleet fuel, market edge,
+acquisition cost, survey cost — see `research.ts`). The tree is costed so a focused charter finishes
+only **~2 divisions (~5–6 of 15 techs)** in the 42-turn game — you **specialise**, then take what you
+skipped: **conquering a charter seizes 1–3 random techs it held** (and acquisition/espionage routes
+come in later phases). Bots run per-archetype research doctrines so the sim exercises the whole tree.
+A 30-game / 8-player sweep stays green (leader/median ≈14, every flag healthy); per-game completions
+spread ~3–6 per charter, so nobody nears the full tree.
+
+**Phase 2** wires branches into the rest of the game: the **Warp-Drive range ladder is now a
+Navigation research chain** (`grantsRangeTier` — the old credit-bought `researchRange` is gone; range
+competes for RP like everything else, and conquest can even seize a rival's warp tech), **Terraforming**
+(Colonial — a `terraform` order makes a non-habitable owned world habitable so it can grow a
+population), **Capital Shipyards** (Security — Range-5+ hulls 30% cheaper), and **Advanced Metallurgy**
+(Fabrication — megastructures 30% cheaper). Bots open every doctrine with Warp II/III so they still
+reach the frontier; the 30-game sweep stays green (leader/median ≈12, metals floor 0%, food 92%).
+**Phase 3** adds the endgame layer: each division has a galaxy-unique **secret-project** T4 capstone
+(`secret: true`, `SECRET_TECH_IDS`) — once any charter finishes one, no other can (the engine drops a
+lost-race tech and refunds its RP). The six: **Antimatter Containment** (+30% yield), **Nanofabrication**
+(×2 construction, +25% factory), **Wormhole Engineering** (instantly charts every lane touching your
+systems, free charting after), **Arcology** (+50% growth, +40% tax), **Orbital Dominance** (+40% combat,
+easier captures), **Insider Networks** (+10% fills, −40% acquisitions). Plus **Industrial Espionage**
+(steals a random rival tech every few turns) and **tech transfer on acquisition** (absorbing a charter
+inherits 1–3 of its techs, like conquest; secrets never transfer). The Research screen flags secrets and
+shows which rival has claimed each. Capstones are reachable but rare — a focused specialist lands ~1 in
+roughly half of games; the 30-game sweep holds with capstone effects live (leader/median ≈13, all flags
+green).
+
+## Victory & End-Game
+
+**Section 29.** A match needs a climax. Valuation (Section 17) already measures economic strength, but
+a pure-cash crown gives conquest, tech-rush, and wonder strategies no moment of their own — so the
+**final standing is `valuation + prestige`**, where prestige rewards the achievements valuation
+under-counts: charter **systems** held (×`victory.systemPoints`), **techs** unlocked (×`techPoints`),
+galaxy-unique **secret projects** owned (×`secretPoints`, much larger — they are rare and decisive),
+and **megastructures** raised (×`megastructurePoints`, on top of their valuation). `computeOutcome`
+(`standings.ts`) is a pure, deterministic read-model over engine state — identical on simulator,
+worker, and browser — so a finished game's result is reproducible from its seed like everything else.
+Ranking breaks exact ties by valuation, then corpId.
+
+**How you win.** The category that carries the winner's lead *names* the victory:
+
+- **Market Dominance** (`economic`) — the default crown: outvalue every rival.
+- **Conquest** — hold the most chartered systems (sole leader, by a clear margin); take them by war.
+- **Technological Ascendancy** — research deepest and claim a galaxy-unique secret project.
+- **Galactic Wonder** — raise the most megastructures.
+- **Monopoly** — a *decisive early win*: the moment exactly one charter outlasts all rivals (the rest
+  collapsed to Free Operators) on or after `victory.monopolyMinTurn`, the game ends on the spot and
+  that charter wins regardless of score.
+
+The game is **over** at the turn limit *or* on a decisive monopoly (`outcome.over` — the worker ends
+the DB game on either, not just the turn count). The client serves the live `GameOutcome`
+(`ClientState.outcome`) every turn, so the **Standings** screen is a running scoreboard all game, and
+on the final turn it leads with the winner and how they won (the `OverModal` echoes it). Scoring is a
+read-model only — it changes no resolution, so the balance sweep is unaffected.
+
+**Bots play the victory race.** `strategicPosture` (`bots/strategy.ts`) reads the same live standings
+to decide each bot's posture: its rank/path, and whether one rival is *winning* and should be ganged
+up on. Coalition warfare now keys off the **victory score** (the score leader closing on a win — a
+commanding lead, the late game, or a looming two-charter monopoly), not raw valuation, so conquest
+targeting, alliance avoidance, and raider sabotage all converge on whoever is actually about to win.
+Bots also run the secret-project race adaptively — `maybeResearch` abandons a galaxy-unique capstone
+a rival has already locked and retargets to the best *reachable open* secret in a division it has
+invested in. The effect is empty seats that read as real rivals and a coalition that curbs runaway
+leaders: a 30-game / 8-player sweep improves leader/median (~13 → ~12.8) with every other flag green,
+while the victory-type spread stays varied (technology / monopoly / conquest / economic all firing).
+
 ◆ END OF DOSSIER ◆
 
 STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  

@@ -51,6 +51,11 @@ export type TurnEvent =
       systemId?: string;
     }
   | {
+      type: "research";
+      corpId: string;
+      techId: string;
+    }
+  | {
       type: "growth";
       corpId: string;
       systemId: string;

@@ -5,7 +5,9 @@
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
 import { MAX_RANGE_TIER, MEGASTRUCTURE_KINDS, RESOURCES, type MegastructureKind, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
-import { EXTRACTOR_CAP, effectiveYields, potentialYields } from "../bodies.js";
+import { EXTRACTOR_CAP, effectiveYields, potentialYields, systemBuildings, buildingTotal, coloniesOf, canBuildOnBody, agriFoodMult, factoryCostMult, type BuildingKind } from "../bodies.js";
+import { computeOutcome, type VictoryPath } from "../standings.js";
+import { SECRET_TECH_IDS, canResearch, techById, RESEARCH_TREE } from "../research.js";
 import type { PlayerView } from "./bot.js";
 
 /** Current per-turn output of a system (worked sites, net of depletion/stellar). */
@@ -28,6 +30,26 @@ const RAW_RESOURCES: ReadonlySet<Resource> = new Set<Resource>([
 
 /** Cap on Processor modules of a given recipe per system (bot self-restraint). */
 const PROCESSOR_CAP_PER_RECIPE = 3;
+
+/** Pick the best body in a system to host a building of `kind` (Section 24 type affinities):
+ *  agri-domes go to the richest farmland (ocean), factories to the cheapest industrial world
+ *  (rocky/lava/belt). Returns null when no body can host it (e.g. agri on a giant-only system). */
+function pickBuildBody(sys: System, kind: BuildingKind): string | null {
+  const cands = coloniesOf(sys).filter((c) => canBuildOnBody(kind, c.bodyType));
+  if (cands.length === 0) return null;
+  if (kind === "agridome") cands.sort((a, b) => agriFoodMult(b.bodyType) - agriFoodMult(a.bodyType));
+  else if (kind === "factory") cands.sort((a, b) => factoryCostMult(a.bodyType) - factoryCostMult(b.bodyType));
+  return cands[0]!.key;
+}
+
+/** True if a build of `kind` is already in any of the system's queues (Section 24, Phase 4a) — used
+ *  so bots don't re-pay for a building that's still under construction. */
+function alreadyQueued(sys: System, kinds: BuildingKind[]): boolean {
+  for (const q of Object.values(sys.buildQueues ?? {})) {
+    for (const item of q) if (kinds.includes(item.kind)) return true;
+  }
+  return false;
+}
 
 /** Rough commercial value of a system: full-development yield priced at base, minus claim cost.
  *  Uses *potential* output so an unclaimed system (whose deposits aren't worked yet) is valued
@@ -91,9 +113,12 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
   // the raws are carried into next turn's upgrade phase instead of dumped on the market. This is
   // what lets the upgrade sink actually fire — and selling less also lifts the raw's price.
   const owned = view.me.ownedSystemIds.map((id) => view.galaxy.system(id));
-  const miningHeadroom = owned.some((s) => s.miningRigs < inf.cap);
-  const habitatHeadroom = owned.some((s) => s.populationStage !== "outpost" && s.habitats < inf.cap);
-  const powerHeadroom = owned.some((s) => Object.values(s.processors).some((n) => n > 0) && s.powerGrid < inf.cap);
+  const miningHeadroom = owned.some((s) => buildingTotal(s, "miningRigs") < inf.cap);
+  const habitatHeadroom = owned.some((s) => s.populationStage !== "outpost" && buildingTotal(s, "habitats") < inf.cap);
+  const powerHeadroom = owned.some((s) => {
+    const b = systemBuildings(s);
+    return Object.values(b.processors).some((n) => n > 0) && b.powerGrid < inf.cap;
+  });
   // Megastructures (Section 22) are huge metal sinks: once a system can host one, hold a large
   // metals reserve back from the exchange to fund construction instead of dumping at the floor.
   const megaHeadroom =
@@ -107,7 +132,7 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
       let reserve = buffer;
       if (r === "food") reserve = Math.max(buffer, t.foodNeed[sys.populationStage] * 2);
       if (r === "ice") {
-        reserve = Math.max(buffer, t.iceNeed[sys.populationStage] * 2 + sys.hydroponics * t.hydroponicsIceUse * 2);
+        reserve = Math.max(buffer, t.iceNeed[sys.populationStage] * 2 + buildingTotal(sys, "hydroponics") * t.hydroponicsIceUse * 2);
       }
       // Keep a few rare isotopes back to build higher-tier warships once Range 2+,
       // but still sell the surplus (frontier income funds those hulls).
@@ -157,12 +182,15 @@ export function maybeBuildHydroponics(view: PlayerView): Order[] {
   if (view.me.credits < view.config.tuning.hydroponicsCost * 1.5) return [];
   for (const id of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(id);
-    if (sys.hydroponics >= 4) continue; // cap modules per system
+    if (alreadyQueued(sys, ["agridome"])) continue; // one agri-dome in flight per system (Phase 4a)
+    const hydroponics = buildingTotal(sys, "hydroponics");
+    if (hydroponics >= 4) continue; // cap modules per system
     const need = view.config.tuning.foodNeed[sys.populationStage];
-    const localFood = liveYields(view, sys).food + sys.hydroponics * view.config.tuning.hydroponicsFoodOutput;
+    const localFood = liveYields(view, sys).food + hydroponics * view.config.tuning.hydroponicsFoodOutput;
     // A colony that can't feed itself locally — local food is what unlocks growth now.
     if (need > 0 && localFood < need) {
-      return [{ kind: "buildHydroponics", systemId: id }];
+      const bodyKey = pickBuildBody(sys, "agridome"); // best farmland (ocean) — Section 24
+      if (bodyKey) return [{ kind: "buildHydroponics", systemId: id, bodyKey }];
     }
   }
   return [];
@@ -186,7 +214,7 @@ function systemCanFeed(view: PlayerView, sys: System, recipe: { inputs: Partial<
       if ((live[res] ?? 0) <= 0) return false;
     } else {
       const producer = recipeProducing(view, res);
-      if (!producer || (sys.processors[producer.id] ?? 0) <= 0) return false;
+      if (!producer || (systemBuildings(sys).processors[producer.id] ?? 0) <= 0) return false;
     }
   }
   return true;
@@ -200,9 +228,11 @@ export function maybeBuildProcessor(view: PlayerView): Order[] {
     if (view.me.credits < recipe.buildCost * 1.4) continue;
     for (const id of view.me.ownedSystemIds) {
       const sys = view.galaxy.system(id);
-      if ((sys.processors[recipe.id] ?? 0) >= PROCESSOR_CAP_PER_RECIPE) continue;
+      if ((systemBuildings(sys).processors[recipe.id] ?? 0) >= PROCESSOR_CAP_PER_RECIPE) continue;
+      if (alreadyQueued(sys, ["factory"])) continue; // one factory in flight per system (Phase 4a)
       if (!systemCanFeed(view, sys, recipe)) continue;
-      return [{ kind: "buildProcessor", systemId: id, recipeId: recipe.id }];
+      const bodyKey = pickBuildBody(sys, "factory"); // cheapest industrial world — Section 24
+      return [{ kind: "buildProcessor", systemId: id, recipeId: recipe.id, ...(bodyKey ? { bodyKey } : {}) }];
     }
   }
   return [];
@@ -214,11 +244,16 @@ export function maybeBuildReactor(view: PlayerView): Order[] {
   if (view.me.credits < t.reactorCost * 1.4) return [];
   for (const id of view.me.ownedSystemIds) {
     const sys = view.galaxy.system(id);
+    const buildings = systemBuildings(sys);
     let draw = 0;
-    for (const recipe of t.recipes) draw += (sys.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    for (const recipe of t.recipes) draw += (buildings.processors[recipe.id] ?? 0) * recipe.powerDraw;
     if (draw <= 0) continue;
-    const capacity = t.basePowerPerSystem + sys.reactors * t.reactorPowerOutput;
-    if (capacity < draw) return [{ kind: "buildReactor", systemId: id }];
+    if (alreadyQueued(sys, ["reactor"])) continue; // don't stack reactors while one builds (Phase 4a)
+    const capacity = t.basePowerPerSystem + buildings.reactors * t.reactorPowerOutput;
+    if (capacity < draw) {
+      const bodyKey = pickBuildBody(sys, "reactor");
+      return [{ kind: "buildReactor", systemId: id, ...(bodyKey ? { bodyKey } : {}) }];
+    }
   }
   return [];
 }
@@ -254,8 +289,8 @@ function depositInvestmentFactor(view: PlayerView, sys: System, site: System["si
  * Develop the corp's deposits (Section 21): build extractors on the highest-value workable
  * sites across owned systems, climbing toward the cap. This is the core mid-game build loop —
  * a claimed system only pays out once its deposits are worked, so this runs early and often.
- * Bots see true geology (the fog is only for human clients), so they don't assay — they weigh
- * richness, accessibility, depletion, and stellar dynamics directly.
+ * Bots see true geology (the fog is only for human clients), so they weigh richness, accessibility,
+ * depletion, and stellar dynamics directly.
  */
 export function maybeBuildExtractor(view: PlayerView): Order[] {
   const t = view.config.tuning;
@@ -293,6 +328,8 @@ export function maybeBuildExtractor(view: PlayerView): Order[] {
  */
 export function maybeSabotage(view: PlayerView): Order[] {
   if (!view.me.ships.some((s) => s.raider) && view.me.privateers.length === 0) return [];
+  const threat = strategicPosture(view).threatId;
+  const cands: { sys: System; siteKey: string; richness: number }[] = [];
   for (const sys of view.galaxy.allSystems()) {
     if (sys.owner === null || sys.owner === view.me.id) continue;
     const reachable =
@@ -308,9 +345,17 @@ export function maybeSabotage(view: PlayerView): Order[] {
       .filter((s) => s.extractorLevel > 0 && s.disabledUntil <= view.turn)
       .sort((a, b) => b.richness - a.richness)[0];
     if (!worked) continue;
-    return [{ kind: "sabotage", systemId: sys.id, siteKey: worked.key }];
+    cands.push({ sys, siteKey: worked.key, richness: worked.richness });
   }
-  return [];
+  if (cands.length === 0) return [];
+  // Kneecap whoever is winning first (Section 29 coalition play); otherwise the richest extractor.
+  cands.sort((a, b) => {
+    const at = a.sys.owner === threat ? 1 : 0;
+    const bt = b.sys.owner === threat ? 1 : 0;
+    return bt - at || b.richness - a.richness;
+  });
+  const pick = cands[0]!;
+  return [{ kind: "sabotage", systemId: pick.sys.id, siteKey: pick.siteKey }];
 }
 
 const STAGE_ORDER = ["outpost", "settlement", "colony", "city", "metropolis"];
@@ -431,7 +476,7 @@ function attackForceOn(view: PlayerView, sys: System): number {
 /** Estimate a system's defensive strength (mirrors the engine, incl. allied reinforcement). */
 function systemDefenseEstimate(view: PlayerView, sys: System): number {
   const t = view.config.tuning;
-  let d = sys.defense + sys.platforms * t.platformDefense + sys.miningRigs * t.infrastructure.miningDefenseBonusPerLevel;
+  let d = sys.defense + sys.platforms * t.platformDefense + buildingTotal(sys, "miningRigs") * t.infrastructure.miningDefenseBonusPerLevel;
   for (const m of sys.megastructures) d += t.megastructures[m].defenseBonus;
   if (sys.hasDepot) d += t.depotDefenseBonus;
   for (const owner of view.corporations) {
@@ -498,14 +543,52 @@ function buildWarshipAt(view: PlayerView, systemId: string): Order[] {
   return [];
 }
 
-/** The dominant rival (the hegemon) the galaxy should gang up on, if one stands clearly above. */
+/** A bot's read of the victory race (Section 29): where it stands and who, if anyone, is winning. */
+export interface Posture {
+  /** 1-based rank by victory score. */
+  myRank: number;
+  amLeader: boolean;
+  /** The victory path this corp is currently best positioned for (flavour + steering). */
+  myPath: VictoryPath;
+  /** The rival the field should coordinate against: the clear score leader, esp. near a win. */
+  threatId?: string;
+  /** That threat is closing on an outright win (commanding lead, late game, or a looming monopoly). */
+  threatUrgent: boolean;
+}
+
+/**
+ * Read the live standings the same way the end-game does (Section 29) and decide this bot's posture:
+ * its rank/path, and — crucially — whether one rival is *winning* and should be ganged up on. Driving
+ * coalition warfare off the real victory score (not raw valuation) makes bots play to deny a win, which
+ * both reads as smarter and curbs runaway leaders. Threat detection waits a few turns so early-game
+ * score noise doesn't trigger a phantom hegemon.
+ */
+export function strategicPosture(view: PlayerView): Posture {
+  const o = computeOutcome(view.corporations, view.galaxy, view.config.tuning, view.turn, view.config.turns);
+  const meRow = o.standings.find((s) => s.corpId === view.me.id);
+  const leader = o.standings[0];
+  const second = o.standings[1];
+  const charters = o.standings.filter((s) => s.hasCharter);
+  const posture: Posture = {
+    myRank: meRow?.rank ?? o.standings.length,
+    amLeader: leader?.corpId === view.me.id,
+    myPath: meRow?.path ?? "economic",
+    threatUrgent: false,
+  };
+  if (view.turn >= 8 && leader && leader.corpId !== view.me.id && leader.hasCharter) {
+    const lead = leader.score / Math.max(1, second?.score ?? 1);
+    const turnsLeft = view.config.turns - view.turn;
+    if (lead >= 1.35 || (charters.length <= 2 && leader.hasCharter)) posture.threatId = leader.corpId;
+    if (posture.threatId && (lead >= 1.7 || turnsLeft <= 8 || charters.length <= 2 || leader.secrets >= 1)) {
+      posture.threatUrgent = true;
+    }
+  }
+  return posture;
+}
+
+/** The dominant rival the galaxy should gang up on (the score leader closing on a win), if any. */
 function hegemonId(view: PlayerView): string | undefined {
-  const charters = view.corporations.filter((c) => c.hasCharter && c.ownedSystemIds.length > 0);
-  if (charters.length < 3) return undefined;
-  const vals = charters.map((c) => c.valuation).sort((a, b) => a - b);
-  const median = vals[Math.floor(vals.length / 2)] ?? 0;
-  const top = charters.reduce((m, c) => (c.valuation > m.valuation ? c : m));
-  return top.id !== view.me.id && top.valuation > Math.max(1, median) * 1.6 ? top.id : undefined;
+  return strategicPosture(view).threatId;
 }
 
 /** Pick (and persist) a valuable, reachable rival system worth conquering — favouring grudges
@@ -619,25 +702,31 @@ export function maybeUpgradeInfrastructure(view: PlayerView): Order[] {
     rawBase: number,
   ): void => {
     if (level >= inf.cap) return;
+    // Habitats need a livable world, mining rigs a solid one (Section 24) — skip if none can host it.
+    const kind: BuildingKind = track === "mining" ? "mining" : track === "habitat" ? "habitat" : "power";
+    if (alreadyQueued(sys, [kind])) return; // don't re-queue a track that's already building (Phase 4a)
+    const bodyKey = pickBuildBody(sys, kind);
+    if (!bodyKey) return;
     const factor = level + 1; // cost scales with the level being reached
     const cost = creditBase * factor;
     const need = rawBase * factor;
     if (budget < cost || stock[raw] < need) return;
     budget -= cost;
     stock[raw] -= need;
-    orders.push({ kind: "upgradeInfrastructure", systemId: sys.id, track });
+    orders.push({ kind: "upgradeInfrastructure", systemId: sys.id, track, bodyKey });
   };
 
   for (const sys of systems) {
     if (orders.length >= 5) break; // a handful of upgrades per turn is plenty
+    const buildings = systemBuildings(sys);
     if (grossYieldValue(view, sys) > 0) {
-      tryUpgrade(sys, "mining", sys.miningRigs, "metals", inf.miningCreditCost, inf.miningMetalsCost);
+      tryUpgrade(sys, "mining", buildings.miningRigs, "metals", inf.miningCreditCost, inf.miningMetalsCost);
     }
     if (sys.populationStage !== "outpost") {
-      tryUpgrade(sys, "habitat", sys.habitats, "silicates", inf.habitatCreditCost, inf.habitatSilicatesCost);
+      tryUpgrade(sys, "habitat", buildings.habitats, "silicates", inf.habitatCreditCost, inf.habitatSilicatesCost);
     }
-    if (Object.values(sys.processors).some((n) => n > 0)) {
-      tryUpgrade(sys, "power", sys.powerGrid, "helium3", inf.powerCreditCost, inf.powerHelium3Cost);
+    if (Object.values(buildings.processors).some((n) => n > 0)) {
+      tryUpgrade(sys, "power", buildings.powerGrid, "helium3", inf.powerCreditCost, inf.powerHelium3Cost);
     }
   }
   return orders;
@@ -737,26 +826,6 @@ export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
  * Earliest turn a corp will reach for each range tier (keeps fleets advancing). The eight-tier
  * ladder is paced to fit the 42-turn arc, so aggressive corps can climb to capital hulls late.
  */
-const RANGE_MIN_TURN: Record<number, number> = {
-  2: 6, 3: 11, 4: 16, 5: 21, 6: 26, 7: 30, 8: 34,
-};
-
-/**
- * Climb the range-tech ladder one tier at a time (Section 04). Reaching Range 2 opens
- * the frontier; Range 3–8 unlock progressively stronger hulls and the longest, deepest
- * warp tunnels so fleets don't stall.
- */
-export function maybeResearchRange(view: PlayerView): Order[] {
-  const next = (view.me.rangeTier + 1) as RangeTier;
-  if (next > MAX_RANGE_TIER) return [];
-  const cost = view.config.tuning.rangeResearchCost[next];
-  const minTurn = RANGE_MIN_TURN[next] ?? 99;
-  if (view.turn >= minTurn && view.me.credits > cost * 1.3) {
-    return [{ kind: "researchRange", targetTier: next }];
-  }
-  return [];
-}
-
 /** Gross full-development export value of a system priced at base (potential, not current). */
 function grossYieldValue(view: PlayerView, sys: System): number {
   const pot = potentialYields(sys);
@@ -779,6 +848,111 @@ export function maybeExpand(view: PlayerView): Order[] {
   // Keep a working buffer above the claim cost so upkeep doesn't bankrupt the corp.
   if (view.me.credits < best.sys.claimCost + 1000) return [];
   return [{ kind: "claim", systemId: best.sys.id, amount: best.sys.claimCost }];
+}
+
+/** Per-archetype research doctrines (Section 28): the ordered tech queue a bot pursues. Each leans
+ *  into ~2 divisions matching its play, so the sim exercises the whole tree and bots specialise too. */
+export const RESEARCH_PLANS: Record<string, string[]> = {
+  // Every doctrine opens with Warp Drive II/III (range fuels expansion + reach), then leans into ~2
+  // divisions. Range now comes from research (Section 28 Phase 2), so it's part of the queue.
+  miner: ["nav-warp2", "pro-extractors", "nav-warp3", "pro-deepcore", "nav-warp4", "fab-assembly", "fab-lean", "col-habitat", "pro-antimatter"],
+  balanced: ["nav-warp2", "fab-assembly", "fab-modular", "nav-warp3", "col-habitat", "col-charter", "fab-metallurgy", "acq-algorithms", "col-terraform", "col-arcology"],
+  raider: ["nav-warp2", "acq-algorithms", "acq-takeover", "acq-insider", "acq-espionage", "nav-warp3", "sec-plating", "sec-firecontrol"],
+  warlord: ["nav-warp2", "sec-plating", "nav-warp3", "sec-firecontrol", "nav-warp4", "nav-warp5", "sec-capital", "sec-orbital", "pro-extractors"],
+  hybrid: ["nav-warp2", "fab-assembly", "nav-warp3", "fab-modular", "fab-metallurgy", "pro-extractors", "fab-nanofab"],
+};
+
+/** Fund research (Section 28): keep a few Research Labs going and steer the tech queue by doctrine. */
+export function maybeResearch(view: PlayerView, plan: string[] | undefined): Order[] {
+  const me = view.me;
+  if (!plan || me.isFreeOperator || !me.hasCharter || me.ownedSystemIds.length === 0) return [];
+  const orders: Order[] = [];
+
+  // Keep up to one lab per owned system; build when cash allows and none is already in flight.
+  const owned = me.ownedSystemIds.map((id) => view.galaxy.system(id));
+  const labs = owned.reduce((n, s) => n + buildingTotal(s, "labs"), 0);
+  const labQueued = owned.some((s) => Object.values(s.buildQueues ?? {}).some((q) => q.some((it) => it.kind === "lab")));
+  if (labs < me.ownedSystemIds.length && !labQueued && me.credits > view.config.tuning.labCost * 4) {
+    const sys = owned[0]!;
+    const body = pickBuildBody(sys, "lab");
+    if (body) orders.push({ kind: "buildLab", systemId: sys.id, bodyKey: body });
+  }
+
+  // (Re)set the research queue only when it drifts from the doctrine (e.g. after a tech completes).
+  const desired = adaptSecretRace(view, plan.filter((id) => !me.research.completed.includes(id)));
+  const cur = me.research.queue;
+  const same = desired.length === cur.length && desired.every((id, i) => cur[i] === id);
+  if (!same && desired.length > 0) orders.push({ kind: "setResearch", queue: desired });
+  return orders;
+}
+
+/** Secret capstones already locked by some other charter (a lost galaxy-unique race — Section 28). */
+function rivalLockedSecrets(view: PlayerView): Set<string> {
+  const locked = new Set<string>();
+  for (const c of view.corporations) {
+    if (c.id === view.me.id) continue;
+    for (const id of c.research.completed) if (SECRET_TECH_IDS.includes(id)) locked.add(id);
+  }
+  return locked;
+}
+
+/**
+ * Don't pour RP into a secret a rival already owns (it's galaxy-unique). Drop any locked capstone from
+ * the doctrine tail and, if the bot is still in the race, retarget to the best *open* secret it can
+ * actually reach — preferring a division it has already invested in. Keeps the tech race live instead
+ * of stubbornly chasing a lost project.
+ */
+function adaptSecretRace(view: PlayerView, desired: string[]): string[] {
+  const locked = rivalLockedSecrets(view);
+  const nonSecret = desired.filter((id) => !SECRET_TECH_IDS.includes(id));
+  const myOpenSecret = desired.find((id) => SECRET_TECH_IDS.includes(id) && !locked.has(id));
+  if (myOpenSecret) return desired; // current target still winnable — leave the plan as-is
+  if (!desired.some((id) => SECRET_TECH_IDS.includes(id))) return desired; // doctrine queued no secret
+
+  // Our planned capstone got sniped — find a reachable replacement (prereqs met by what we'll have).
+  const willHave = [...view.me.research.completed, ...nonSecret];
+  const myDivCounts: Record<string, number> = {};
+  for (const id of view.me.research.completed) {
+    const t = techById(id);
+    if (t) myDivCounts[t.division] = (myDivCounts[t.division] ?? 0) + 1;
+  }
+  const replacement = RESEARCH_TREE
+    .filter((t) => t.secret && !locked.has(t.id) && !view.me.research.completed.includes(t.id))
+    .filter((t) => canResearch(t, willHave))
+    .sort((a, b) => (myDivCounts[b.division] ?? 0) - (myDivCounts[a.division] ?? 0))[0];
+  return replacement ? [...nonSecret, replacement.id] : nonSecret;
+}
+
+/**
+ * Operate a survey vessel (Section 25): keep one unarmed scout in the fleet and send it to chart the
+ * deposit intel of the nearest reachable system the charter hasn't surveyed yet (frontier worlds it
+ * might claim, or a rival's economy it might move on). The scout returns home on its own after each
+ * run, so this re-dispatches it whenever it's idle.
+ */
+export function maybeSurvey(view: PlayerView): Order[] {
+  const me = view.me;
+  if (me.isFreeOperator || !me.hasCharter || me.ownedSystemIds.length === 0) return [];
+  const t = view.config.tuning;
+  const scouts = me.ships.filter((s) => s.surveyor);
+
+  // Send an idle scout to the cheapest-to-reach system we neither own nor have surveyed.
+  const idle = scouts.find((s) => !s.transit && s.stationedAt);
+  if (idle) {
+    const known = new Set([...me.ownedSystemIds, ...me.surveyedSystemIds]);
+    const target = view.galaxy
+      .allSystems()
+      .filter((s) => s.id !== view.galaxy.hubId && s.id !== idle.stationedAt && !known.has(s.id))
+      .map((s) => ({ s, path: view.galaxy.shortestWarpPath(idle.stationedAt, s.id, idle.rangeTier) }))
+      .filter((e) => e.path && e.path.routes.length > 0)
+      .sort((a, b) => a.path!.transitTime - b.path!.transitTime)[0];
+    if (target) return [{ kind: "surveySystem", fromSystemId: idle.stationedAt, targetSystemId: target.s.id }];
+  }
+
+  // Otherwise keep exactly one survey vessel in the fleet, built once the corp can spare the cash.
+  if (scouts.length === 0 && me.credits > t.surveyShipCost * 4) {
+    return [{ kind: "buildSurveyShip", systemId: me.ownedSystemIds[0]! }];
+  }
+  return [];
 }
 
 /**

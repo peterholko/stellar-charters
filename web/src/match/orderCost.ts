@@ -1,5 +1,13 @@
-import type { Order, PlayerView } from "@engine";
-import { resourceLabels } from "./format";
+import { bodyTypeOfKey, factoryCostMult, primaryBodyKey, type Order, type PlayerView } from "@engine";
+import { megastructureLabel, resourceLabels } from "./format";
+
+/** "8 alloys + 6 metals" — materials a build consumes besides credits (Section 27). */
+function mats(costs: Record<string, number | undefined>): string {
+  return Object.entries(costs)
+    .filter(([, n]) => (n ?? 0) > 0)
+    .map(([r, n]) => `${n} ${(resourceLabels[r as keyof typeof resourceLabels] ?? r).toLowerCase()}`)
+    .join(" + ");
+}
 
 export type OrderTone = "build" | "trade" | "raid" | "finance" | "research" | "claim";
 
@@ -84,11 +92,11 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
         warn: order.rangeTier > view.me.rangeTier ? `Needs Range ${order.rangeTier} tech` : undefined,
       };
     }
-    case "researchRange":
+    case "terraform":
       return {
-        label: `Research Range ${order.targetTier}`,
-        detail: "unlock deeper warp drives",
-        cost: t.rangeResearchCost[order.targetTier],
+        label: "Terraform world",
+        detail: `make a world at ${name(order.systemId)} habitable`,
+        cost: t.terraformCost,
         tone: "research",
       };
     case "hirePrivateer":
@@ -107,9 +115,60 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
     case "buildDepot":
       return { label: "Build Trade Depot", detail: `at ${name(order.systemId)}`, cost: t.depotCost, tone: "build" };
     case "buildHydroponics":
-      return { label: "Build hydroponics", detail: `at ${name(order.systemId)}`, cost: t.hydroponicsCost, tone: "build" };
+      return { label: "Build agri-dome", detail: `at ${name(order.systemId)} · ${mats(t.buildResources.agridome)}`, cost: t.hydroponicsCost, tone: "build" };
+    case "buildProcessor": {
+      const recipe = t.recipes.find((r) => r.id === order.recipeId);
+      const sys = g.systems.get(order.systemId);
+      const mult = sys ? factoryCostMult(bodyTypeOfKey(sys, order.bodyKey ?? primaryBodyKey(sys))) : 1;
+      return {
+        label: `Build ${order.recipeId} factory`,
+        detail: `at ${name(order.systemId)} · ${mats(t.buildResources.factory)}`,
+        cost: Math.round((recipe?.buildCost ?? 0) * mult),
+        tone: "build",
+      };
+    }
+    case "buildReactor":
+      return { label: "Build reactor", detail: `at ${name(order.systemId)} · ${mats(t.buildResources.reactor)}`, cost: t.reactorCost, tone: "build" };
+    case "buildLab":
+      return { label: "Build research lab", detail: `at ${name(order.systemId)} · ${mats(t.buildResources.lab)}`, cost: t.labCost, tone: "research" };
+    case "setResearch":
+      return { label: "Set research queue", detail: `${order.queue.length} project${order.queue.length === 1 ? "" : "s"} queued`, cost: 0, tone: "research" };
+    case "upgradeInfrastructure": {
+      const inf = t.infrastructure;
+      const trackLabel = order.track === "mining" ? "Mining rig" : order.track === "habitat" ? "Habitat" : "Power grid";
+      const creditBase = order.track === "mining" ? inf.miningCreditCost : order.track === "habitat" ? inf.habitatCreditCost : inf.powerCreditCost;
+      const rawLabel = order.track === "mining" ? "metals" : order.track === "habitat" ? "silicates" : "helium-3";
+      const rawBase = order.track === "mining" ? inf.miningMetalsCost : order.track === "habitat" ? inf.habitatSilicatesCost : inf.powerHelium3Cost;
+      return {
+        label: `Upgrade ${trackLabel}`,
+        detail: `at ${name(order.systemId)} · ${rawBase}+ ${rawLabel}`,
+        cost: creditBase,
+        tone: "build",
+      };
+    }
     case "buildPlatform":
       return { label: "Build defense platform", detail: `at ${name(order.systemId)}`, cost: t.platformCost, tone: "build" };
+    case "buildSurveyShip":
+      return { label: "Build survey vessel", detail: `at ${name(order.systemId)} — an unarmed scout`, cost: t.surveyShipCost, tone: "build" };
+    case "surveySystem":
+      return {
+        label: `Survey ${name(order.targetSystemId)}`,
+        detail: `dispatch a survey vessel from ${name(order.fromSystemId)} — reveals its deposits`,
+        cost: 0,
+        tone: "build",
+      };
+    case "buildExtractor": {
+      const site = g.systems.get(order.systemId)?.sites.find((s) => s.key === order.siteKey);
+      const res = site ? resourceLabels[site.resource] : "deposit";
+      const lvl = site?.extractorLevel ?? 0;
+      const factor = (lvl + 1) * (1 + (1 - (site?.accessibility ?? 1)) * t.extractor.accessibilityMult);
+      return {
+        label: lvl > 0 ? `Deepen ${res} extractor` : `Build ${res} extractor`,
+        detail: `at ${name(order.systemId)} · Lv ${lvl}→${lvl + 1} · ${t.extractor.alloyCost} alloys`,
+        cost: Math.round(t.extractor.buildCost * factor),
+        tone: "build",
+      };
+    }
     case "buyShares": {
       const target = view.corporations.find((c) => c.id === order.targetId);
       const price = target?.sharePrice ?? 0;
@@ -129,6 +188,31 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
       };
     case "bid":
       return { label: "Auction bid", detail: `${order.priorities.length} priorities`, cost: 0, tone: "claim" };
+    case "invade":
+      return { label: `Invade ${name(order.systemId)}`, detail: "commit your fleet to seize this system", cost: 0, tone: "raid" };
+    case "moveFleet":
+      return { label: "Move fleet", detail: `${name(order.fromSystemId)} → ${name(order.toSystemId)}`, cost: 0, tone: "raid" };
+    case "redeployShip":
+      return { label: `Reinforce ${name(order.toSystemId)}`, detail: `redeploy your strongest warship from ${name(order.fromSystemId)}`, cost: 0, tone: "raid" };
+    case "sabotage":
+      return { label: `Sabotage ${name(order.systemId)}`, detail: "knock a rival extractor offline", cost: 0, tone: "raid" };
+    case "buildMegastructure": {
+      const spec = t.megastructures[order.structure];
+      return {
+        label: `Build ${megastructureLabel[order.structure]}`,
+        detail: `at ${name(order.systemId)} · ${spec.metalsCost} metals${spec.alloyCost ? ` + ${spec.alloyCost} alloys` : ""}`,
+        cost: spec.creditCost,
+        tone: "build",
+      };
+    }
+    case "alliancePledge": {
+      const ally = view.corporations.find((c) => c.id === order.targetId);
+      return { label: "Pledge alliance", detail: `defensive pact with ${ally?.name ?? order.targetId}`, cost: 0, tone: "finance" };
+    }
+    case "allianceBreak": {
+      const ally = view.corporations.find((c) => c.id === order.targetId);
+      return { label: "Break alliance", detail: `withdraw the pact with ${ally?.name ?? order.targetId}`, cost: 0, tone: "finance" };
+    }
     default:
       return { label: "Order", detail: "", cost: 0, tone: "build" };
   }

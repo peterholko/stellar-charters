@@ -21,7 +21,9 @@ import {
   maybeBuildWarships,
   maybeExpand,
   maybeFrontier,
-  maybeResearchRange,
+  maybeResearch,
+  RESEARCH_PLANS,
+  maybeSurvey,
   maybeUpgradeInfrastructure,
   sellSurplus,
   valueSystem,
@@ -42,10 +44,11 @@ export class MinerBot implements Bot {
     orders.push(...sellSurplus(view));
     // Develop deposits first (Section 21): an undeveloped claim produces nothing.
     orders.push(...maybeBuildExtractor(view));
+    orders.push(...maybeResearch(view, RESEARCH_PLANS.miner));
     // Grow the local economy, then keep climbing the range-tech ladder.
     orders.push(...maybeExpand(view));
-    orders.push(...maybeResearchRange(view));
-    // Miners are the explorers: reach the rare-isotope frontier before other builds.
+    // Miners are the explorers: scout systems with survey vessels, then reach the frontier.
+    orders.push(...maybeSurvey(view));
     orders.push(...maybeFrontier(view));
     orders.push(...maybeBuildDepot(view));
     orders.push(...maybeBuildHydroponics(view));

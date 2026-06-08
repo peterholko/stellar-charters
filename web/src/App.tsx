@@ -6,7 +6,6 @@ import { CorpCrest } from "./theme/art";
 import { useAuth } from "./auth/AuthContext";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { Inspector } from "./components/Inspector";
-import { OrderTray } from "./components/OrderTray";
 import { Dashboard } from "./screens/Dashboard";
 import { GalaxyMap } from "./screens/GalaxyMap";
 import { Systems } from "./screens/Systems";
@@ -14,7 +13,10 @@ import { Exchange } from "./screens/Exchange";
 import { Convoys } from "./screens/Convoys";
 import { Fleet } from "./screens/Fleet";
 import { Finance } from "./screens/Finance";
+import { Research } from "./screens/Research";
+import { Turn } from "./screens/Turn";
 import { Report } from "./screens/Report";
+import { Standings, VICTORY } from "./screens/Standings";
 
 const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "dashboard", label: "Command", icon: "dashboard" },
@@ -24,7 +26,10 @@ const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "convoys", label: "Convoys", icon: "convoys" },
   { id: "fleet", label: "Fleet", icon: "fleet" },
   { id: "finance", label: "Finance", icon: "finance" },
+  { id: "research", label: "Research", icon: "flask" },
+  { id: "turn", label: "Turn", icon: "send" },
   { id: "report", label: "Report", icon: "report" },
+  { id: "standings", label: "Standings", icon: "trending" },
 ];
 
 function Screen({ nav }: { nav: ViewId }) {
@@ -36,7 +41,10 @@ function Screen({ nav }: { nav: ViewId }) {
     case "convoys": return <Convoys />;
     case "fleet": return <Fleet />;
     case "finance": return <Finance />;
+    case "research": return <Research />;
+    case "turn": return <Turn />;
     case "report": return <Report />;
+    case "standings": return <Standings />;
   }
 }
 
@@ -123,12 +131,13 @@ export function App() {
   return (
     <div className={`shell ${drawer ? "shell--drawer" : ""}`}>
       {top}
-      <div className="shell__body">
+      <div className={`shell__body${nav === "systems" ? " shell__body--full" : ""}`}>
         <nav className="navrail">
           {NAV.map((n) => (
-            <button key={n.id} type="button" className={nav === n.id ? "is-active" : ""} onClick={() => store.setNav(n.id)} title={n.label}>
+            <button key={n.id} type="button" className={`navrail__btn${nav === n.id ? " is-active" : ""}`} onClick={() => store.setNav(n.id)} title={n.label}>
               <Icon name={n.icon} size={19} />
               <span>{n.label}</span>
+              {n.id === "turn" && staged.length > 0 && <span className="navrail__count">{staged.length}</span>}
             </button>
           ))}
         </nav>
@@ -137,10 +146,11 @@ export function App() {
           <Screen nav={nav} />
         </main>
 
-        <aside className="sidestack">
-          <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
-          <OrderTray view={view} staged={staged} resolving={resolving} turn={turn} totalTurns={totalTurns} submitted={iSubmitted} players={players} submittedCount={submittedCount} />
-        </aside>
+        {nav !== "systems" && (
+          <aside className="sidestack">
+            <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
+          </aside>
+        )}
       </div>
 
       {/* Mobile bottom nav */}
@@ -153,11 +163,13 @@ export function App() {
         ))}
       </nav>
 
-      {/* Mobile / tablet orders drawer toggle */}
-      <button type="button" className="drawer-fab" onClick={() => setDrawer((d) => !d)}>
-        <Icon name={drawer ? "x" : "send"} size={18} />
-        {staged.length > 0 && <span className="drawer-fab__count">{staged.length}</span>}
-      </button>
+      {/* Mobile / tablet: jump to the Turn screen to review & submit (orders moved out of the drawer) */}
+      {nav !== "turn" && (
+        <button type="button" className="drawer-fab" onClick={() => store.setNav("turn")} title="Review & submit turn">
+          <Icon name="send" size={18} />
+          {staged.length > 0 && <span className="drawer-fab__count">{staged.length}</span>}
+        </button>
+      )}
       {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
 
       {phase === "over" && <OverModal />}
@@ -180,34 +192,42 @@ function InProgress({ username }: { username: string }) {
 }
 
 function OverModal() {
-  const { view, humanCorpId } = useApp();
-  if (!view) return null;
-  const standings = [...view.corporations].sort((a, b) => b.valuation - a.valuation);
-  const winner = standings[0]!;
-  const myRank = standings.findIndex((c) => c.id === humanCorpId) + 1;
+  const { outcome, humanCorpId } = useApp();
+  if (!outcome || outcome.standings.length === 0) return null;
+  const { standings, winnerId, victoryType } = outcome;
+  const winner = standings.find((c) => c.corpId === winnerId) ?? standings[0]!;
+  const myRank = standings.findIndex((c) => c.corpId === humanCorpId) + 1;
+  const youWon = winner.corpId === humanCorpId;
+  const vic = victoryType ? VICTORY[victoryType] : null;
   return (
     <div className="over">
       <div className="over__panel">
-        <p className="eyebrow">Charter Mandate Concluded</p>
-        <h1>{winner.id === humanCorpId ? "Hegemony Achieved" : "Match Complete"}</h1>
+        <p className="eyebrow">{outcome.decisive ? "Decisive Victory" : "Charter Mandate Concluded"}</p>
+        <h1>{youWon ? "Hegemony Achieved" : "Match Complete"}</h1>
+        {vic && <p className="over__victory"><strong>{vic.title}</strong> — {youWon ? "you held " : `${winner.name} held `}{vic.blurb}.</p>}
         <p className="over__sub">
-          {winner.id === humanCorpId
+          {youWon
             ? "Your charter dominates the frontier."
             : `${winner.name} holds the strongest charter. You finished #${myRank} of ${standings.length}.`}
         </p>
         <ol className="over__board">
-          {standings.map((c, i) => (
-            <li key={c.id} className={c.id === humanCorpId ? "is-me" : ""}>
-              <span>{i + 1}</span>
-              <CorpCrest corpId={c.id} size={22} className="over__crest" />
-              <strong>{c.name}{c.id === humanCorpId ? " (you)" : ""}</strong>
-              <em>{formatCr(c.valuation)}</em>
+          {standings.slice(0, 5).map((c) => (
+            <li key={c.corpId} className={c.corpId === humanCorpId ? "is-me" : ""}>
+              <span>{c.corpId === winnerId ? "★" : c.rank}</span>
+              <CorpCrest corpId={c.corpId} size={22} className="over__crest" />
+              <strong>{c.name}{c.corpId === humanCorpId ? " (you)" : ""}</strong>
+              <em>{c.score.toLocaleString()} pts</em>
             </li>
           ))}
         </ol>
-        <button type="button" className="primary-btn" onClick={() => store.newMatch()}>
-          <Icon name="bolt" size={15} /> New match
-        </button>
+        <div className="over__actions">
+          <button type="button" className="ghost-btn" onClick={() => store.setNav("standings")}>
+            <Icon name="trending" size={15} /> Full standings
+          </button>
+          <button type="button" className="primary-btn" onClick={() => store.newMatch()}>
+            <Icon name="bolt" size={15} /> New match
+          </button>
+        </div>
       </div>
     </div>
   );

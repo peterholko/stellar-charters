@@ -14,7 +14,25 @@ import type {
   SystemBodies,
   SystemPosition,
 } from "./types.js";
-import { emptyStockpile, RESOURCES } from "./types.js";
+import { emptyStockpile, RESOURCES, type QueueBuildingKind } from "./types.js";
+
+/**
+ * Construction points a colony building costs to complete (Section 24/27): the single source of
+ * truth shared by the engine's build queue and the colony UI's "~N turns" estimate. A factory scales
+ * with its recipe tier so a higher-tier plant takes proportionally longer to raise.
+ */
+export function constructionCpCost(tuning: Tuning, kind: QueueBuildingKind, recipeTier = 1): number {
+  const c = tuning.construction;
+  const base =
+    kind === "factory" ? c.factory
+    : kind === "reactor" ? c.reactor
+    : kind === "agridome" ? c.agridome
+    : kind === "mining" ? c.mining
+    : kind === "habitat" ? c.habitat
+    : kind === "lab" ? c.lab
+    : c.power;
+  return kind === "factory" ? Math.round(base * (1 + (recipeTier - 1) * 0.5)) : base;
+}
 
 /**
  * A production-chain recipe run by a Processor module (Section 07b). Each turn a processor
@@ -117,6 +135,8 @@ export interface Tuning {
   surveyCost: number;
   shipCost: Record<RangeTier, number>;
   raiderShipExtraCost: number;
+  /** Cost of an unarmed survey vessel (Section 25) — a cheap scout. */
+  surveyShipCost: number;
   /** Combat strength of a (non-raider escort) ship by tier; raiders get +raiderCombatBonus. */
   shipCombat: Record<RangeTier, number>;
   raiderCombatBonus: number;
@@ -159,6 +179,17 @@ export interface Tuning {
   shipComponentCost: Record<RangeTier, number>;
   /** Flat alloy cost to construct any building (depot, platform, processor, reactor). */
   buildAlloyCost: number;
+  /**
+   * Construction materials each colony building consumes besides credits (Section 27): drawn from
+   * the charter's stockpiles, with any shortfall bought at the exchange. Ties the extraction economy
+   * to development — you spend the metals/silicates/alloys you mine to raise structures.
+   */
+  buildResources: {
+    factory: Partial<Record<Resource, number>>;
+    reactor: Partial<Record<Resource, number>>;
+    agridome: Partial<Record<Resource, number>>;
+    lab: Partial<Record<Resource, number>>;
+  };
   /** Extra components a Trade Depot consumes when built (advanced infrastructure). */
   depotComponentCost: number;
   /** Fuel each ship burns per turn to stay operational (Section 07b fleet sink). */
@@ -193,10 +224,38 @@ export interface Tuning {
     powerHelium3Cost: number;
     powerCapacityPerLevel: number;
   };
+  /**
+   * Per-colony build queue (Section 24, Phase 4a). A colony pours `pointsPerTurn` construction
+   * points into the front of its queue each turn; each building kind costs the listed points, so a
+   * factory takes ~`factory / pointsPerTurn` turns once it reaches the front. Credits + resources are
+   * still charged up-front at queue time, so the economic sink is unchanged — only timing shifts.
+   */
+  construction: {
+    pointsPerTurn: number;
+    factory: number;
+    reactor: number;
+    agridome: number;
+    mining: number;
+    habitat: number;
+    power: number;
+    lab: number;
+  };
   /** Stationary defense platform: build cost and raid-defense added per platform (Section 15). */
   platformCost: number;
   platformDefense: number;
   platformCap: number;
+  /**
+   * Research (Section 28). A Research Lab costs `labCost` credits to raise and yields `labRpOutput`
+   * research points per turn; a populated colony adds `researchPopBase[stage]` RP on top. Points pool
+   * charter-wide into the active research project.
+   */
+  labCost: number;
+  labRpOutput: number;
+  researchPopBase: Record<PopulationStage, number>;
+  /** Credits to terraform a world habitable once the Terraforming research is unlocked (Section 28). */
+  terraformCost: number;
+  /** Industrial Espionage steals one rival tech every this-many turns (Section 28, Phase 3). */
+  espionageInterval: number;
   /**
    * Per-body extractor economy (Section 21). Building an extractor on a deposit raises its
    * level; the credit cost scales with the level reached and the deposit's accessibility (harder
@@ -209,8 +268,6 @@ export interface Tuning {
     /** Extra credit multiplier for the least-accessible deposits (× (1 + (1-access)*mult)). */
     accessibilityMult: number;
   };
-  /** Credits to assay (reveal exact richness/reserves of) one of a system's deposits (Section 21). */
-  assayCost: number;
   /** Extraction sabotage (Section 21): raid strength needed, and turns a hit site stays offline. */
   sabotage: { minStrength: number; disableTurns: number };
   /**
@@ -267,6 +324,20 @@ export interface Tuning {
     stockpileFrac: number;
     earningsMomentumWeight: number;
   };
+  /** Victory scoring (Section 29). Final standing = valuation + these prestige bonuses, so
+   *  non-economic strategies (conquest, tech, wonders) get a climax even when raw cash trails. */
+  victory: {
+    /** Prestige per controlled charter system (rewards the land rush + conquest beyond raw value). */
+    systemPoints: number;
+    /** Prestige per completed (non-secret) tech. */
+    techPoints: number;
+    /** Prestige per galaxy-unique secret project owned (rare, decisive). */
+    secretPoints: number;
+    /** Prestige per megastructure (on top of its valuation — a wonder is a standing). */
+    megastructurePoints: number;
+    /** Earliest turn a last-charter-standing monopoly ends the game decisively. */
+    monopolyMinTurn: number;
+  };
 }
 
 export const DEFAULT_TUNING: Tuning = {
@@ -295,6 +366,7 @@ export const DEFAULT_TUNING: Tuning = {
   surveyCost: 300,
   shipCost: { 1: 380, 2: 720, 3: 1400, 4: 2800, 5: 4400, 6: 6500, 7: 9000, 8: 12000 },
   raiderShipExtraCost: 400,
+  surveyShipCost: 250,
   shipCombat: { 1: 2, 2: 4, 3: 7, 4: 11, 5: 16, 6: 22, 7: 29, 8: 38 },
   raiderCombatBonus: 1,
   shipIsotopeCost: { 1: 0, 2: 2, 3: 6, 4: 14, 5: 20, 6: 28, 7: 36, 8: 46 },
@@ -331,6 +403,15 @@ export const DEFAULT_TUNING: Tuning = {
   shipAlloyCost: { 1: 2, 2: 4, 3: 8, 4: 18, 5: 38, 6: 64, 7: 95, 8: 140 },
   shipComponentCost: { 1: 0, 2: 1, 3: 2, 4: 4, 5: 6, 6: 9, 7: 12, 8: 16 },
   buildAlloyCost: 4,
+  // Each colony building draws real materials besides credits (Section 27): a factory is heavy
+  // industry (alloys + metals), a reactor needs an alloy shell + silicate shielding, an agri-dome a
+  // silicate-and-metal pressure dome. Shortfalls are bought at the exchange like every other bill.
+  buildResources: {
+    factory: { alloys: 8, metals: 6 },
+    reactor: { alloys: 8, silicates: 5 },
+    agridome: { silicates: 8, metals: 5 },
+    lab: { components: 4, silicates: 6 },
+  },
   depotComponentCost: 3,
   fuelPerShipPerTurn: 0.5,
   reactorCost: 700,
@@ -353,15 +434,39 @@ export const DEFAULT_TUNING: Tuning = {
     powerHelium3Cost: 10,
     powerCapacityPerLevel: 4,
   },
+  // Build queue (Section 24, Phase 4a). 100 points/turn with these costs makes an agri-dome a
+  // 1-turn job, a reactor/upgrade ~1.5 turns, and a factory ~2 turns — so a batch of builds on one
+  // colony serialises into a visible queue while a single build still lands fast.
+  construction: {
+    pointsPerTurn: 100,
+    // A clear Civ-style spread (turns at 100 pts/turn): a dome goes up fast, a power grid / mining
+    // rig quick, a habitat moderate, a reactor slow, a factory slowest — and a factory scales with
+    // its recipe TIER (tier-1 ×1, tier-2 ×1.5, tier-3 ×2 via constructionCpCost), so a components
+    // plant takes far longer than a fuel refinery.
+    factory: 200,
+    reactor: 220,
+    agridome: 90,
+    mining: 120,
+    habitat: 160,
+    power: 120,
+    lab: 180,
+  },
   platformCost: 350,
   platformDefense: 1,
   platformCap: 2,
+  // Research (Section 28): a lab costs 320 cr (+ materials) and makes 16 RP/turn; a developed
+  // population adds a research base on top. Tuned so a focused charter finishes ~2 divisions in 42
+  // turns — never the whole ~15-tech tree.
+  labCost: 320,
+  labRpOutput: 24,
+  researchPopBase: { outpost: 0, settlement: 3, colony: 6, city: 11, metropolis: 18 },
+  terraformCost: 1400,
+  espionageInterval: 4,
   extractor: {
     buildCost: 300,
     alloyCost: 2,
     accessibilityMult: 0.8,
   },
-  assayCost: 120,
   sabotage: { minStrength: 4, disableTurns: 3 },
   war: { captureRatio: 1.1, repelLossFrac: 0.5, captureLossFrac: 0.2, durationTurns: 6, aggressorTariff: 0.35 },
   // Megastructures (Section 22): the metal-hungry demand sink. Costs escalate from a mid-game
@@ -398,6 +503,13 @@ export const DEFAULT_TUNING: Tuning = {
     extractorValue: 70,
     stockpileFrac: 0.5,
     earningsMomentumWeight: 4,
+  },
+  victory: {
+    systemPoints: 3000,
+    techPoints: 800,
+    secretPoints: 15000,
+    megastructurePoints: 5000,
+    monopolyMinTurn: 12,
   },
 };
 

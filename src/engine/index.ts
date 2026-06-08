@@ -8,6 +8,7 @@ export { Rng } from "./rng.js";
 export * from "./types.js";
 export {
   DEFAULT_TUNING,
+  constructionCpCost,
   loadScenario,
   normaliseYields,
   type GameConfig,
@@ -32,6 +33,20 @@ export {
   generateSystemBodies,
   starLabel,
   planetLabel,
+  siteBodyKey,
+  bodyKeysOf,
+  primaryBodyKey,
+  getBodyBuildings,
+  systemBuildings,
+  buildingTotal,
+  coloniesOf,
+  canHostPopulation,
+  canBuildOnBody,
+  agriFoodMult,
+  factoryCostMult,
+  bodyTypeOfKey,
+  type ColonyInfo,
+  type BuildingKind,
   type BodyGenOptions,
 } from "./bodies.js";
 export {
@@ -39,6 +54,19 @@ export {
   PROCEDURAL_SCENARIO_ID,
   type ProceduralOptions,
 } from "./procedural.js";
+export {
+  RESEARCH_TREE,
+  RESEARCH_DIVISIONS,
+  SECRET_TECH_IDS,
+  researchMods,
+  emptyResearchMods,
+  techById,
+  canResearch,
+  lockedChoices,
+  type ResearchTech,
+  type ResearchDivision,
+  type ResearchMods,
+} from "./research.js";
 export { Market, type ClearableOrder, type MarketFill } from "./market.js";
 export { resolveAuction, type AuctionResult } from "./auction.js";
 export {
@@ -50,6 +78,7 @@ export {
 } from "./raiding.js";
 export { Engine, type EngineOptions } from "./engine.js";
 export { type TurnEvent, type TurnReport } from "./report.js";
+export { computeOutcome, type GameOutcome, type Standing, type VictoryPath } from "./standings.js";
 export { HumanBot } from "./bots/human.js";
 export {
   buildClientState,
