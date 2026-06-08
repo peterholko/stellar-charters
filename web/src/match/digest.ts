@@ -1,4 +1,4 @@
-import type { PlayerView, TurnReport, TurnEvent } from "@engine";
+import { techById, type PlayerView, type TurnReport, type TurnEvent } from "@engine";
 import { resourceLabels } from "./format";
 
 export type DigestTone = "good" | "bad" | "warn" | "info";
@@ -117,6 +117,12 @@ export function buildDigest(report: TurnReport, view: PlayerView, me: string): D
         break;
       case "distress":
         lines.push({ tone: e.corpId === me ? "bad" : "info", scope: e.corpId === me ? "me" : "world", art: "status-distress", title: `${e.corpId === me ? "You" : corpName(e.corpId)} collapsed`, body: `Charter lost to distress — now a Free Operator.` });
+        break;
+      case "research":
+        if (e.corpId === me) {
+          const tech = techById(e.techId);
+          lines.push({ tone: "good", scope: "me", title: tech?.secret ? "Secret project complete!" : "Research unlocked", body: `${tech?.name ?? e.techId}${tech?.secret ? " — a galaxy-unique edge no rival can now build." : "."}` });
+        }
         break;
     }
   }

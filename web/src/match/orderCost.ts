@@ -1,5 +1,5 @@
 import { bodyTypeOfKey, factoryCostMult, primaryBodyKey, type Order, type PlayerView } from "@engine";
-import { resourceLabels } from "./format";
+import { megastructureLabel, resourceLabels } from "./format";
 
 /** "8 alloys + 6 metals" — materials a build consumes besides credits (Section 27). */
 function mats(costs: Record<string, number | undefined>): string {
@@ -188,6 +188,31 @@ export function describeOrder(order: Order, view: PlayerView): OrderInfo {
       };
     case "bid":
       return { label: "Auction bid", detail: `${order.priorities.length} priorities`, cost: 0, tone: "claim" };
+    case "invade":
+      return { label: `Invade ${name(order.systemId)}`, detail: "commit your fleet to seize this system", cost: 0, tone: "raid" };
+    case "moveFleet":
+      return { label: "Move fleet", detail: `${name(order.fromSystemId)} → ${name(order.toSystemId)}`, cost: 0, tone: "raid" };
+    case "redeployShip":
+      return { label: `Reinforce ${name(order.toSystemId)}`, detail: `redeploy your strongest warship from ${name(order.fromSystemId)}`, cost: 0, tone: "raid" };
+    case "sabotage":
+      return { label: `Sabotage ${name(order.systemId)}`, detail: "knock a rival extractor offline", cost: 0, tone: "raid" };
+    case "buildMegastructure": {
+      const spec = t.megastructures[order.structure];
+      return {
+        label: `Build ${megastructureLabel[order.structure]}`,
+        detail: `at ${name(order.systemId)} · ${spec.metalsCost} metals${spec.alloyCost ? ` + ${spec.alloyCost} alloys` : ""}`,
+        cost: spec.creditCost,
+        tone: "build",
+      };
+    }
+    case "alliancePledge": {
+      const ally = view.corporations.find((c) => c.id === order.targetId);
+      return { label: "Pledge alliance", detail: `defensive pact with ${ally?.name ?? order.targetId}`, cost: 0, tone: "finance" };
+    }
+    case "allianceBreak": {
+      const ally = view.corporations.find((c) => c.id === order.targetId);
+      return { label: "Break alliance", detail: `withdraw the pact with ${ally?.name ?? order.targetId}`, cost: 0, tone: "finance" };
+    }
     default:
       return { label: "Order", detail: "", cost: 0, tone: "build" };
   }
