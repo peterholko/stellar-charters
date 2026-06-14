@@ -16,6 +16,18 @@ Generated from `graphics-prompts.md`.
 | Deep-Range Clipper (Range 3) | `assets/B-ships-and-convoys/deep-range-clipper.png` | 3:2 | yes |
 | Corporate Fleet Ship (Range 4+) | `assets/B-ships-and-convoys/corporate-fleet-ship.png` | 16:9 | yes |
 | Convoy Group (on a warp route) | `assets/B-ships-and-convoys/convoy-group.png` | 16:9 | yes |
+| Ship Cutter / Skiff (Range 1) | `assets/B-ships-and-convoys/ship-cutter.png` | 3:2 | no |
+| Ship Corvette / Picket (Range 2) | `assets/B-ships-and-convoys/ship-corvette.png` | 3:2 | no |
+| Ship Frigate / Clipper (Range 3) | `assets/B-ships-and-convoys/ship-frigate.png` | 3:2 | no |
+| Ship Destroyer / Linebreaker (Range 4) | `assets/B-ships-and-convoys/ship-destroyer.png` | 3:2 | no |
+| Ship Cruiser (Range 5) | `assets/B-ships-and-convoys/ship-cruiser.png` | 3:2 | no |
+| Ship Battlecruiser / Raider-of-the-line (Range 6) | `assets/B-ships-and-convoys/ship-battlecruiser.png` | 3:2 | no |
+| Ship Battleship / Broadside (Range 7) | `assets/B-ships-and-convoys/ship-battleship.png` | 3:2 | no |
+| Ship Dreadnought / Charter-killer (Range 8) | `assets/B-ships-and-convoys/ship-dreadnought.png` | 3:2 | no |
+| Ship Raider / Corsair | `assets/B-ships-and-convoys/ship-raider.png` | 3:2 | no |
+| Ship Surveyor / Assay Skiff | `assets/B-ships-and-convoys/ship-survey.png` | 3:2 | no |
+| Ship Freighter / Hauler | `assets/B-ships-and-convoys/ship-cargo.png` | 16:9 | no |
+| Ship Convoy Group | `assets/B-ships-and-convoys/ship-convoy.png` | 16:9 | no |
 | Star System Map Node (unclaimed) | `assets/C-map-and-environments/star-system-map-node-unclaimed.png` | 1:1 | yes |
 | Star System Map Node (claimed) | `assets/C-map-and-environments/star-system-map-node-claimed.png` | 1:1 | yes |
 | Warp Route / Warp Tunnel Lane (stable) | `assets/C-map-and-environments/warp-route-stable.png` | 16:9 | yes |
@@ -38,6 +50,6 @@ Generated from `graphics-prompts.md`.
 
 ## Summary
 
-- Generated: 31
+- Generated: 43
 - Skipped: 0
 - Failed: 0
