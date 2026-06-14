@@ -44,12 +44,20 @@ Generated from `graphics-prompts.md`.
 | Resource Icons | `assets/D-ui-and-icons/resource-icons-sheet.png` | 3:2 sheet of 1:1 icons | yes |
 | Action Icons | `assets/D-ui-and-icons/action-icons-sheet.png` | 1:1 sheet of 1:1 icons | yes |
 | Status / Alert Icons | `assets/D-ui-and-icons/status-alert-icons-sheet.png` | 1:1 sheet of 1:1 icons | yes |
+| Fleet Icon / Light Trade Ship | `assets/D-ui-and-icons/fleeticon-trader.png` | 1:1 | yes |
+| Fleet Icon / Bulk Freighter | `assets/D-ui-and-icons/fleeticon-freighter.png` | 1:1 | yes |
+| Fleet Icon / Light Escort | `assets/D-ui-and-icons/fleeticon-escort.png` | 1:1 | yes |
+| Fleet Icon / Frigate | `assets/D-ui-and-icons/fleeticon-frigate.png` | 1:1 | yes |
+| Fleet Icon / Cruiser | `assets/D-ui-and-icons/fleeticon-cruiser.png` | 1:1 | yes |
+| Fleet Icon / Capital Ship | `assets/D-ui-and-icons/fleeticon-capital.png` | 1:1 | yes |
+| Fleet Icon / Raider-Corsair | `assets/D-ui-and-icons/fleeticon-raider.png` | 1:1 | yes |
+| Fleet Icon / Survey Skiff | `assets/D-ui-and-icons/fleeticon-survey.png` | 1:1 | yes |
 | Galactic Exchange - Market Panel | `assets/D-ui-and-icons/galactic-exchange-market-panel.png` | 16:9 | no |
 | Convoy Card | `assets/D-ui-and-icons/convoy-card.png` | 3:4 | no |
 | Warp Route Panel | `assets/D-ui-and-icons/warp-route-panel.png` | 3:4 | no |
 
 ## Summary
 
-- Generated: 43
+- Generated: 51
 - Skipped: 0
 - Failed: 0
