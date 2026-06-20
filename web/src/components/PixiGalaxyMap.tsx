@@ -53,7 +53,13 @@ interface Props {
   replaySignal?: number;
   /** Highlight warp lanes the player's raiders/privateers can currently interdict (Section 13). */
   raidOverlay?: boolean;
+  /** Strategic overlay wash painted under the lanes (Phase 4): owner territory, resource geography,
+   *  or detected-threat highlighting. "none" leaves the plain map. */
+  overlayMode?: OverlayMode;
 }
+
+/** Strategic map overlays (Galaxy Map Expansion, Phase 4). */
+export type OverlayMode = "none" | "territory" | "resource" | "threat";
 
 type SceneProps = Props;
 
@@ -80,13 +86,13 @@ interface Scene {
   destroy: () => void;
 }
 
-export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay }: Props) {
+export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<Scene | null>(null);
-  const propsRef = useRef<SceneProps>({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay });
+  const propsRef = useRef<SceneProps>({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode });
   // Keep the latest props reachable from Pixi event handlers / the ticker without
   // re-creating the scene. Assigned on every render so the callbacks are never stale.
-  propsRef.current = { view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay };
+  propsRef.current = { view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -113,7 +119,7 @@ export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetM
   // Redraw when the authoritative view or the selection changes (turn resolution, picks).
   useEffect(() => {
     sceneRef.current?.draw();
-  }, [view, selection, humanCorpId, raidOverlay, contacts]);
+  }, [view, selection, humanCorpId, raidOverlay, contacts, overlayMode]);
 
   // Play the "Last turn movements" replay when the signal increments (a button click).
   useEffect(() => {
@@ -167,6 +173,9 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   const layers = {
     nebula: new Container(),
     starfield: new Container(),
+    // Strategic overlays (Phase 4): territory/resource washes painted behind the lanes so they
+    // read as a background tint, never obscuring glyphs. Threat markers go in `rings` (on top).
+    overlay: new Container(),
     lanes: new Container(),
     traffic: new Container(),
     convoys: new Container(),
@@ -177,11 +186,13 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   };
   layers.nebula.blendMode = "add";
   layers.starfield.blendMode = "add";
+  layers.overlay.blendMode = "add";
   layers.traffic.blendMode = "add";
   layers.replay.blendMode = "add";
   world.addChild(
     layers.nebula,
     layers.starfield,
+    layers.overlay,
     layers.lanes,
     layers.traffic,
     layers.convoys,
@@ -266,6 +277,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   // are already viewport-culled in applyCamera. Re-run after every layer rebuild (draw/replay).
   function markCullable(): void {
     for (const layer of [
+      layers.overlay,
       layers.lanes,
       layers.traffic,
       layers.convoys,
@@ -722,7 +734,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   }
 
   function draw(): void {
-    const { view, humanCorpId, selection, raidOverlay } = getProps();
+    const { view, humanCorpId, selection, raidOverlay, overlayMode } = getProps();
     const galaxy = view.galaxy;
     const pal = readPalette(host);
 
@@ -752,7 +764,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
     // Reset dynamic layers. A redraw (turn resolution / new selection) also cancels any in-flight
     // replay, whose dots reference the previous frame's geometry.
-    for (const c of [layers.lanes, layers.traffic, layers.convoys, layers.fleets, layers.systems, layers.rings, layers.replay]) {
+    for (const c of [layers.overlay, layers.lanes, layers.traffic, layers.convoys, layers.fleets, layers.systems, layers.rings, layers.replay]) {
       c.removeChildren().forEach((ch) => ch.destroy());
     }
     labelLayer.removeChildren().forEach((ch) => ch.destroy());
@@ -762,6 +774,61 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     hubGlow = null;
     replay = null;
     labels = [];
+
+    // ----- strategic overlays (Phase 4) -----
+    // A background wash under the lanes that re-reads the map by a chosen strategic dimension.
+    // All three lean on data the seat already has (owner, fogged deposits, sensor contacts), so
+    // nothing here leaks hidden state. Threat markers are drawn into `rings` (on top) further down.
+    const mode = overlayMode ?? "none";
+    if (mode === "territory") {
+      // Owner influence blooms: a soft, owner-coloured disc behind every claimed world (incl. the
+      // hub), so fronts and spheres of control read at a glance without clicking each system.
+      for (const s of sys) {
+        const isHub = s.id === galaxy.hubId;
+        if (!s.owner && !isHub) continue;
+        const p = pt(s.id);
+        const col = isHub ? pal.accent2 : s.owner === humanCorpId ? pal.accent : cssNum(corpColor(s.owner!));
+        const region = s.position?.region ?? (isHub ? "hub" : "core");
+        const bloom = new Graphics();
+        const rad = nodeRadius(region, unit) * 4.2;
+        for (let k = 3; k >= 1; k--) bloom.circle(0, 0, (rad * k) / 3).fill({ color: col, alpha: 0.05 });
+        bloom.position.set(p.x, p.y);
+        layers.overlay.addChild(bloom);
+      }
+    } else if (mode === "resource") {
+      // Resource geography: a disc tinted to each world's dominant deposit (fogged worlds report
+      // muted/zero potential, so unsurveyed space naturally stays dim). Answers "where do I expand?".
+      for (const s of sys) {
+        if (s.id === galaxy.hubId) continue;
+        const p = pt(s.id);
+        const col = cssNum(resourceColors[systemDominant(s)]);
+        const region = s.position?.region ?? "core";
+        const disc = new Graphics();
+        const rad = nodeRadius(region, unit) * 2.8;
+        disc.circle(0, 0, rad).fill({ color: col, alpha: 0.16 });
+        disc.position.set(p.x, p.y);
+        layers.overlay.addChild(disc);
+      }
+    } else if (mode === "threat") {
+      // Detected-threat highlighting: bloom the destination of every rival fleet your sensors are
+      // tracking, so an incoming assault is a glance, not a hunt through the contact list.
+      for (const c of getProps().contacts ?? []) {
+        const to = points.get(c.toSystemId);
+        if (!to) continue;
+        const col = pal.negative;
+        const scale = c.forceEstimate === "heavy" ? 1.5 : c.forceEstimate === "medium" ? 1.2 : 1.0;
+        const bloom = new Graphics();
+        const rad = unit * 6 * scale;
+        for (let k = 3; k >= 1; k--) bloom.circle(0, 0, (rad * k) / 3).fill({ color: col, alpha: 0.06 });
+        bloom.position.set(to.x, to.y);
+        layers.overlay.addChild(bloom);
+        // A bright ring on top so the threatened world reads at any zoom (sits above the systems).
+        const ring = new Graphics();
+        ring.circle(0, 0, unit * 3 * scale).stroke({ width: unit * 0.4, color: col, alpha: 0.85 });
+        ring.position.set(to.x, to.y);
+        layers.rings.addChild(ring);
+      }
+    }
 
     // ----- warp lanes -----
     for (const r of galaxy.routes.values()) {
