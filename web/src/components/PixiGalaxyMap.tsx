@@ -1215,7 +1215,9 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
         hubGlow = glow;
       }
 
-      const r = nodeRadius(region, unit);
+      // Visual radius is scaled down from the (full-size) hit/separation footprint, so the dots
+      // read smaller without becoming harder to click or crowding together.
+      const r = nodeRadius(region, unit) * SYSTEM_GLYPH_SCALE;
       // Soft halo + luminous core, with a region-specific accent so worlds aren't identical dots.
       // The soft halo is dropped at the far LOD tier (it just smears into noise when zoomed out).
       if (!lodFar) {
@@ -1390,6 +1392,14 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
  * consistent.
  */
 const LAYOUT_SPREAD = 0.62;
+
+/**
+ * Visual size of a system glyph relative to its `nodeRadius` footprint. < 1 draws smaller dots
+ * while leaving hit-testing and glyph-separation on the full `nodeRadius` — so the nodes read
+ * smaller (more breathing room on the larger map) without making them harder to click or letting
+ * them crowd together.
+ */
+const SYSTEM_GLYPH_SCALE = 0.5;
 
 function layoutPoints(galaxy: PlayerView["galaxy"]): Map<string, { x: number; y: number }> {
   const all = galaxy.allSystems();
