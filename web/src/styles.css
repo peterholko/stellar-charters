@@ -491,6 +491,9 @@ input, select { font-family: inherit; }
 .mapscreen__replay.is-on { color: var(--negative); border-color: var(--negative); }
 .mapscreen__overlays { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
 .mapscreen__overlays .mini-btn.is-on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.mapscreen__nav { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.mapscreen__search { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.5rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); color: var(--ink-dim); }
+.mapscreen__search input { background: transparent; border: none; outline: none; color: var(--ink); font-size: 0.72rem; min-width: 9rem; font-family: inherit; }
 .mapscreen__canvas { flex: 1; min-height: 320px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background:
   radial-gradient(700px 500px at 50% 40%, var(--map-glow), transparent 70%), var(--bg-2); position: relative; }
 .mapscreen__hint { margin: 0; font-size: 0.68rem; color: var(--ink-faint); text-align: center; }

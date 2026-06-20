@@ -56,6 +56,9 @@ interface Props {
   /** Strategic overlay wash painted under the lanes (Phase 4): owner territory, resource geography,
    *  or detected-threat highlighting. "none" leaves the plain map. */
   overlayMode?: OverlayMode;
+  /** Phase 2 navigation: when `nonce` changes, pan/zoom to frame `ids` (search / jump-to / frame-
+   *  my-systems). Empty `ids` re-fits the whole galaxy. */
+  focusTarget?: { ids: string[]; nonce: number };
 }
 
 /** Strategic map overlays (Galaxy Map Expansion, Phase 4). */
@@ -83,10 +86,12 @@ interface TransitFleet {
 interface Scene {
   draw: () => void;
   playReplay: () => void;
+  /** Pan/zoom the camera to frame a set of systems (Phase 2 navigation: search, jump-to). */
+  frame: (systemIds: string[]) => void;
   destroy: () => void;
 }
 
-export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode }: Props) {
+export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, focusTarget }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<Scene | null>(null);
   const propsRef = useRef<SceneProps>({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode });
@@ -125,6 +130,11 @@ export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetM
   useEffect(() => {
     if (replaySignal && replaySignal > 0) sceneRef.current?.playReplay();
   }, [replaySignal]);
+
+  // Frame a set of systems when a jump is requested (search box / "frame my systems").
+  useEffect(() => {
+    if (focusTarget) sceneRef.current?.frame(focusTarget.ids);
+  }, [focusTarget?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div ref={hostRef} className="pixigalaxy" />;
 }
@@ -315,6 +325,37 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     // Allow zooming much closer than the fit (player feedback: needed to pick fleets out from the
     // systems) — up to 16× the whole-galaxy fit.
     return Math.min(fitZoom * 16, Math.max(fitZoom * 0.4, z));
+  }
+
+  // Pan/zoom to frame a set of systems (Phase 2 navigation). Empty/unknown ids re-fit the whole
+  // galaxy; a single system zooms in to a readable close-up; several systems fit their bounding box.
+  // Counts as a manual adjustment so a later resize won't snap back to the whole-galaxy fit.
+  function frame(systemIds: string[]): void {
+    const pts = systemIds.map((id) => points.get(id)).filter((p): p is { x: number; y: number } => !!p);
+    if (pts.length === 0) {
+      userAdjusted = false;
+      fitCamera();
+      applyCamera();
+      return;
+    }
+    userAdjusted = true;
+    const W = app.screen.width;
+    const H = app.screen.height;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    // A single system has zero span — frame a comfortable close-up; otherwise fit the box with pad.
+    const spanX = Math.max(maxX - minX, unit * 40);
+    const spanY = Math.max(maxY - minY, unit * 24);
+    const z = clampZoom(Math.min(W / (spanX * 1.4), H / (spanY * 1.4)));
+    camera.zoom = z;
+    camera.x = W / 2 - cx * z;
+    camera.y = H / 2 - cy * z;
+    applyCamera();
   }
 
   // ----- interaction -----
@@ -1147,6 +1188,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   return {
     draw,
     playReplay,
+    frame,
     destroy: () => {
       app.ticker.remove(tick);
       ro.disconnect();

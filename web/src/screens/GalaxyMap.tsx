@@ -14,8 +14,24 @@ export function GalaxyMap() {
   const { view, selection, humanCorpId, movementLog, contacts, replayNonce } = useApp();
   const [raidOverlay, setRaidOverlay] = useState(false);
   const [overlay, setOverlay] = useState<OverlayMode>("none");
+  const [query, setQuery] = useState("");
+  const [focusTarget, setFocusTarget] = useState<{ ids: string[]; nonce: number } | null>(null);
   if (!view) return null;
   const canReplay = movementLog.length > 0;
+  const systems = view.galaxy.allSystems();
+  const myIds = systems.filter((s) => s.owner === humanCorpId).map((s) => s.id);
+  const jumpTo = (ids: string[]) => setFocusTarget((f) => ({ ids, nonce: (f?.nonce ?? 0) + 1 }));
+  const runSearch = () => {
+    const q = query.trim().toLowerCase();
+    if (!q) return;
+    const hit =
+      systems.find((s) => s.name.toLowerCase() === q) ??
+      systems.find((s) => s.name.toLowerCase().includes(q));
+    if (hit) {
+      store.select({ kind: "system", id: hit.id });
+      jumpTo([hit.id]);
+    }
+  };
   return (
     <div className="mapscreen">
       <div className="mapscreen__head">
@@ -72,6 +88,42 @@ export function GalaxyMap() {
           )}
         </div>
       </div>
+      <div className="mapscreen__nav">
+        <form
+          className="mapscreen__search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            runSearch();
+          }}
+        >
+          <Icon name="search" size={13} />
+          <input
+            type="text"
+            list="map-system-names"
+            placeholder="Jump to system…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search systems"
+          />
+          <datalist id="map-system-names">
+            {systems.map((s) => (
+              <option key={s.id} value={s.name} />
+            ))}
+          </datalist>
+        </form>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={myIds.length === 0}
+          title={myIds.length ? "Frame all of your systems" : "You hold no systems yet"}
+          onClick={() => jumpTo(myIds)}
+        >
+          Frame mine
+        </button>
+        <button type="button" className="mini-btn" title="Fit the whole galaxy" onClick={() => jumpTo([])}>
+          Whole galaxy
+        </button>
+      </div>
       {(selection?.kind === "fleet" || selection?.kind === "survey") && (
         <div className="mapscreen__movebar">
           <span>
@@ -96,6 +148,7 @@ export function GalaxyMap() {
           replaySignal={replayNonce}
           raidOverlay={raidOverlay}
           overlayMode={overlay}
+          focusTarget={focusTarget ?? undefined}
         />
       </div>
       <p className="mapscreen__hint">Scroll to zoom, drag to pan, double-click to focus. Click a system, warp lane, or convoy to inspect — or select one of your fleets (▲) and click a destination to move it.</p>
