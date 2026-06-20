@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { Engine, type EngineOptions } from "../engine/engine.js";
 import { loadScenario, type GameConfig, type Scenario } from "../engine/config.js";
-import { generateProceduralScenario } from "../engine/procedural.js";
+import { generateProceduralScenario, type GalaxyShape } from "../engine/procedural.js";
 import { defaultRegistry } from "../engine/bots/registry.js";
 import type { GameMetrics } from "../engine/metrics.js";
 
@@ -17,8 +17,13 @@ export function loadScenarioFile(path: string): GameConfig {
 }
 
 /** A freshly-generated procedural galaxy (the live-game format / body-driven model). */
-export function proceduralConfig(seed: number, players: number, turns: number): GameConfig {
-  return loadScenario(generateProceduralScenario({ seed, players, turns }));
+export function proceduralConfig(
+  seed: number,
+  players: number,
+  turns: number,
+  galaxy?: Partial<GalaxyShape>,
+): GameConfig {
+  return loadScenario(generateProceduralScenario({ seed, players, turns, galaxy }));
 }
 
 export interface RunOptions {
@@ -27,6 +32,8 @@ export interface RunOptions {
   /** Override scenario player count / turns if provided. */
   players?: number;
   turns?: number;
+  /** Galaxy size/shape overrides (e.g. `{ scale: 2 }`) for procedural sweeps. */
+  galaxy?: Partial<GalaxyShape>;
 }
 
 /** Run a single game with the given seed, optionally with a text logger. */
@@ -72,7 +79,7 @@ export function runProceduralGames(options: RunOptions): GameMetrics[] {
   const results: GameMetrics[] = [];
   for (let i = 0; i < options.games; i++) {
     const seed = startSeed + i;
-    results.push(runOneGame(proceduralConfig(seed, players, turns), seed));
+    results.push(runOneGame(proceduralConfig(seed, players, turns, options.galaxy), seed));
   }
   return results;
 }

@@ -25,6 +25,12 @@ export interface ProceduralOptions {
   players: number;
   /** Match length; defaults to the standard 42-turn arc. */
   turns?: number;
+  /**
+   * Galaxy size/shape overrides merged onto {@link GALAXY_DEFAULTS}. Omit for the historical
+   * galaxy; pass `{ scale: 2 }` (etc.) to balance-test a larger map. Live games must keep the
+   * default so event-sourced replays stay valid.
+   */
+  galaxy?: Partial<GalaxyShape>;
 }
 
 /** A name pool large enough that most maps draw unique base names before falling back. */
@@ -57,21 +63,73 @@ const CORE_PROFILES: { primary?: Resource; claimCost: number; upkeep: number }[]
   { primary: undefined, claimCost: 1400, upkeep: 45 },
 ];
 
+type RegionBands = Record<Exclude<SystemRegion, "hub">, [number, number]>;
+
 /**
- * Radial bands (world units, hub at the origin) for each region. The shells are pushed well out
- * so the larger galaxy spreads across deep space rather than clumping near the hub — the wider
- * the band, the longer (and higher-range) the tunnels that reach into it.
+ * The size + shape of a procedural galaxy (Phase 0 of the Galaxy Map Expansion). `scale` is the
+ * master knob: it multiplies the system counts and — by `sqrt(scale)`, so the systems-per-area
+ * density stays roughly constant — the radial band radii. A larger galaxy is therefore a *bigger,
+ * deeper* space (longer hauls, higher range tiers to reach the abyss) rather than a more crowded
+ * one. The per-player rates, minimums, and base bands reproduce the historical counts at `scale: 1`.
+ *
+ * Galaxy size lives here, not in `Tuning`, because the map is generated BEFORE a scenario's tuning
+ * is loaded — generation only needs a seed, a player count, and this shape.
  */
-const BANDS: Record<Exclude<SystemRegion, "hub">, [number, number]> = {
-  core: [240, 820],
-  frontier: [920, 1340],
-  abyss: [1460, 2000],
+export interface GalaxyShape {
+  /** Master size multiplier. 1 = historical galaxy; 2–3 = "large". */
+  scale: number;
+  corePerPlayer: number;
+  frontierPerPlayer: number;
+  abyssPerPlayer: number;
+  minCore: number;
+  minFrontier: number;
+  minAbyss: number;
+  /**
+   * Radial bands (world units from the hub) at scale 1. The shells are pushed well out so the
+   * galaxy spreads across deep space rather than clumping near the hub — the wider the band, the
+   * longer (and higher-range) the tunnels that reach into it. Scaled by `sqrt(scale)` at generation.
+   */
+  bands: RegionBands;
+}
+
+export const GALAXY_DEFAULTS: GalaxyShape = {
+  scale: 1,
+  corePerPlayer: 6,
+  frontierPerPlayer: 2,
+  abyssPerPlayer: 1.1,
+  minCore: 24,
+  minFrontier: 8,
+  minAbyss: 6,
+  bands: {
+    core: [240, 820],
+    frontier: [920, 1340],
+    abyss: [1460, 2000],
+  },
 };
 
-const SPIRAL_K = 0.0042; // radians of arm twist per world unit of radius
-const MIN_SEPARATION = 104; // relaxation target spacing between systems
+/** Merge caller overrides onto the defaults (a deep merge for the nested `bands`). */
+function resolveShape(over: Partial<GalaxyShape> | undefined): GalaxyShape {
+  return {
+    ...GALAXY_DEFAULTS,
+    ...over,
+    bands: { ...GALAXY_DEFAULTS.bands, ...over?.bands },
+  };
+}
+
+/** The concrete bands for a generation: base bands scaled by `sqrt(scale)` (constant density). */
+function scaledBands(shape: GalaxyShape): RegionBands {
+  const k = Math.sqrt(shape.scale);
+  return {
+    core: [shape.bands.core[0] * k, shape.bands.core[1] * k],
+    frontier: [shape.bands.frontier[0] * k, shape.bands.frontier[1] * k],
+    abyss: [shape.bands.abyss[0] * k, shape.bands.abyss[1] * k],
+  };
+}
+
+const SPIRAL_K = 0.0042; // radians of arm twist per world unit of radius (at scale 1)
+const MIN_SEPARATION = 104; // relaxation target spacing between systems (constant: density is scale-invariant)
 const RELAX_ITERS = 48;
-const DIST_PER_TURN = 600; // world units that map to one turn of transit (scaled to the wider map)
+const DIST_PER_TURN = 600; // world units that map to one turn of transit (fixed: a bigger map = longer hauls)
 
 interface Placed {
   sys: ScenarioSystem;
@@ -87,10 +145,18 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
   // Decorrelate the layout stream from the gameplay Rng (which uses `seed` directly).
   const rng = new Rng((seed ^ 0x9e3779b1) >>> 0);
 
-  // ~3x the original counts: a big, sprawling galaxy with deep frontier/abyss to explore.
-  const coreCount = Math.max(players * 6, 24);
-  const frontierCount = Math.max(Math.round(players * 2), 8) + 1;
-  const abyssCount = Math.max(Math.round(players * 1.1), 6);
+  // Counts scale with player count AND the galaxy `scale` knob (Phase 0). At scale 1 these are the
+  // historical counts (~3x the original design): a big, sprawling galaxy with deep frontier/abyss.
+  const shape = resolveShape(opts.galaxy);
+  const bands = scaledBands(shape);
+  // Keep arm winding consistent as the disc grows: SPIRAL_K is per-unit-radius, so divide by the
+  // radial scale factor (sqrt(scale)) — at scale 1 this is exactly SPIRAL_K, so layout is unchanged.
+  const spiralK = SPIRAL_K / Math.sqrt(shape.scale);
+  const coreCount = Math.round(Math.max(players * shape.corePerPlayer, shape.minCore) * shape.scale);
+  const frontierCount = Math.round(
+    (Math.max(Math.round(players * shape.frontierPerPlayer), shape.minFrontier) + 1) * shape.scale,
+  );
+  const abyssCount = Math.round(Math.max(Math.round(players * shape.abyssPerPlayer), shape.minAbyss) * shape.scale);
 
   const armCount = rng.pick([3, 3, 4, 4, 4, 5]);
   const armBase = Array.from({ length: armCount }, (_, i) =>
@@ -122,7 +188,7 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
 
   for (let i = 0; i < coreCount; i++) {
     const profile = CORE_PROFILES[profileOrder[i % profileOrder.length]!]!;
-    const { x, y } = spiralPoint(rng, "core", i, coreCount, armBase, armCount);
+    const { x, y } = spiralPoint(rng, "core", i, coreCount, armBase, armCount, bands, spiralK);
     const id = `s${i}`;
     placed.push({
       region: "core",
@@ -144,7 +210,7 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
   }
 
   for (let f = 0; f < frontierCount; f++) {
-    const { x, y } = spiralPoint(rng, "frontier", f, frontierCount, armBase, armCount);
+    const { x, y } = spiralPoint(rng, "frontier", f, frontierCount, armBase, armCount, bands, spiralK);
     placed.push({
       region: "frontier",
       gen: { region: "frontier", primaryResource: "rareIsotopes" },
@@ -162,7 +228,7 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
   }
 
   for (let d = 0; d < abyssCount; d++) {
-    const { x, y } = spiralPoint(rng, "abyss", d, abyssCount, armBase, armCount);
+    const { x, y } = spiralPoint(rng, "abyss", d, abyssCount, armBase, armCount, bands, spiralK);
     placed.push({
       region: "abyss",
       gen: { region: "abyss" },
@@ -181,7 +247,7 @@ export function generateProceduralScenario(opts: ProceduralOptions): Scenario {
 
   relax(placed);
 
-  const routes = buildRoutes(rng, placed);
+  const routes = buildRoutes(rng, placed, bands);
 
   // Bodies pass (Section 21): generate each system's star + planets + belts + deposits on a
   // decorrelated stream, after the layout is final, so positions/routes are unaffected by the
@@ -219,8 +285,10 @@ function spiralPoint(
   count: number,
   armBase: number[],
   armCount: number,
+  bands: RegionBands,
+  spiralK: number,
 ): { x: number; y: number } {
-  const [rMin, rMax] = BANDS[region];
+  const [rMin, rMax] = bands[region];
   const arm = index % armCount;
   // Stratify radius across the band so systems in an arm spread out instead of clumping.
   const perArm = Math.max(1, Math.ceil(count / armCount));
@@ -228,7 +296,7 @@ function spiralPoint(
   const t = (slot + rng.float(0.15, 0.85)) / perArm;
   const radius = rMin + (rMax - rMin) * Math.min(1, t);
   const spread = 0.22 + rng.float(0, 0.12);
-  const angle = armBase[arm]! + SPIRAL_K * radius + rng.float(-spread, spread);
+  const angle = armBase[arm]! + spiralK * radius + rng.float(-spread, spread);
   return { x: round1(Math.cos(angle) * radius), y: round1(Math.sin(angle) * radius) };
 }
 
@@ -315,7 +383,7 @@ function hubSpokeTargets(hub: Placed, core: Placed[], count: number): Placed[] {
   return picked.map((p) => p.c);
 }
 
-function buildRoutes(rng: Rng, placed: Placed[]): ScenarioRoute[] {
+function buildRoutes(rng: Rng, placed: Placed[], bands: RegionBands): ScenarioRoute[] {
   const routes: ScenarioRoute[] = [];
   const seen = new Set<string>();
   const degree = new Map<string, number>();
@@ -349,7 +417,7 @@ function buildRoutes(rng: Rng, placed: Placed[]): ScenarioRoute[] {
     if (depthOf(a) === 0 && depthOf(b) === 0) return ringRoute(rng, a, b);
     const outer = depthOf(a) >= depthOf(b) ? a : b;
     const anchor = outer === a ? b : a;
-    return deepRoute(rng, anchor, outer, outer.region === "abyss" ? "abyss" : "frontier");
+    return deepRoute(rng, anchor, outer, outer.region === "abyss" ? "abyss" : "frontier", bands);
   };
 
   // Attach `node` to the nearest member of `pool` with spare capacity — preferring the soft cap,
@@ -457,6 +525,7 @@ function deepRoute(
   anchor: Placed,
   outer: Placed,
   band: "frontier" | "abyss",
+  bands: RegionBands,
 ): ScenarioRoute {
   const f = band === "frontier";
   const [minRange, maxRange] = DEEP_RANGE[band];
@@ -469,7 +538,7 @@ function deepRoute(
     capacity: jitterInt(rng, f ? 20 : 12, 0.18),
     exposure: jitter(rng, f ? 0.85 : 0.94, f ? 0.06 : 0.04),
     authorityPresence: jitter(rng, f ? 0.12 : 0.06, 0.04),
-    requiredRange: requiredRangeForDepth(outer, band, minRange, maxRange),
+    requiredRange: requiredRangeForDepth(outer, band, minRange, maxRange, bands),
     charted: false,
   };
 }
@@ -484,8 +553,9 @@ function requiredRangeForDepth(
   band: "frontier" | "abyss",
   minRange: RangeTier,
   maxRange: RangeTier,
+  bands: RegionBands,
 ): RangeTier {
-  const [rMin, rMax] = BANDS[band];
+  const [rMin, rMax] = bands[band];
   const radius = Math.hypot(outer.sys.position!.x, outer.sys.position!.y);
   const t = clamp01((radius - rMin) / (rMax - rMin));
   const tier = Math.round(minRange + t * (maxRange - minRange));

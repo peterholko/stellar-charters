@@ -30,6 +30,8 @@ interface Args {
   scenario?: string;
   /** Generate a fresh procedural galaxy per game (the body-driven live-game model). */
   procedural: boolean;
+  /** Galaxy size multiplier for procedural sweeps (1 = historical; 2–3 = "large"). */
+  galaxyScale?: number;
   verbose: boolean;
   outDir: string;
 }
@@ -50,6 +52,7 @@ function parseArgs(argv: string[]): Args {
       }
       case "--scenario": args.scenario = next(); break;
       case "--procedural": args.procedural = true; break;
+      case "--galaxy-scale": args.galaxyScale = Number(next()); break;
       case "--out": args.outDir = next()!; break;
       case "--verbose": args.verbose = true; break;
       default:
@@ -61,6 +64,11 @@ function parseArgs(argv: string[]): Args {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
+
+/** Galaxy-shape override for procedural sweeps, or undefined for the historical galaxy. */
+function galaxyOverride(args: Args): { scale: number } | undefined {
+  return args.galaxyScale && args.galaxyScale !== 1 ? { scale: args.galaxyScale } : undefined;
+}
 
 function scenarioPathFor(args: Args): string {
   if (args.scenario) return args.scenario;
@@ -76,7 +84,7 @@ function runSingleVerbose(config: GameConfig, args: Args): void {
   console.log(`Single game — seed ${seed} (replay with --seed ${seed})`);
   // Procedural games generate their galaxy from the gameplay seed, so rebuild from it here.
   const cfg = args.procedural
-    ? proceduralConfig(seed, args.players ?? config.players, args.turns ?? config.turns)
+    ? proceduralConfig(seed, args.players ?? config.players, args.turns ?? config.turns, galaxyOverride(args))
     : config;
   runOneGame(cfg, seed, { log: (line) => console.log(line) });
 }
@@ -84,7 +92,7 @@ function runSingleVerbose(config: GameConfig, args: Args): void {
 function runBatch(config: GameConfig, args: Args): void {
   const startSeed = typeof args.seed === "number" ? args.seed : 1;
   const games = args.procedural
-    ? runProceduralGames({ games: args.games, startSeed, players: args.players, turns: args.turns })
+    ? runProceduralGames({ games: args.games, startSeed, players: args.players, turns: args.turns, galaxy: galaxyOverride(args) })
     : runGames(config, {
         games: args.games,
         startSeed,
@@ -119,7 +127,7 @@ function main(): void {
   const players = args.players ?? 8;
   const turns = args.turns ?? 42;
   const config = args.procedural
-    ? proceduralConfig(typeof args.seed === "number" ? args.seed : 1, players, turns)
+    ? proceduralConfig(typeof args.seed === "number" ? args.seed : 1, players, turns, galaxyOverride(args))
     : loadScenarioFile(scenarioPathFor(args));
   if (args.verbose && args.games <= 1) {
     runSingleVerbose(config, args);
