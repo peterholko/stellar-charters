@@ -480,6 +480,70 @@ input, select { font-family: inherit; }
 
 /* ============================ galaxy map ============================ */
 .mapscreen { display: flex; flex-direction: column; height: 100%; gap: 0.7rem; }
+
+/* Full-bleed desktop redesign: the canvas fills the workspace and all chrome floats over it. */
+.workspace--map { padding: 0; overflow: hidden; }
+.mapscreen--bleed { display: block; position: relative; height: 100%; gap: 0; }
+.mapscreen--bleed .mapscreen__canvas { position: absolute; inset: 0; border: none; border-radius: 0; min-height: 0; }
+/* Floating control clusters pinned to the canvas corners. */
+.mapctl {
+  position: absolute; z-index: 6; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
+  max-width: calc(100% - 1.5rem);
+  padding: 0.35rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(7px);
+}
+.mapctl--tl { top: 0.75rem; left: 0.75rem; }
+.mapctl--tr { top: 0.75rem; right: 0.75rem; }
+/* Compact icon buttons (replay, raid-reach) — square, icon-first, with an optional count badge. */
+.iconbtn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem;
+  min-width: 1.9rem; height: 1.9rem; padding: 0 0.45rem; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel-2); color: var(--accent); font-size: 0.82rem;
+}
+.iconbtn:disabled { opacity: 0.4; }
+.iconbtn.is-on { color: var(--negative); border-color: var(--negative); }
+.iconbtn__count { font-size: 0.62rem; color: var(--ink-dim); font-family: var(--font-display); }
+/* Legend as a small chip, bottom-centre over the canvas. */
+.maplegend {
+  position: absolute; bottom: 0.75rem; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; flex-wrap: wrap; gap: 0.7rem; font-size: 0.66rem; color: var(--ink-dim);
+  padding: 0.3rem 0.6rem; border: 1px solid var(--line); border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(7px);
+}
+.maplegend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+/* The map's own floating inspector — a non-modal card docked to the right edge. */
+.mapscreen__selpanel {
+  position: absolute; top: 4.25rem; right: 0.75rem; z-index: 7;
+  width: min(360px, calc(100% - 1.5rem)); max-height: calc(100% - 5.5rem); overflow-y: auto;
+  padding: 0.6rem; border: 1px solid var(--line); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+}
+.mapscreen__selclose {
+  position: absolute; top: 0.4rem; right: 0.4rem; z-index: 1; width: 1.6rem; height: 1.6rem;
+  display: grid; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink-dim); font-size: 1.05rem; line-height: 1;
+}
+.mapscreen__movebar--float {
+  position: absolute; top: 0.75rem; left: 50%; transform: translateX(-50%); z-index: 8;
+  width: max-content; max-width: calc(100% - 1.5rem); margin: 0;
+  background: color-mix(in srgb, var(--bg) 55%, color-mix(in srgb, var(--accent) 22%, transparent));
+  backdrop-filter: blur(7px);
+}
+/* Narrow viewports: stack the two corner clusters as full-width top rows (they'd otherwise
+   overlap), and dock the selection panel as a bottom sheet. */
+@media (max-width: 760px) {
+  .mapctl { left: 0.5rem; right: 0.5rem; max-width: none; }
+  /* Row 1: search + jump buttons kept to a single scrollable row so it can't grow tall and
+     collide with row 2. Row 2: overlay modes + replay/raid (wraps freely below it). */
+  .mapctl--tl { top: 0.5rem; flex-wrap: nowrap; overflow-x: auto; }
+  .mapctl--tl .mapscreen__search input { min-width: 5.5rem; }
+  .mapctl--tr { top: 3.7rem; justify-content: flex-start; }
+  .mapscreen__selpanel {
+    top: auto; bottom: 0.5rem; left: 0.5rem; right: 0.5rem; width: auto; max-height: 50%;
+  }
+  .maplegend { display: none; }
+}
 .mapscreen__head { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 0.5rem; }
 .mapscreen__head h2 { font-size: 1.05rem; }
 .mapscreen__legend { display: flex; flex-wrap: wrap; gap: 0.7rem; font-size: 0.66rem; color: var(--ink-dim); }
