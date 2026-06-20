@@ -277,6 +277,12 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   let bounds = { minX: -1, minY: -1, w: 2, h: 2 };
   let unit = 1; // size base derived from galaxy span (keeps glyph proportions stable)
   let signature = "";
+  // Level of detail (Phase 5): zoomed far out, the additive halos and animated traffic pulses
+  // collapse into noise on a large galaxy, so a redraw at that tier drops them. Tracked so we only
+  // redraw when the tier actually flips (not every zoom frame). Hysteresis avoids thrash at the edge.
+  let drawnOnce = false;
+  let lodFar = false;
+  const lodFarFor = (zoom: number): boolean => (lodFar ? zoom < fitZoom * 0.85 : zoom < fitZoom * 0.7);
 
   // Animated handles, refreshed each draw.
   let pulses: { g: Graphics; ax: number; ay: number; bx: number; by: number; phase: number; speed: number }[] = [];
@@ -306,6 +312,16 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       if (visible) l.t.position.set(p.x, p.y);
     }
     updateMinimapViewport();
+    // If the zoom crossed the LOD threshold, rebuild the scene at the new detail tier. Guarded by
+    // `drawnOnce` so it never fires before the first real draw, and the flag is updated before the
+    // redraw (whose own applyCamera re-checks) so it can't recurse.
+    if (drawnOnce) {
+      const far = lodFarFor(camera.zoom);
+      if (far !== lodFar) {
+        lodFar = far;
+        draw();
+      }
+    }
   }
 
   // Mark the per-object data layers cullable so the CullerPlugin skips off-screen lanes, fleets,
@@ -892,6 +908,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     }
 
     const turn = view.turn;
+    lodFar = lodFarFor(camera.zoom); // current detail tier for this build
     const pt = (id: string) => points.get(id) ?? { x: 0, y: 0 };
 
     // Reset dynamic layers. A redraw (turn resolution / new selection) also cancels any in-flight
@@ -992,8 +1009,8 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
       layers.lanes.addChild(g);
 
-      // Recent traffic → animated pulses (charted lanes only).
-      if (r.charted && traffic > 0) {
+      // Recent traffic → animated pulses (charted lanes only; dropped at the far LOD tier).
+      if (r.charted && traffic > 0 && !lodFar) {
         const dots = Math.min(3, Math.ceil(traffic / 2));
         const color = risk.level === "high" || risk.level === "severe" ? pal.warn : pal.accent2;
         for (let i = 0; i < dots; i++) {
@@ -1200,10 +1217,13 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
       const r = nodeRadius(region, unit);
       // Soft halo + luminous core, with a region-specific accent so worlds aren't identical dots.
-      const glyph = new Graphics();
-      glyph.circle(0, 0, r * 1.35).fill({ color: fill, alpha: 0.1 });
-      glyph.blendMode = "normal";
-      cont.addChild(glyph);
+      // The soft halo is dropped at the far LOD tier (it just smears into noise when zoomed out).
+      if (!lodFar) {
+        const glyph = new Graphics();
+        glyph.circle(0, 0, r * 1.35).fill({ color: fill, alpha: 0.1 });
+        glyph.blendMode = "normal";
+        cont.addChild(glyph);
+      }
       drawGlyph(cont, region, arch, r, fill, open, pal);
 
       // Claimed-territory + development indicator — exactly ONE ring per system (player feedback).
@@ -1334,6 +1354,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     positionMinimap();
     rebuildMinimap(pal);
     markCullable();
+    drawnOnce = true;
     applyCamera();
   }
 
