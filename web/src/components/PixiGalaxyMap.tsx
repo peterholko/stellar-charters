@@ -1185,18 +1185,49 @@ function enforceGlyphSeparation(
   const GLYPH_FOOTPRINT = 1.95; // clear the halo (1.35·r), star aura (1.55·r) + owner ring & dev pips (1.7·r + pip)
   const GAP = unit * 1.7; // a generous lane of empty space between any two glyphs
   const MAX_ITERS = 200;
-  const list = systems.map((s) => ({
+  const list = systems.map((s, i) => ({
     p: points.get(s.id),
     r: nodeRadius(s.position?.region ?? (s.id === hubId ? "hub" : "core"), unit) * GLYPH_FOOTPRINT,
     hub: s.id === hubId,
-  })).filter((e): e is { p: { x: number; y: number }; r: number; hub: boolean } => !!e.p);
+    i,
+  })).filter((e): e is { p: { x: number; y: number }; r: number; hub: boolean; i: number } => !!e.p);
+
+  // Spatial grid (Galaxy Map Expansion, Phase 1): a node can only overlap another within
+  // `maxR + maxR + GAP` of it, so binning into cells of that size means each node only checks the
+  // 3×3 cell neighbourhood instead of all N others — turning the relaxation from O(N²) per pass
+  // into O(N·neighbours), which keeps a scale-2/3 galaxy (150–225 systems) layout cheap. The grid
+  // is rebuilt each pass because nodes move; rebuilding a Map of N entries is itself O(N).
+  let maxR = 0;
+  for (const e of list) if (e.r > maxR) maxR = e.r;
+  const cell = Math.max(1e-3, maxR * 2 + GAP);
+  const keyOf = (x: number, y: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
     let moved = false;
-    for (let i = 0; i < list.length; i++) {
-      const a = list[i]!;
-      for (let j = i + 1; j < list.length; j++) {
-        const b = list[j]!;
+    const grid = new Map<string, (typeof list)[number][]>();
+    for (const e of list) {
+      const k = keyOf(e.p.x, e.p.y);
+      const bucket = grid.get(k);
+      if (bucket) bucket.push(e);
+      else grid.set(k, [e]);
+    }
+    for (const a of list) {
+      const cx = Math.floor(a.p.x / cell);
+      const cy = Math.floor(a.p.y / cell);
+      // Gather the 3×3 neighbourhood and process by ascending index. Non-neighbour pairs are
+      // always ≥ `cell` (= maxR·2 + GAP ≥ minD) apart, so they can't overlap and are skipped with
+      // no effect — mirroring the original ascending i<j double loop's no-ops. The convergence
+      // guarantee (iterate until no moves) is unchanged, so the final layout is fully separated.
+      const candidates: (typeof list)[number][] = [];
+      for (let gx = cx - 1; gx <= cx + 1; gx++) {
+        for (let gy = cy - 1; gy <= cy + 1; gy++) {
+          const bucket = grid.get(`${gx},${gy}`);
+          if (!bucket) continue;
+          for (const b of bucket) if (b.i > a.i) candidates.push(b);
+        }
+      }
+      candidates.sort((m, n) => m.i - n.i);
+      for (const b of candidates) {
         const minD = a.r + b.r + GAP;
         let dx = b.p.x - a.p.x;
         let dy = b.p.y - a.p.y;
@@ -1204,7 +1235,7 @@ function enforceGlyphSeparation(
         if (dist >= minD) continue;
         if (dist < 1e-6) {
           // Coincident points — separate along a stable per-pair axis so it stays deterministic.
-          const ang = (((i * 73856093) ^ (j * 19349663)) % 628) / 100;
+          const ang = (((a.i * 73856093) ^ (b.i * 19349663)) % 628) / 100;
           dx = Math.cos(ang);
           dy = Math.sin(ang);
           dist = 1;
