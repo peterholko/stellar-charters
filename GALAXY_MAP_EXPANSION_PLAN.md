@@ -13,16 +13,33 @@ This is the design + rollout plan. Implementation has begun on branch `galaxy-ma
   [`procedural.ts`](src/engine/procedural.ts); a `scale` knob multiplies system counts and (by
   `√scale`, constant density) the radial bands. Threaded through `ProceduralOptions` →
   `proceduralConfig` → `runProceduralGames` and exposed as `npm run sim -- --procedural
-  --galaxy-scale N`. Verified: scale 1 = 75 systems (byte-identical to before — determinism
-  tests green), scale 2 = 149, scale 3 = 223, span grows ~√scale. New tests in
-  [`tests/procedural.test.ts`](tests/procedural.test.ts).
-- ✅ **Phase 1 — viewport culling.** Pixi `CullerPlugin` registered in
-  [`PixiGalaxyMap.tsx`](web/src/components/PixiGalaxyMap.tsx); data-layer leaves marked
-  `cullable` so off-screen lanes/systems/fleets/convoys are skipped per render (tracks the
-  camera; objects reappear on pan). Verified in the dev preview: full galaxy at fit-zoom is
-  unchanged, deep zoom culls off-screen systems with no erroneous blanking, no console errors.
-- ⬜ Remaining Phase 1 (spatial index, LOD/clustering, O(n²) glyph-separation fix) and Phases
-  2–5 (navigation, on-map command verbs, overlays/fog, retained rendering) — not yet started.
+  --galaxy-scale N`. Verified: scale 1 = 75 systems (byte-identical — determinism tests green),
+  scale 2 = 149, scale 3 = 223. New tests in [`tests/procedural.test.ts`](tests/procedural.test.ts).
+- ✅ **Phase 1 — rendering scalability.** (a) Pixi `CullerPlugin` viewport culling: data-layer
+  leaves marked `cullable`, off-screen objects skipped per render, tracks the camera. (b)
+  Spatial grid for `enforceGlyphSeparation` — O(N²)→O(N·neighbours), same converged layout. All
+  in [`PixiGalaxyMap.tsx`](web/src/components/PixiGalaxyMap.tsx).
+- ✅ **Phase 2 — navigation at scale.** Camera `frame(ids)` + `focusTarget` prop driving a
+  header system-search/jump-to, "Frame mine", and "Whole galaxy"; plus a screen-space
+  **minimap** (owner-coloured dots, live viewport rectangle, click-to-pan) sharing the camera's
+  `points` space. ([`GalaxyMap.tsx`](web/src/screens/GalaxyMap.tsx), `PixiGalaxyMap.tsx`)
+- ✅ **Phase 3 — map as command surface.** `MoveFleetOrder` already resolves to an invasion at a
+  rival system, so the existing on-map fleet-move gesture *is* the attack verb. Added a
+  **staged-order ghost layer**: planned moves/surveys/claims/invasions/sabotage/interdictions
+  drawn over the live map (hostile moves in the danger colour), reading the staged tray.
+- ✅ **Phase 4 — strategic overlays.** Toggleable territory / resource / threat washes painted
+  under the lanes, all from data the seat already has (owner, fogged deposits, sensor contacts).
+- ✅ **Phase 5 — level of detail (partial).** Zoom-based LOD drops soft-halos + traffic pulses at
+  far zoom (hysteresis; redraw only on tier flip).
+- ⬜ **Deferred.** Phase 1 far-zoom *sector clustering* and the Phase 5 *retained-rendering
+  rewrite* + *instanced glyphs* — culling + LOD already meet the perf target at scale 2–3, so
+  these remain future work (the largest, highest-risk items) rather than part of this PR.
+
+> Each phase landed as its own commit and was verified in the dev preview (`/preview`):
+> overlays, search/jump, minimap viewport tracking, ghost arrows/rings, and LOD declutter were
+> all confirmed rendering correctly with no console errors. The only preview warnings are stale
+> HMR dep-array notices from live-editing one `useEffect` across hot reloads — impossible in a
+> production load (the dep array is a constant-length literal).
 
 ---
 
