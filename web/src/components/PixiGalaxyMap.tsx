@@ -216,6 +216,25 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   const labelLayer = new Container();
   app.stage.addChild(labelLayer);
 
+  // Minimap (Phase 2 navigation): a screen-space overview pinned to a corner. Drawn here (not in
+  // `world`) and from the SAME post-layout `points` the camera uses, so its dots and the live
+  // viewport rectangle share one coordinate space. Click it to recentre the camera there.
+  const MINI_W = 180;
+  const MINI_H = 120;
+  const MINI_PAD = 12;
+  const minimap = new Container();
+  minimap.eventMode = "none"; // we hit-test it manually in onPointerDown (DOM coords)
+  const miniBg = new Graphics();
+  const miniDots = new Graphics();
+  const miniRect = new Graphics();
+  minimap.addChild(miniBg, miniDots, miniRect);
+  app.stage.addChild(minimap);
+  // World→minimap mapping, recomputed whenever the layout (and thus `bounds`) changes.
+  let miniScale = 1;
+  let miniOffX = 0;
+  let miniOffY = 0;
+  let miniAccent = 0x66ccff; // cached so the per-pan viewport redraw never re-reads CSS vars
+
   // Preload the galaxy-map fleet-icon sprites (Section 04) once — tiny side-profile pixel ships,
   // one per fleet kind / size band. A missing texture just falls back to the procedural glyph, so
   // an ungenerated asset never breaks the map.
@@ -279,6 +298,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       l.t.visible = visible;
       if (visible) l.t.position.set(p.x, p.y);
     }
+    updateMinimapViewport();
   }
 
   // Mark the per-object data layers cullable so the CullerPlugin skips off-screen lanes, fleets,
@@ -306,6 +326,65 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     const pal = readPalette(host);
     bg.clear();
     bg.rect(0, 0, W, H).fill({ color: pal.bg, alpha: 1 });
+  }
+
+  // ----- minimap (Phase 2) -----
+  function positionMinimap(): void {
+    // Pin to the bottom-left, but hide it on small canvases where it would crowd the view.
+    const show = app.screen.width > MINI_W * 2.2 && app.screen.height > MINI_H * 2;
+    minimap.visible = show;
+    minimap.position.set(MINI_PAD, app.screen.height - MINI_H - MINI_PAD);
+  }
+  function worldToMini(wx: number, wy: number): { x: number; y: number } {
+    return { x: miniOffX + (wx - bounds.minX) * miniScale, y: miniOffY + (wy - bounds.minY) * miniScale };
+  }
+  function rebuildMinimap(pal: Palette): void {
+    miniAccent = pal.accent;
+    miniScale = Math.min(MINI_W / bounds.w, MINI_H / bounds.h) * 0.9;
+    miniOffX = (MINI_W - bounds.w * miniScale) / 2;
+    miniOffY = (MINI_H - bounds.h * miniScale) / 2;
+    miniBg.clear();
+    miniBg.roundRect(0, 0, MINI_W, MINI_H, 6).fill({ color: pal.bg, alpha: 0.72 }).stroke({ width: 1, color: pal.faint, alpha: 0.5 });
+    miniDots.clear();
+    const { view } = getProps();
+    const g = view.galaxy;
+    for (const s of g.allSystems()) {
+      const p = points.get(s.id);
+      if (!p) continue;
+      const isHub = s.id === g.hubId;
+      const m = worldToMini(p.x, p.y);
+      const col = isHub ? pal.accent2 : s.owner === getProps().humanCorpId ? pal.accent : s.owner ? cssNum(corpColor(s.owner)) : pal.faint;
+      miniDots.circle(m.x, m.y, isHub ? 2.4 : 1.6).fill({ color: col, alpha: s.owner || isHub ? 0.95 : 0.55 });
+    }
+  }
+  function updateMinimapViewport(): void {
+    if (!minimap.visible) return;
+    const W = app.screen.width;
+    const H = app.screen.height;
+    // Visible world rectangle (inverse of the camera transform), mapped into the minimap.
+    const tl = worldToMini((0 - camera.x) / camera.zoom, (0 - camera.y) / camera.zoom);
+    const br = worldToMini((W - camera.x) / camera.zoom, (H - camera.y) / camera.zoom);
+    const x = Math.max(0, Math.min(MINI_W, tl.x));
+    const y = Math.max(0, Math.min(MINI_H, tl.y));
+    const w = Math.max(2, Math.min(MINI_W, br.x) - x);
+    const h = Math.max(2, Math.min(MINI_H, br.y) - y);
+    miniRect.clear();
+    miniRect.rect(x, y, w, h).stroke({ width: 1.5, color: miniAccent, alpha: 0.9 });
+  }
+  /** If a canvas-local point is inside the minimap, recentre the camera on the world point it maps
+   *  to and return true (so the gesture is consumed instead of starting a pan/tap). */
+  function minimapPanTo(lx: number, ly: number): boolean {
+    if (!minimap.visible) return false;
+    const localX = lx - minimap.position.x;
+    const localY = ly - minimap.position.y;
+    if (localX < 0 || localX > MINI_W || localY < 0 || localY > MINI_H) return false;
+    const wx = bounds.minX + (localX - miniOffX) / miniScale;
+    const wy = bounds.minY + (localY - miniOffY) / miniScale;
+    userAdjusted = true;
+    camera.x = app.screen.width / 2 - wx * camera.zoom;
+    camera.y = app.screen.height / 2 - wy * camera.zoom;
+    applyCamera();
+    return true;
   }
 
   function fitCamera(): void {
@@ -387,7 +466,10 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
   const onPointerDown = (ev: PointerEvent) => {
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
-    pointers.set(ev.pointerId, localPoint(ev));
+    const lp = localPoint(ev);
+    // A click on the minimap recentres the camera there and consumes the gesture (no pan/select).
+    if (pointers.size === 0 && minimapPanTo(lp.x, lp.y)) return;
+    pointers.set(ev.pointerId, lp);
     gestureMoved = false;
     pinchPrev = null;
     if (pointers.size === 1) beginPan();
@@ -644,6 +726,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     const H = Math.max(1, host.clientHeight);
     app.renderer.resize(W, H);
     resizeBg();
+    positionMinimap();
     // Keep the galaxy framed across viewport changes until the user takes manual control.
     if (!userAdjusted) fitCamera();
     applyCamera();
@@ -1181,6 +1264,8 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       }
     }
 
+    positionMinimap();
+    rebuildMinimap(pal);
     markCullable();
     applyCamera();
   }
