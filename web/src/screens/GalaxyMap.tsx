@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { store, useApp } from "../match/store";
 import { PixiGalaxyMap, type OverlayMode } from "../components/PixiGalaxyMap";
 import { Icon } from "../ui/icons";
@@ -11,11 +11,13 @@ const OVERLAYS: { id: OverlayMode; label: string }[] = [
 ];
 
 export function GalaxyMap() {
-  const { view, selection, humanCorpId, movementLog, contacts, replayNonce } = useApp();
+  const { view, selection, humanCorpId, movementLog, contacts, replayNonce, staged } = useApp();
   const [raidOverlay, setRaidOverlay] = useState(false);
   const [overlay, setOverlay] = useState<OverlayMode>("none");
   const [query, setQuery] = useState("");
   const [focusTarget, setFocusTarget] = useState<{ ids: string[]; nonce: number } | null>(null);
+  // Stable reference unless the staged tray changes, so the map only redraws ghosts on real edits.
+  const stagedOrders = useMemo(() => staged.map((s) => s.order), [staged]);
   if (!view) return null;
   const canReplay = movementLog.length > 0;
   const systems = view.galaxy.allSystems();
@@ -149,6 +151,7 @@ export function GalaxyMap() {
           raidOverlay={raidOverlay}
           overlayMode={overlay}
           focusTarget={focusTarget ?? undefined}
+          stagedOrders={stagedOrders}
         />
       </div>
       <p className="mapscreen__hint">Scroll to zoom, drag to pan, double-click to focus. Click a system, warp lane, or convoy to inspect — or select one of your fleets (▲) and click a destination to move it.</p>

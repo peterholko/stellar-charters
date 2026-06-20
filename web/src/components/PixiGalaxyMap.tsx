@@ -25,7 +25,7 @@ function ensureCuller(): void {
   extensions.add(CullerPlugin);
 }
 import { canRaidRoute } from "@engine";
-import type { ClientContact, ClientMovement, PlayerView, PopulationStage } from "@engine";
+import type { ClientContact, ClientMovement, Order, PlayerView, PopulationStage } from "@engine";
 import { computeLayout } from "../match/layout";
 import {
   corpColor,
@@ -59,6 +59,9 @@ interface Props {
   /** Phase 2 navigation: when `nonce` changes, pan/zoom to frame `ids` (search / jump-to / frame-
    *  my-systems). Empty `ids` re-fits the whole galaxy. */
   focusTarget?: { ids: string[]; nonce: number };
+  /** Staged (not yet submitted) orders, drawn as ghost arrows/markers so the map shows next-turn
+   *  intent (Phase 3). Only the spatial kinds are rendered. */
+  stagedOrders?: Order[];
 }
 
 /** Strategic map overlays (Galaxy Map Expansion, Phase 4). */
@@ -91,13 +94,13 @@ interface Scene {
   destroy: () => void;
 }
 
-export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, focusTarget }: Props) {
+export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, focusTarget, stagedOrders }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<Scene | null>(null);
-  const propsRef = useRef<SceneProps>({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode });
+  const propsRef = useRef<SceneProps>({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, stagedOrders });
   // Keep the latest props reachable from Pixi event handlers / the ticker without
   // re-creating the scene. Assigned on every render so the callbacks are never stale.
-  propsRef.current = { view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode };
+  propsRef.current = { view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, stagedOrders };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -124,7 +127,7 @@ export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetM
   // Redraw when the authoritative view or the selection changes (turn resolution, picks).
   useEffect(() => {
     sceneRef.current?.draw();
-  }, [view, selection, humanCorpId, raidOverlay, contacts, overlayMode]);
+  }, [view, selection, humanCorpId, raidOverlay, contacts, overlayMode, stagedOrders]);
 
   // Play the "Last turn movements" replay when the signal increments (a button click).
   useEffect(() => {
@@ -192,6 +195,9 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     fleets: new Container(),
     systems: new Container(),
     rings: new Container(),
+    // Staged-order ghosts (Phase 3): your planned next-turn moves, drawn on top so the map shows
+    // intent, not just the present.
+    ghosts: new Container(),
     replay: new Container(),
   };
   layers.nebula.blendMode = "add";
@@ -209,6 +215,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     layers.fleets,
     layers.systems,
     layers.rings,
+    layers.ghosts,
     layers.replay,
   );
 
@@ -314,6 +321,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       layers.fleets,
       layers.systems,
       layers.rings,
+      layers.ghosts,
       layers.replay,
     ]) {
       for (const child of layer.children) child.cullable = true;
@@ -858,7 +866,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   }
 
   function draw(): void {
-    const { view, humanCorpId, selection, raidOverlay, overlayMode } = getProps();
+    const { view, humanCorpId, selection, raidOverlay, overlayMode, stagedOrders } = getProps();
     const galaxy = view.galaxy;
     const pal = readPalette(host);
 
@@ -888,7 +896,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
     // Reset dynamic layers. A redraw (turn resolution / new selection) also cancels any in-flight
     // replay, whose dots reference the previous frame's geometry.
-    for (const c of [layers.overlay, layers.lanes, layers.traffic, layers.convoys, layers.fleets, layers.systems, layers.rings, layers.replay]) {
+    for (const c of [layers.overlay, layers.lanes, layers.traffic, layers.convoys, layers.fleets, layers.systems, layers.rings, layers.ghosts, layers.replay]) {
       c.removeChildren().forEach((ch) => ch.destroy());
     }
     labelLayer.removeChildren().forEach((ch) => ch.destroy());
@@ -1245,6 +1253,65 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       t.resolution = Math.min(window.devicePixelRatio || 1, 2);
       labelLayer.addChild(t);
       labels.push({ t, wx: p.x, wy: p.y + r * 2.4, priority: isHub || mine || selected });
+    }
+
+    // ----- staged-order ghosts (Phase 3) -----
+    // Your planned next-turn moves drawn over the live map, so the map shows intent. Movement orders
+    // become arrows (red when the destination is a rival's — i.e. an invasion); system/route orders
+    // become pending markers. Reads the staged tray the order UI already writes to.
+    const isRival = (id: string): boolean => {
+      const o = galaxy.system(id)?.owner;
+      return !!o && o !== humanCorpId;
+    };
+    const ghostArrow = (fromId: string, toId: string, color: number): void => {
+      const a = points.get(fromId);
+      const b = points.get(toId);
+      if (!a || !b) return;
+      const g = new Graphics();
+      drawDashed(g, a, b, unit * 1.6, unit * 1.1, unit * 0.4, color, 0.9);
+      // Arrowhead at the destination end.
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      const hx = b.x - Math.cos(ang) * nodeRadius(galaxy.system(toId)?.position?.region ?? "core", unit) * 2;
+      const hy = b.y - Math.sin(ang) * nodeRadius(galaxy.system(toId)?.position?.region ?? "core", unit) * 2;
+      const s = unit * 1.3;
+      g.poly([
+        hx + Math.cos(ang) * s, hy + Math.sin(ang) * s,
+        hx + Math.cos(ang + 2.5) * s, hy + Math.sin(ang + 2.5) * s,
+        hx + Math.cos(ang - 2.5) * s, hy + Math.sin(ang - 2.5) * s,
+      ]).fill({ color, alpha: 0.95 });
+      layers.ghosts.addChild(g);
+    };
+    const ghostRing = (systemId: string, color: number): void => {
+      const p = points.get(systemId);
+      if (!p) return;
+      const region = galaxy.system(systemId)?.position?.region ?? "core";
+      const r = nodeRadius(region, unit) * 2.5;
+      const ring = new Graphics();
+      // A double ring marks a pending system order (claim / invade / sabotage) distinctly from the
+      // solid owner/selection rings already on the map.
+      ring.circle(p.x, p.y, r).stroke({ width: unit * 0.45, color, alpha: 0.9 });
+      ring.circle(p.x, p.y, r + unit * 0.9).stroke({ width: unit * 0.25, color, alpha: 0.55 });
+      layers.ghosts.addChild(ring);
+    };
+    for (const o of stagedOrders ?? []) {
+      if (o.kind === "moveFleet" || o.kind === "redeployShip") {
+        ghostArrow(o.fromSystemId, o.toSystemId, isRival(o.toSystemId) ? pal.negative : pal.accent);
+      } else if (o.kind === "surveySystem") {
+        ghostArrow(o.fromSystemId, o.targetSystemId, pal.accent2);
+      } else if (o.kind === "invade" || o.kind === "sabotage") {
+        ghostRing(o.systemId, pal.negative);
+      } else if (o.kind === "claim") {
+        ghostRing(o.systemId, pal.accent);
+      } else if (o.kind === "interdict") {
+        const r = galaxy.routes.get(o.routeId);
+        const a = r && points.get(r.a);
+        const b = r && points.get(r.b);
+        if (a && b) {
+          const mark = new Graphics();
+          mark.circle((a.x + b.x) / 2, (a.y + b.y) / 2, unit * 1.4).stroke({ width: unit * 0.5, color: pal.warn, alpha: 0.95 });
+          layers.ghosts.addChild(mark);
+        }
+      }
     }
 
     // Selection ring for a selected convoy.
