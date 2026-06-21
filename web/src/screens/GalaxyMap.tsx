@@ -24,6 +24,14 @@ export function GalaxyMap() {
   const [overlay, setOverlay] = useState<OverlayMode>("none");
   const [query, setQuery] = useState("");
   const [focusTarget, setFocusTarget] = useState<{ ids: string[]; nonce: number } | null>(null);
+  // One-time "rotate for the full map" nudge (portrait phones only; CSS gates visibility).
+  const [hintDismissed, setHintDismissed] = useState(
+    () => typeof localStorage !== "undefined" && localStorage.getItem("sc.maprotate") === "1",
+  );
+  const dismissHint = () => {
+    setHintDismissed(true);
+    if (typeof localStorage !== "undefined") localStorage.setItem("sc.maprotate", "1");
+  };
   // Stable reference unless the staged tray changes, so the map only redraws ghosts on real edits.
   const stagedOrders = useMemo(() => staged.map((s) => s.order), [staged]);
   if (!view) return null;
@@ -172,6 +180,14 @@ export function GalaxyMap() {
           </>
         )}
       </div>
+
+      {/* Portrait quick-check nudge (CSS shows it only on portrait phones) */}
+      {!hintDismissed && !showPanel && (
+        <div className="maprotate">
+          <span>↻ Rotate for the full map</span>
+          <button type="button" className="maprotate__close" aria-label="Dismiss" onClick={dismissHint}>×</button>
+        </div>
+      )}
 
       {/* Floating selection panel (the map's own inspector) */}
       {showPanel && (
