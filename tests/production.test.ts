@@ -131,7 +131,7 @@ describe("production chains", () => {
     expect(lit.galaxy.system("s0").stockpile.alloys).toBeCloseTo(4, 6);
   });
 
-  it("draws a build's alloy bill from local stock, then buys the shortfall at market", () => {
+  it("draws a build's alloy bill from local stock, and REFUSES the build when short (no auto-buy)", () => {
     const corpOf = (e: Engine) => e.corps.find((c) => c.id === "corp-0")!;
     const buildShipEngine = (setup: (sys: System) => void): Engine => {
       const order: Order = { kind: "buildShip", rangeTier: 1, raider: false, systemId: "s0" };
@@ -151,9 +151,11 @@ describe("production chains", () => {
     expect(local.galaxy.system("s0").stockpile.alloys).toBeCloseTo(0, 6);
     expect(corpOf(local).credits).toBeCloseTo(startCredits - shipCost, 6); // shipCost[1] only
 
-    // No local alloys: the 2-alloy bill is bought at the market price (base 40 → +80).
+    // No local alloys: the build does NOT resolve and nothing is charged (playtest decision:
+    // materials must be on hand — sourcing them is the player's own logistics problem).
     const market = buildShipEngine(() => {});
     market.stepTurn();
-    expect(corpOf(market).credits).toBeCloseTo(startCredits - shipCost - 80, 6);
+    expect(corpOf(market).ships.some((sh) => sh.combat > 0)).toBe(false); // no hull laid
+    expect(corpOf(market).credits).toBeCloseTo(startCredits, 6); // nothing charged
   });
 });

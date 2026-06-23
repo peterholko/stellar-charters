@@ -2,7 +2,7 @@
  * Small scenario builders for tests.
  */
 import { loadScenario, type GameConfig, type Scenario } from "../src/engine/config.js";
-import type { Corporation } from "../src/engine/types.js";
+import { emptyStockpile, type Corporation } from "../src/engine/types.js";
 
 /** A fully-formed Corporation for unit tests, with sensible equity defaults. */
 export function makeCorp(over: Partial<Corporation> = {}): Corporation {
@@ -12,6 +12,8 @@ export function makeCorp(over: Partial<Corporation> = {}): Corporation {
     name: id,
     credits: 10000,
     debt: 0,
+    hubStockpile: emptyStockpile(),
+    warehouseLevel: 0,
     ownedSystemIds: [],
     ships: [],
     privateers: [],
@@ -22,6 +24,8 @@ export function makeCorp(over: Partial<Corporation> = {}): Corporation {
     sharePrice: 0,
     sharesOutstanding: 100,
     shareRegister: { [id]: 100 },
+    npcHolders: [],
+    sentiment: 1,
     founderId: id,
     recentEarnings: [],
     isFreeOperator: false,

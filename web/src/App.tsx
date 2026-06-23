@@ -5,13 +5,15 @@ import { Icon, type IconName } from "./ui/icons";
 import { CorpCrest } from "./theme/art";
 import { useAuth } from "./auth/AuthContext";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
+import { CharterPick } from "./components/CharterPick";
 import { Inspector } from "./components/Inspector";
 import { Dashboard } from "./screens/Dashboard";
 import { GalaxyMap } from "./screens/GalaxyMap";
 import { Systems } from "./screens/Systems";
 import { Exchange } from "./screens/Exchange";
 import { Convoys } from "./screens/Convoys";
-import { Fleet } from "./screens/Fleet";
+import { Ships } from "./screens/Ships";
+import { Combat } from "./screens/Combat";
 import { Finance } from "./screens/Finance";
 import { Research } from "./screens/Research";
 import { Turn } from "./screens/Turn";
@@ -24,7 +26,8 @@ const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "systems", label: "Systems", icon: "systems" },
   { id: "exchange", label: "Exchange", icon: "exchange" },
   { id: "convoys", label: "Convoys", icon: "convoys" },
-  { id: "fleet", label: "Fleet", icon: "fleet" },
+  { id: "ships", label: "Ships", icon: "ship" },
+  { id: "combat", label: "Combat", icon: "crosshair" },
   { id: "finance", label: "Finance", icon: "finance" },
   { id: "research", label: "Research", icon: "flask" },
   { id: "turn", label: "Turn", icon: "send" },
@@ -39,7 +42,8 @@ function Screen({ nav }: { nav: ViewId }) {
     case "systems": return <Systems />;
     case "exchange": return <Exchange />;
     case "convoys": return <Convoys />;
-    case "fleet": return <Fleet />;
+    case "ships": return <Ships />;
+    case "combat": return <Combat />;
     case "finance": return <Finance />;
     case "research": return <Research />;
     case "turn": return <Turn />;
@@ -62,12 +66,17 @@ export function App() {
   // lane, or convoy would otherwise change nothing visible — the details render in the
   // collapsed drawer. Surface the drawer whenever the selection changes on a selection
   // screen (map/systems/convoys) so a tap reveals the details and actions.
+  // EXCEPTION: selecting a fleet or survey vessel puts the map in "tap a destination" mode — opening
+  // the drawer (with its full-screen scrim) would block that destination tap, so keep the map clear.
   const prevSelKey = useRef<string | null>(null);
   useEffect(() => {
     const key = selection ? `${selection.kind}:${selection.id}` : null;
     const changed = key && key !== prevSelKey.current && prevSelKey.current !== null;
-    const onSelectScreen = nav === "map" || nav === "systems" || nav === "convoys";
-    if (changed && onSelectScreen && typeof window !== "undefined" &&
+    // The map owns its own floating selection panel (full-bleed redesign), so it no longer drives
+    // the shared drawer — only the convoys screen still opens the inspector drawer on a pick.
+    const onSelectScreen = nav === "convoys";
+    const moveMode = selection?.kind === "fleet" || selection?.kind === "survey";
+    if (changed && onSelectScreen && !moveMode && typeof window !== "undefined" &&
         window.matchMedia("(max-width: 1180px)").matches) {
       setDrawer(true);
     }
@@ -131,7 +140,7 @@ export function App() {
   return (
     <div className={`shell ${drawer ? "shell--drawer" : ""}`}>
       {top}
-      <div className={`shell__body${nav === "systems" ? " shell__body--full" : ""}`}>
+      <div className={`shell__body${nav === "systems" || nav === "map" ? " shell__body--full" : ""}`}>
         <nav className="navrail">
           {NAV.map((n) => (
             <button key={n.id} type="button" className={`navrail__btn${nav === n.id ? " is-active" : ""}`} onClick={() => store.setNav(n.id)} title={n.label}>
@@ -142,11 +151,15 @@ export function App() {
           ))}
         </nav>
 
-        <main className="workspace">
+        <main className={`workspace${nav === "map" ? " workspace--map" : ""}`}>
           <Screen nav={nav} />
         </main>
+        {/* One-time charter pick at join (review Section 5) — overlays until chosen. */}
+        <CharterPick />
 
-        {nav !== "systems" && (
+        {/* The map renders its own floating selection panel (full-bleed redesign); Systems has its
+            own master→detail. Every other screen keeps the docked inspector sidebar. */}
+        {nav !== "systems" && nav !== "map" && (
           <aside className="sidestack">
             <Inspector view={view} humanCorpId={humanCorpId} selection={selection} />
           </aside>

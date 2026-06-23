@@ -15,6 +15,7 @@ export type IconName =
   | "lock"
   | "crosshair"
   | "radar"
+  | "search"
   | "wallet"
   | "trending"
   | "gavel"
@@ -46,6 +47,7 @@ const paths: Record<IconName, string> = {
   lock: "M6 11V8a6 6 0 0 1 12 0v3M5 11h14v10H5z",
   crosshair: "M12 2v4M12 18v4M2 12h4M18 12h4M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z",
   radar: "M12 12 19 5M12 3a9 9 0 1 0 9 9h-9z",
+  search: "M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM20 20l-4.3-4.3",
   wallet: "M3 6h16v12H3zM3 6l13-3v3M17 12h3",
   trending: "M3 17l6-6 4 4 8-8M21 7v5h-5",
   gavel: "M14 3l7 7-3 3-7-7zM10 7l4 4-7 7-4-4zM3 21h8",

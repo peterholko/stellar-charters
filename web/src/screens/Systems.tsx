@@ -9,8 +9,9 @@ import {
   sumPotential,
   systemArchetype,
 } from "../match/format";
-import { coloniesOf, type ColonyInfo, type PlayerView, type StarType, type System } from "@engine";
+import { canHostPopulation, coloniesOf, type ColonyInfo, type PlayerView, type StarType, type System } from "@engine";
 import { ColonyCard, PowerMeter, colonyNames } from "../components/ColonyPanel";
+import { ProductionReadout } from "../components/ProductionReadout";
 import { PlanetArt, PlanetTypeArt, StarArt } from "../theme/ArtSlot";
 import { ResourceIcon } from "../theme/art";
 import { Badge, Panel, PanelTitle, ActionButton } from "../ui/primitives";
@@ -21,8 +22,13 @@ import { Badge, Panel, PanelTitle, ActionButton } from "../ui/primitives";
  * a glance; selecting a world opens its full colony screen (deposits + build menu).
  */
 export function Systems() {
-  const { view } = useApp();
-  const [selSys, setSelSys] = useState<string | null>(null);
+  const { view, selection } = useApp();
+  // Seed the detail view from the map's current selection if it's one of your systems, so arriving
+  // via "Manage in Systems" lands on that system pre-selected — saves a click. The screen remounts
+  // on each nav switch, so this initializer re-reads the live selection on arrival.
+  const [selSys, setSelSys] = useState<string | null>(
+    () => (selection?.kind === "system" && view?.me.ownedSystemIds.includes(selection.id) ? selection.id : null),
+  );
   const [selBody, setSelBody] = useState<string | null>(null);
   if (!view) return null;
   const galaxy = view.galaxy;
@@ -112,19 +118,22 @@ function SystemView({ sys, view, canBuild, onPickBody }: { sys: System; view: Pl
         <div><dt>Upkeep</dt><dd>{formatCr(sys.upkeep)}/t</dd></div>
       </div>
 
+      {/* What this system actually produces, per resource (playtest feedback). */}
+      <ProductionReadout sys={sys} view={view} mine={canBuild} />
+
       {canBuild && (
         <div className="sysview__actions">
           <ActionButton icon="exchange" onClick={() => { store.select({ kind: "system", id: sys.id }); store.setNav("exchange"); }}>Trade</ActionButton>
           {!sys.hasDepot && <ActionButton icon="systems" onClick={() => store.stage({ kind: "buildDepot", systemId: sys.id })}>Depot</ActionButton>}
           {sys.platforms < t.platformCap && <ActionButton icon="shield" onClick={() => store.stage({ kind: "buildPlatform", systemId: sys.id })}>Platform</ActionButton>}
-          <ActionButton icon="radar" title={`Build a survey vessel · ${formatCr(t.surveyShipCost)}`} onClick={() => store.stage({ kind: "buildSurveyShip", systemId: sys.id })}>Survey ship</ActionButton>
+          {!sys.hasDisruptor && <ActionButton icon="bolt" title={`Warp Disruptor · ${formatCr(t.disruptorCost)} — holds rival arrivals +${t.disruptorDelay}t`} onClick={() => store.stage({ kind: "buildDisruptor", systemId: sys.id })}>Disruptor</ActionButton>}
         </div>
       )}
 
       <h4 className="composition__title">Worlds ({colonies.length})</h4>
       <div className="roster">
         {colonies.map((c) => (
-          <WorldRow key={c.key} colony={c} starType={sys.bodies?.starType} name={names.get(c.key) ?? c.bodyLabel} onClick={() => onPickBody(c.key)} />
+          <WorldRow key={c.key} colony={c} sys={sys} starType={sys.bodies?.starType} name={names.get(c.key) ?? c.bodyLabel} onClick={() => onPickBody(c.key)} />
         ))}
       </div>
     </Panel>
@@ -132,7 +141,7 @@ function SystemView({ sys, view, canBuild, onPickBody }: { sys: System; view: Pl
 }
 
 /** A single high-level world row in the system roster (clickable → full detail). */
-function WorldRow({ colony, starType, name, onClick }: { colony: ColonyInfo; starType?: StarType; name: string; onClick: () => void }) {
+function WorldRow({ colony, sys, starType, name, onClick }: { colony: ColonyInfo; sys: System; starType?: StarType; name: string; onClick: () => void }) {
   const typeLabel =
     colony.kind === "belt" ? "Asteroid belt"
     : colony.kind === "star" ? colony.bodyLabel
@@ -145,7 +154,7 @@ function WorldRow({ colony, starType, name, onClick }: { colony: ColonyInfo; sta
     b.reactors ? `${b.reactors}⚡` : "",
     b.hydroponics ? `${b.hydroponics}🌱` : "",
   ].filter(Boolean).join(" ");
-  const queued = colony.queue.length;
+  const queued = sys.queue.filter((it) => it.bodyKey === colony.key).length;
 
   return (
     <button type="button" className="roster__row" onClick={onClick}>
@@ -161,7 +170,7 @@ function WorldRow({ colony, starType, name, onClick }: { colony: ColonyInfo; sta
         <span className="roster__sub">{typeLabel}{colony.habitable ? " · habitable" : ""}</span>
       </div>
       <div className="roster__meta">
-        {colony.population && <Badge tone="neutral">{populationLabel[colony.population.stage]}</Badge>}
+        {canHostPopulation(colony) && <Badge tone="neutral">{populationLabel[sys.populationStage]}</Badge>}
         {colony.sites.length > 0 && (
           <span className="roster__deps" title="worked / total deposits">
             {colony.sites.slice(0, 4).map((s) => (

@@ -1,4 +1,40 @@
-# Stellar Charters — Game Design Document v2.2
+# Stellar Charters — Game Design Document v2.4
+
+> **v2.4 — "Ship the trade war; compress the empire."** This revision implements the MoO2/MoO3
+> design review: every credit movement now appears on a per-seat **Ledger** with a cause
+> (auto-procurement itemized — no invisible hands); brown-outs and limiting inputs are loud,
+> shown state; raids and invasions resolve with **shown math** (named forces); valuation
+> **decomposes** on demand; the **Turn Report** is restructured (Headlines / Warnings with
+> one-click remedies / Ledger / My Convoys / Intel / Automation digest) with a map replay;
+> the colony layer is **collapsed to the system** (one build queue, one population, habitable
+> worlds as multipliers — bodies are content, not chores); players pick a **charter type** at
+> join (Extraction Combine / Shipping House / Security Contractor / Merchant Bank — one bonus,
+> one penalty); commodity listing is **staged by range tier** (~6 goods early); deniable
+> privateer raids leave **evidence** instead of certain attribution; a **hegemon tariff**
+> skims the runaway leader; terraforming and industrial espionage are **feature-gated off**
+> for v1. **v2.4.1 (playtest):** auto-procurement of build materials is REMOVED entirely — a
+> build's materials must be on hand in your stockpiles or the order does not resolve (previews
+> warn up front); sourcing materials is the player's own logistics decision. Extraction reads
+> as named, leveled structures ("Metal Mine L2 — 4.2/t · upgrade to L3 +2.1/t"), and clicking
+> a system shows its actual per-resource production. See "Design Rules" below — they bind
+> every future feature.
+
+## Design Rules (v2.4 — binding)
+
+1. Every credit that leaves the player's account appears as a ledger line with a cause. No exceptions, including automation.
+2. No silent multipliers. Any throttle, pro-ration, or penalty displays its factor, its cause, and its fix.
+3. The system is the unit of player attention. Bodies are content and inspector detail, never a management surface.
+4. A near-optimal turn requires ≤ ~10 orders at every stage. Instrumented and surfaced; enforced against every future feature.
+5. Every market order preview shows market price, effective price (itemized), and the physical path on the map.
+6. Risk is communicated as history + factors, never as a bare probability.
+7. Randomness only where the player can hedge (escort, insure, reroute, decoy) — never on routine fills.
+8. Every raid and battle resolves with shown math and named forces; attribution is an intel system with degrees of evidence.
+9. All automation is opt-in, capped, and reported in the automation digest.
+10. Prefer chunky discrete choices (either/or nodes, few-level tracks) over sliders and percentages.
+11. A new system enters the design only if it makes players do something on a route or to a price. Otherwise it waits.
+12. Late-game layers escalate the trade war (blockades, supply convoys, tariffs, takeovers); they never replace it with a different game.
+13. Name things: convoys, routes, privateer bands, incidents. Folklore is a feature.
+14. Bots validate balance; humans validate legibility. Every milestone includes a cold-read test of the turn report.
 
 *Wormhole frontier · asynchronous 4X · corporate market warfare · 4–12 players*
 
@@ -150,11 +186,25 @@ Players receive a digest of arrivals, filled orders, failed limits, raids, price
 `SECTION 04`
 
 
-## Galaxy Map & Warp Routes
+## Galaxy Map & Warp Lanes
 
-The map is a network of star systems connected by charted warp routes. Warp routes are quasi-permanent tunnels that make convoy movement, defense, and raiding legible.
+The map is a network of star systems connected by charted **warp lanes** (formerly "warp routes"; the engine type is still `WarpRoute`). Warp lanes are quasi-permanent corridors that make convoy movement, defense, and raiding legible.
 
-Every system has coordinates, resource profile, claim cost, upkeep, population potential, route connections, system slots, defense value, and infrastructure potential. Ships do not freely raid from anywhere to anywhere; they operate through the reachable warp-route network.
+Every system has coordinates, resource profile, claim cost, upkeep, population potential, lane connections, system slots, defense value, and infrastructure potential.
+
+### Movement & fuel model (v2.3)
+
+The galaxy map is the centre of the game — the surface players act on, not a passive diagram.
+
+- **Warp lanes are the fuel-efficient option, not the only way to travel.** A lane is engineered to channel mass cheaply, so it dramatically reduces the fuel needed to move along it. Higher-quality lanes (capacity/stability) reduce it more.
+- **Moving anything costs fuel scaled by mass × distance.** A combat hull carries a small fixed mass (by range tier); a trade freighter's mass is its cargo quantity. Distance is straight-line atlas distance between systems.
+- **Combat fleets can jump off-lane directly between any two systems within hull range** (range tier sets the maximum direct jump distance). Off-lane travel pays full mass-fuel and is often *faster* (a straight line beats a dog-leg lane path) — combat values reach and surprise. Fleet moves are issued from the map (select a fleet, click a destination); the UI previews the bottom-line fuel + ETA before you commit.
+- **A fleet's ETA counts from the launch resolution, exactly like a convoy.** A fleet ordered on turn T crosses its first segment that same turn, so a single-segment (distance-1) move arrives when T resolves and the fleet is usable on T+1 — there is no hidden extra "launch turn". The previewed ETA (Σ segment times) is the real number of turns to arrival.
+- **Trade freighters (convoys) stay lane-bound.** Because their cargo mass is large, moving it off-lane would be fuel-prohibitive — so lanes are economically essential for bulk trade. Freighter fuel is charged to the owner at launch (auto-bought if short).
+- **Off-lane fleets evade lane-based interdiction** (see Section 15): a military fleet crossing open space is not on any lane to be trapped. Convoys, being lane-bound, remain raidable.
+- A "Last turn movements" replay on the map animates the convoy and fleet legs that resolved last turn (own fleets only; rivals' are fogged).
+
+This change alters resolution rules, so a deployed game stamps a `rulesetVersion`; existing event-sourced games are started fresh on a new seed rather than re-derived under new rules.
 
 Core Map Rule
 
@@ -187,6 +237,11 @@ shipping\_cost = Σ(route\_cost × cargo\_mass) + fees
 | **Range 2** | Extended freighters, frontier escorts, route scouts | Chart second-ring routes and reach first strategic resources. |
 | **Range 3** | Deep-range clippers, raider corvettes | Reach rare systems, enter frontier tunnels, and threaten exposed routes. |
 | **Range 4+** | Corporate fleet ships, heavy logistics, route stabilizers | Project power across clusters, build route infrastructure, and support acquisitions or blockades. |
+
+**Hull classes.** Warship hulls are *named* by class while the range tier stays the underlying
+jump-range stat: Cutter (Range 1), Corvette (2), Frigate (3), Destroyer (4), Cruiser (5),
+Battlecruiser (6), Battleship (7), Dreadnought (8). Range 5+ are the capital hulls of Section 22
+(the engine's `HULL_CLASS_NAMES`). The UI presents ships as e.g. "Frigate · Range 3".
 
 **Exploration rule**Inner-ring routes are known at match start. Frontier routes are discovered by survey and may require technology, licensing, or infrastructure to stabilize for heavy trade.
 
@@ -267,6 +322,8 @@ Commodities sit in three tiers. **Raw** commodities are extracted from a system'
 
 
 ## Processing & Production Chains
+
+> **Fuel is now a movement sink as well as an upkeep sink (v2.3).** Beyond the per-ship-per-turn operating burn, every fleet jump and every freighter shipment consumes fuel scaled by mass × distance, reduced on warp lanes (see Section 04 — Movement & fuel model). This makes the fuel chain (ice + helium3 → fuel) a core logistics input, not just fleet overhead.
 
 Extraction fills a system's stockpile with raws; **Processor** modules convert them into manufactured goods on the same system. A processor runs one **recipe** each turn — consuming inputs from the local stockpile and producing outputs into it — pro-rated by its limiting input (a half-fed processor makes half its output).
 
@@ -392,6 +449,27 @@ Market Principle
 
 Every commodity has one market price. But each buy or sell order has a physical location, effective cost, transit time, shipping fee, cargo requirement, and raid risk.
 
+### Instant trades at the hub (ruleset v10)
+
+**Trades execute instantly at the Exchange when the goods are at the hub.** Buys execute at
+click time (the Exchange supplies the goods); sells execute at click time **if the seller's
+stock is in their hub warehouse**. This gives players a live market to play during the
+planning window without touching the convoy game — physical movement is always convoys.
+
+- **Walk-the-curve pricing**: an instant trade moves the posted price as it fills, unit by
+  unit, along the same elasticity the turn clearing uses — a large order pays its own
+  slippage, so cornering a market costs real money instead of timing.
+- **Spread**: instant trades pay `instantSpread` (~2.5%) around the posted price. Sealed
+  orders still clear at mid — patience earns the better price — and round-tripping the
+  market is a guaranteed loss unless the price genuinely moves more than twice the spread.
+- **Hub warehouse**: each corp has capacity-limited storage at the Exchange (upgradeable for
+  credits + metals — the anti-hoarding lever). Goods reach it by convoy (transfer to the
+  hub, raidable in flight); overflow on arrival is consigned — auto-sold at the instant
+  price — never lost. Warehouse contents are private under fog of war.
+- Instant actions are validated server-side and appended to a replayable intra-turn event
+  log, preserving event-sourced determinism. Everything outside the Exchange — builds,
+  fleets, raids, claims — stays sealed-simultaneous.
+
 ### Order types
 
 | Order | Fill Behavior | Use |
@@ -501,7 +579,9 @@ Actions: [Interdict Route] [Patrol Route] [Escort Convoy]
 
 ## Trade Depots & Route Infrastructure
 
-Trade Depots improve market access without creating regional prices. In the warp-route model, they also act as endpoint infrastructure for consolidation, security, and tunnel stabilization.
+Trade Depots improve market access without creating regional prices. In the warp-lane model, they also act as endpoint infrastructure for consolidation, security, and lane stabilization.
+
+> **Lane quality drives freighter fuel efficiency (v2.3).** A lane's capacity/stability now determine how much of a freighter's mass-fuel it removes (Section 04), so higher-quality and depot-served lanes move bulk cargo for less fuel — making lane infrastructure a direct economic lever, not just a transit-time/shipping discount.
 
 A Trade Depot is built in a claimed system. It does not create a second exchange; it improves how nearby systems use the global exchange through safer, cheaper, more predictable routes.
 
@@ -519,9 +599,11 @@ A Trade Depot is built in a claimed system. It does not create a second exchange
 `SECTION 13`
 
 
-## Warp-Route Convoy Raiding
+## Warp-Lane Convoy Raiding
 
-Raiding is a geographic pressure system. Players cannot raid from across the map. They need ships, privateers, access, or bases near the warp tunnel they want to attack.
+Raiding is a geographic pressure system. Players cannot raid from across the map. They need ships, privateers, access, or bases near the warp lane they want to attack.
+
+> **Raiding targets lanes, so off-lane fleets are immune (v2.3).** Interdiction and targeted raids key off the lane a mover is on. Convoys are lane-bound and remain fully raidable; a combat fleet jumping off-lane through open space is not on any lane and cannot be interdicted there. This is intentional — lanes are the exposed artery of *trade*, while military movement can pay fuel to slip the net.
 
 ### Two core raid actions
 
@@ -669,6 +751,74 @@ Every corporation is publicly traded. Systems, depots, ships, warp-route access,
 
 equity\_value = system\_assets + population\_value + route\_access\_value + ship\_assets + infrastructure + stockpiles + cash + earnings\_momentum - debt
 share\_price = equity\_value / shares\_outstanding
+
+### The cap table: who owns a charter
+
+Every charter is publicly traded by law. At creation its 100 shares are seeded across a
+**named cap table**: the founder's **management block** (~55) plus three **NPC
+institutional blocks** — a trust (~20, sells at a modest premium, decent bid), a pension
+fund (~15, sells dear, bids low) and the retail float (~10, trades near spot). NPC blocks
+post standing asks and bids but never trade on their own initiative and can **never hold
+control**. The float totals ~45, so hostile control (>50) **always** runs through the
+management block — and management **only sells whole**: one negotiated buyout of the
+officers at the holdout premium, never a share-by-share nibble. The buyout pays the
+victim's treasury (the comeback fund). The cap table is public: the takeover UI is a
+list of who holds what and what they want for it.
+
+### Sentiment: the market mood
+
+Each charter carries a **sentiment** multiplier (clamped ~0.5–1.6) on its traded price:
+`traded = share_price × sentiment`. Sentiment moves on **shown events** — convoy raids,
+lost systems, war declared, distress (total shock capped per turn) — mean-reverts
+~10%/turn, and carries a small seeded jitter. Cash-negative turns are NOT bad news
+(that's reinvestment); only positive earnings nudge it up. Tuned so a calm charter
+oscillates near 1.0 and only corps under sustained attack sit at the deep-discount
+floor. It is decomposed in the report ("−12%: convoy raid −10%, drift +1%…") and affects
+trade execution **only**: valuation, standings, debt ceilings and distress always read
+pure book. This is the "weaken them, then acquire them" pipeline made literal — military
+pressure opens a discount window that heals once the raids stop.
+
+### Limit orders (call-market equity)
+
+Because turns are asynchronous, resolved prices are **unknowable at staging** — so the
+limit order is the **only** equity order type (Design Rule 7: an uncapped order in an
+async batch would be a blank cheque). All of a turn's share orders resolve as **one
+sealed batch per charter** — seat order never matters. Buys walk the cap table from the
+cheapest ask upward — NPC blocks at their personality premiums, rival corp stakes at a
+~1.75× holdout multiple, the management block last at ~2.5× ("prying the company from
+its officers") — and demand a block can satisfy trades at its **posted ask**, even from
+several buyers at once. When buyers contend for a **scarce** block, it auctions: **the
+price jumps to the highest limit in play, whose owner takes the shares at that price**
+(your limit is your bid; exact ties split the block evenly), and lower bidders wait for
+what is left. Public prices, private intentions, priority by price: an acquirer never
+knows what a contested sweep yields until the turn resolves. A **sell** fills against
+the NPC blocks' standing bids, best first, the most willing (lowest-limit) seller
+filling first, each block absorbing only a few shares per turn at a discount — so
+buy/sell round trips are strictly lossy and there is no mint to pump. Sells resolve
+after buys (no same-turn chaining). NPC sale proceeds leave the game; sales **from the
+management block pay the corp treasury**.
+
+### Buybacks and equity financing
+
+A charter may trade its **own** shares. Buying the float back is **defense**: it denies
+raiders the cheap shares (a raider then faces only holdout prices). Selling the
+management block is **equity financing**: cash lands in the treasury now, and the float
+a raider can sweep grows — raise money today, run takeover risk tomorrow. Equity flows
+are capital, not income: they are excluded from earnings momentum, so a buyback never
+reads as an earnings crash on the very book value being defended.
+
+### The concentration premium (quadratic position pricing)
+
+Every marginal share costs more as the buyer's stake grows: ask × **(1 + k·(held/100)²)**
+(k ≈ 8 — a ~×1.5 ask at a 25% stake, ~×3 at 50%). The premium taxes CREEPING: it applies
+to float and rival-stake purchases, not to the management buyout, which is one whole lot
+whose premium is the holdout multiple itself. A full takeover (quad-priced float + the
+2.5× whole-block buyout) runs **~2× the target's entire market cap** — the pacing
+enforcement for the rule below: a turn-3 bankroll cannot buy a charter (equals can never
+absorb equals from starting cash), while a late-game war chest absorbs a weakened rival
+routinely. Small stakes (1–10%) still trade near the posted asks, so blocking stakes and
+speculation stay cheap. Buying back your **own** charter is exempt — consolidation is
+not concentration.
 
 **Onboarding pacing**Takeovers should be visible from turn 1 but not practically dominant until roughly turn 12–15, once players have multiple systems, debt, exposed exports, route dependencies, and strategic resources.
 
@@ -948,10 +1098,12 @@ strategic choice rather than a constant state.
 
 ### Invasion
 
-Fleets are **real objects on the galaxy map**. A charter orders a fleet to **move** from one system
-to another; it travels along charted warp routes over several turns (like a convoy), so a navy on
-campaign is a visible, intercept-able thing, and a fleet sent to the front leaves its home
-undefended. Passage through other charters' territory is **peaceful** — borders don't stop a fleet
+Fleets are **real objects on the galaxy map**, and fleet moves are issued **from the map** (select a
+fleet, click a destination). A charter orders a fleet to **move** from one system to another; it
+travels over several turns, taking the **faster of the cheapest warp lane or a direct off-lane jump**
+(within hull range), so a navy on campaign is a visible thing and a fleet sent to the front leaves
+its home undefended. Off-lane movement costs more fuel but is straighter, and it slips lane-based
+interdiction (Section 15) — combat values reach and surprise over fuel economy. Passage through other charters' territory is **peaceful** — borders don't stop a fleet
 passing through — but **entering a non-allied rival's system is an act of war**: the arriving fleet
 gives battle. If its combat beats the system's defense (incl. allied reinforcement) by the capture
 ratio, it **captures and occupies** the world; otherwise it is repelled, takes heavy losses, and
@@ -959,7 +1111,8 @@ ratio, it **captures and occupies** the world; otherwise it is repelled, takes h
 collapses into a Free Operator. The Wormhole Hub itself is Authority-protected and cannot be taken.
 
 Because fleets march, **reach is no longer limited to your neighbours** — you can project power
-(or come to a distant ally's aid) anywhere a charted path leads. A real conquest fleet is built
+(or come to a distant ally's aid) anywhere a charted path leads, or off-lane to any system inside
+your hulls' jump range if you can pay the fuel. A real conquest fleet is built
 from capital hulls, whose huge alloy cost (Section 22) makes a war fleet a serious investment only
 a strong charter can field. The defender's strength is the system's full standing defense — base,
 defense platforms, Mining-Rig fortification, megastructures, a Trade Depot's patrols, and any
@@ -1087,9 +1240,10 @@ multi-habitable systems did not destabilise the economy.
 **Section 25.** Prospecting moves from per-deposit busywork to a **system-level scouting loop**. A
 charter builds an unarmed **survey vessel** (`surveyShipCost`, `Ship.surveyor`) at one of its systems
 and dispatches it to scout any reachable system (`surveySystem` order). The vessel travels the
-cheapest charted path turn-by-turn — reusing the Section 23 mobile-fleet machinery — surveys the
-**whole** target system on arrival (revealing every deposit's richness AND remaining reserves), then
-flies home. A scout never fights, so it can slip into a **rival's** territory for intelligence ahead
+cheapest charted **warp-lane** path turn-by-turn — reusing the Section 23 mobile-fleet machinery —
+surveys the **whole** target system on arrival (revealing every deposit's richness AND remaining
+reserves), then flies home. Survey vessels are lane-bound (they are not combat hulls and do not make
+off-lane jumps), so charting new lanes remains the way to reach un-laned space. A scout never fights, so it can slip into a **rival's** territory for intelligence ahead
 of expansion or invasion; if it can't reach home it bases in the nearest own/neutral system rather
 than stranding in enemy space.
 

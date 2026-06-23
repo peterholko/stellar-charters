@@ -9,15 +9,19 @@
  */
 import {
   Engine,
+  CHARTER_TYPES,
   PROCEDURAL_SCENARIO_ID,
+  RULESET_VERSION,
   buildClientState,
   defaultRegistry,
   gamePhase,
   generateProceduralScenario,
   loadScenario,
+  type CharterType,
   type ClientPlayer,
   type ClientState,
   type Order,
+  type Resource,
   type Scenario,
   type TurnReport,
 } from "../src/engine/index.js";
@@ -71,6 +75,10 @@ interface MemberRow {
   corp_id: string;
   user_id: string;
   display_name: string;
+  /** Charter type picked at join (review Section 5); null until picked. */
+  charter: string | null;
+  /** First turn the charter's effects apply (event-sourced replay anchor). */
+  charter_turn: number | null;
 }
 
 export async function handleGame(request: Request, env: Env, url: URL): Promise<Response> {
@@ -81,6 +89,8 @@ export async function handleGame(request: Request, env: Env, url: URL): Promise<
   if (p === "/api/game" && (m === "GET" || m === "POST")) return getState(env, user);
   if (p === "/api/game/submit" && m === "POST") return submit(request, env, user);
   if (p === "/api/game/new" && m === "POST") return startNew(env, user);
+  if (p === "/api/game/charter" && m === "POST") return pickCharter(request, env, user);
+  if (p === "/api/game/instant" && m === "POST") return instantAction(request, env, user);
   return json({ error: "not_found" }, 404);
 }
 
@@ -92,7 +102,7 @@ async function activeGame(env: Env): Promise<GameRow | null> {
 
 async function members(env: Env, gameId: string): Promise<MemberRow[]> {
   const r = await env.DB.prepare(
-    "SELECT corp_id, user_id, display_name FROM game_players WHERE game_id=? ORDER BY corp_id",
+    "SELECT corp_id, user_id, display_name, charter, charter_turn FROM game_players WHERE game_id=? ORDER BY corp_id",
   ).bind(gameId).all<MemberRow>();
   return r.results ?? [];
 }
@@ -108,6 +118,48 @@ async function loadOrders(env: Env, gameId: string): Promise<Map<number, Map<str
     out.get(row.turn)!.set(row.corp_id, Array.isArray(parsed) ? parsed : []);
   }
   return out;
+}
+
+/** An instant planning-window action (ruleset v10), executed at click time:
+ *  buy (Exchange → warehouse or a system), sell (from the warehouse), or
+ *  dispatch (warehouse → one of your systems). */
+type InstantAction =
+  | { kind: "buy"; resource: Resource; quantity: number; systemId: string }
+  | { kind: "sell"; resource: Resource; quantity: number }
+  | { kind: "dispatch"; resource: Resource; quantity: number; systemId: string };
+
+type InstantLog = Map<number, { corpId: string; action: InstantAction }[]>;
+
+/** Instant actions grouped by the turn whose planning window they belong to, in seq order. */
+async function loadInstants(env: Env, gameId: string): Promise<InstantLog> {
+  const r = await env.DB.prepare(
+    "SELECT turn, seq, corp_id, action_json FROM game_instants WHERE game_id=? ORDER BY turn, seq",
+  ).bind(gameId).all<{ turn: number; seq: number; corp_id: string; action_json: string }>();
+  const out: InstantLog = new Map();
+  for (const row of r.results ?? []) {
+    if (!out.has(row.turn)) out.set(row.turn, []);
+    out.get(row.turn)!.push({ corpId: row.corp_id, action: JSON.parse(row.action_json) as InstantAction });
+  }
+  return out;
+}
+
+/** Re-apply one planning window's instant actions; a call the engine rejects is a no-op
+ *  (it was validated when recorded, so rejection here only means the replay context already
+ *  consumed the credits — deterministic either way). */
+function applyInstants(engine: Engine, entries: { corpId: string; action: InstantAction }[] | undefined): void {
+  for (const e of entries ?? []) {
+    const a = e.action;
+    if (a.kind === "buy") engine.instantBuy(e.corpId, a.resource, a.quantity, a.systemId);
+    else if (a.kind === "sell") engine.instantSell(e.corpId, a.resource, a.quantity);
+    else if (a.kind === "dispatch") engine.instantDispatch(e.corpId, a.resource, a.quantity, a.systemId);
+  }
+}
+
+/** Run one instant action against a live engine (validation at record time). */
+function runInstant(engine: Engine, corpId: string, a: InstantAction): string | null {
+  if (a.kind === "buy") return engine.instantBuy(corpId, a.resource, a.quantity, a.systemId);
+  if (a.kind === "sell") return engine.instantSell(corpId, a.resource, a.quantity);
+  return engine.instantDispatch(corpId, a.resource, a.quantity, a.systemId);
 }
 
 async function createGlobalGame(env: Env, creator: SessionUser): Promise<GameRow> {
@@ -161,6 +213,13 @@ function buildEngine(game: GameRow, mem: MemberRow[]): Engine {
   // Make seated corps human-controllable; name them after their player.
   const nameByCorp = new Map(mem.map((m) => [m.corp_id, m.display_name]));
   for (const m of mem) engine.makeHybrid(m.corp_id);
+  // Charter identities (review Section 5): applied from their recorded pick turn, so the
+  // event-sourced replay re-derives every earlier turn identically.
+  for (const m of mem) {
+    if (m.charter && CHARTER_TYPES.includes(m.charter as CharterType)) {
+      engine.setCharter(m.corp_id, m.charter as CharterType, m.charter_turn ?? 0);
+    }
+  }
   engine.corps.forEach((c, i) => {
     c.name = nameByCorp.get(c.id) ?? CHARTER_NAMES[i] ?? c.name;
   });
@@ -171,14 +230,19 @@ function reconstruct(
   game: GameRow,
   mem: MemberRow[],
   orders: Map<number, Map<string, Order[]>>,
+  instants: InstantLog,
 ): { engine: Engine; reports: TurnReport[] } {
   const engine = buildEngine(game, mem);
   const reports: TurnReport[] = [];
   for (let t = 1; t <= game.turn; t++) {
+    // Instant actions recorded during turn t's planning window precede turn t's resolution.
+    applyInstants(engine, instants.get(t));
     const to = orders.get(t);
     for (const m of mem) engine.setHumanOrders(m.corp_id, to?.get(m.corp_id) ?? null);
     reports.push(engine.stepTurn());
   }
+  // The live planning window's instants, so the served state (and the next stepTurn) sees them.
+  applyInstants(engine, instants.get(game.turn + 1));
   return { engine, reports };
 }
 
@@ -194,15 +258,19 @@ function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn
   return {
     gameId: game.id,
     scenarioId: game.scenario,
+    rulesetVersion: RULESET_VERSION,
     turn,
     phase,
     totalTurns: TOTAL_TURNS,
     humanCorpId: "corp-0",
     prices: { ...BASE_CONFIG.tuning.basePrices },
+    listedResources: [],
     systems: [],
     routes: [],
     corps: [],
     convoys: [],
+    movementLog: [],
+    contacts: [],
     wars: [],
     claimedSecrets: {},
     warTariff: 0,
@@ -219,7 +287,7 @@ function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn
 async function stateFor(env: Env, game: GameRow, user: SessionUser, mem: MemberRow[]): Promise<ClientState> {
   const mySeat = mem.find((m) => m.user_id === user.id)?.corp_id ?? null;
   const orders = await loadOrders(env, game.id);
-  const { engine, reports } = reconstruct(game, mem, orders);
+  const { engine, reports } = reconstruct(game, mem, orders, await loadInstants(env, game.id));
   const phase = gamePhase(engine);
   if (!mySeat) return spectatorState(game, mem, user, engine.currentTurn, phase);
 
@@ -257,12 +325,77 @@ async function startNew(env: Env, user: SessionUser): Promise<Response> {
   // A fresh global game may be started once the current one has ended.
   if (game) {
     const mem = await members(env, game.id);
-    const over = reconstruct(game, mem, await loadOrders(env, game.id)).engine.isOver;
+    const over = reconstruct(game, mem, await loadOrders(env, game.id), await loadInstants(env, game.id)).engine.isOver;
     if (!over) return json({ error: "in_progress" }, 409);
     await env.DB.prepare("UPDATE games SET status='ended', updated_ts=? WHERE id=?").bind(Date.now(), game.id).run();
   }
   const fresh = await createGlobalGame(env, user);
   return json(await stateFor(env, fresh, user, await members(env, fresh.id)));
+}
+
+/** One-time charter-type pick (review Section 5). Takes effect from the NEXT resolved turn. */
+async function pickCharter(request: Request, env: Env, user: SessionUser): Promise<Response> {
+  const game = await activeGame(env);
+  if (!game) return json({ error: "no_game" }, 404);
+  let mem = await members(env, game.id);
+  const mine = mem.find((m) => m.user_id === user.id);
+  if (!mine) return json({ error: "not_in_game" }, 403);
+  const body = await readJson(request);
+  const charter = body?.charter as string | undefined;
+  if (!charter || !CHARTER_TYPES.includes(charter as CharterType)) return json({ error: "bad_charter" }, 400);
+  if (!mine.charter) {
+    await env.DB.prepare(
+      "UPDATE game_players SET charter=?, charter_turn=? WHERE game_id=? AND corp_id=? AND charter IS NULL",
+    ).bind(charter, game.turn + 1, game.id, mine.corp_id).run();
+    mem = await members(env, game.id);
+  }
+  return json(await stateFor(env, game, user, mem));
+}
+
+/**
+ * Instant Exchange action (ruleset v10): validate against the CURRENT reconstructed state
+ * (including earlier instants this window), then append it to the instant log — replay
+ * re-derives it. Returns fresh state on success, or { error: "rejected", reason }.
+ */
+async function instantAction(request: Request, env: Env, user: SessionUser): Promise<Response> {
+  const game = await activeGame(env);
+  if (!game) return json({ error: "no_game" }, 404);
+  const mem = await members(env, game.id);
+  const mine = mem.find((m) => m.user_id === user.id);
+  if (!mine) return json({ error: "not_in_game" }, 403);
+
+  const body = await readJson(request);
+  const kind = body?.kind as InstantAction["kind"];
+  const resource = body?.resource as Resource;
+  const quantity = Math.floor(Number(body?.quantity));
+  const systemId = String(body?.systemId ?? "");
+  if (!["buy", "sell", "dispatch"].includes(kind) || typeof resource !== "string" || !Number.isFinite(quantity) || quantity <= 0) {
+    return json({ error: "bad_request" }, 400);
+  }
+  if (kind !== "sell" && !systemId) return json({ error: "bad_request" }, 400);
+  const action: InstantAction = kind === "sell" ? { kind, resource, quantity } : { kind, resource, quantity, systemId };
+
+  const { engine } = reconstruct(game, mem, await loadOrders(env, game.id), await loadInstants(env, game.id));
+  if (engine.isOver) return json({ error: "rejected", reason: "the match is over" }, 400);
+  const reason = runInstant(engine, mine.corp_id, action);
+  if (reason) return json({ error: "rejected", reason }, 400);
+
+  const window = game.turn + 1;
+  await env.DB.prepare(
+    `INSERT INTO game_instants (game_id, turn, seq, corp_id, action_json)
+     VALUES (?, ?, COALESCE((SELECT MAX(seq) FROM game_instants WHERE game_id=? AND turn=?), 0) + 1, ?, ?)`,
+  ).bind(game.id, window, game.id, window, mine.corp_id, JSON.stringify(action)).run();
+
+  // Race guard: if another player's submit resolved the turn between validation and insert,
+  // this action would retroactively precede an already-reported resolution — withdraw it.
+  const now = await env.DB.prepare("SELECT turn FROM games WHERE id=?").bind(game.id).first<{ turn: number }>();
+  if (!now || now.turn !== game.turn) {
+    await env.DB.prepare("DELETE FROM game_instants WHERE game_id=? AND turn=? AND corp_id=? AND action_json=?")
+      .bind(game.id, window, mine.corp_id, JSON.stringify(action)).run();
+    return json({ error: "rejected", reason: "the turn just resolved — try again" }, 409);
+  }
+
+  return json(await stateFor(env, game, user, mem));
 }
 
 async function submit(request: Request, env: Env, user: SessionUser): Promise<Response> {
@@ -271,7 +404,7 @@ async function submit(request: Request, env: Env, user: SessionUser): Promise<Re
   let mem = await members(env, game.id);
   const mine = mem.find((m) => m.user_id === user.id);
   if (!mine) return json({ error: "not_in_game" }, 403);
-  if (reconstruct(game, mem, await loadOrders(env, game.id)).engine.isOver) {
+  if (reconstruct(game, mem, await loadOrders(env, game.id), await loadInstants(env, game.id)).engine.isOver) {
     return json(await stateFor(env, game, user, mem));
   }
 
@@ -288,7 +421,8 @@ async function submit(request: Request, env: Env, user: SessionUser): Promise<Re
     return json(await stateFor(env, game, user, mem)); // waiting for others
   }
 
-  const { engine } = reconstruct(game, mem, orders);
+  // reconstruct() has already applied the live window's instant buys, so they precede this step.
+  const { engine } = reconstruct(game, mem, orders, await loadInstants(env, game.id));
   for (const m of mem) engine.setHumanOrders(m.corp_id, upcoming.get(m.corp_id) ?? null);
   engine.stepTurn();
   const newTurn = engine.currentTurn;

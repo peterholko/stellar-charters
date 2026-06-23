@@ -25,8 +25,8 @@ function assertCoherentClientState(eng: Engine, corpId: string): void {
   expect(Array.isArray(wire.systems)).toBe(true);
   for (const s of wire.systems) {
     expect(s.bodyBuildings, `${s.id}.bodyBuildings`).toBeTypeOf("object");
-    expect(s.buildQueues, `${s.id}.buildQueues`).toBeTypeOf("object");
-    expect(s.colonyPop, `${s.id}.colonyPop`).toBeTypeOf("object");
+    expect(Array.isArray(s.queue), `${s.id}.queue`).toBe(true);
+    expect(typeof s.populationStage === "string", `${s.id}.populationStage`).toBe(true);
     expect(Array.isArray(s.sites), `${s.id}.sites`).toBe(true);
     for (const site of s.sites) expect(typeof site.key === "string" && typeof site.resource === "string").toBe(true);
   }
@@ -79,6 +79,7 @@ describe("playthrough — a human seat can drive every order kind", () => {
       ],
       routes: [lane("hub", "s0"), lane("hub", "s1"), lane("s0", "s1")],
     });
+    cfg.tuning.features = { ...cfg.tuning.features, terraforming: true }; // gated off in v1; this test drives every order kind
     const reg = new Map<string, BotFactory>([["noop", () => new NoopBot()]]);
     const eng = new Engine(cfg, 0, reg);
     const corp = eng.corps[0]!;

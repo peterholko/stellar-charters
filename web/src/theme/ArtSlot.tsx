@@ -19,17 +19,22 @@ export function ArtSlot({
   className?: string;
   style?: CSSProperties;
 }) {
-  const [failed, setFailed] = useState(false);
+  // Track the slot that failed (not a bare bool) so a missing asset doesn't latch the
+  // placeholder when this same ArtSlot later swaps to a different slot that *does* have art —
+  // the shipyard art reuses one instance and swaps by hull tier / role.
+  const [failedSlot, setFailedSlot] = useState<string | null>(null);
+  const failed = failedSlot === slot;
   const meta = artManifest[slot];
   if (!failed) {
     return (
       <img
+        key={slot}
         className={`artslot-img ${className ?? ""}`}
         style={style}
         src={`/assets/${slot}.png`}
         alt={meta?.label ?? slot}
         loading="lazy"
-        onError={() => setFailed(true)}
+        onError={() => setFailedSlot(slot)}
       />
     );
   }

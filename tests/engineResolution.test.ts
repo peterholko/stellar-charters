@@ -18,12 +18,13 @@ class SellerBot implements Bot {
 }
 
 describe("engine resolution order", () => {
-  it("defers convoy settlement to a later turn (no same-turn chaining)", () => {
-    // Single seller-only player (zero upkeep): credit changes come only from deferred
-    // sale payouts. Systems are seeded at start, so production begins on turn 1. Fleet fuel
-    // upkeep (Section 07b) is zeroed so the only per-turn credit movement is sale settlement.
+  it("settles a 1-hop export the turn it ships (transit counts from the launch resolution, v8)", () => {
+    // Single seller-only player (zero upkeep): credit changes come only from sale payouts.
+    // Systems are seeded at start, so production begins on turn 1. Fleet fuel upkeep AND
+    // movement/freighter mass-fuel (Section 04/07b) are zeroed so the only per-turn credit
+    // movement is sale settlement.
     const base = tinyScenario(1, 1);
-    const config = { ...base, turns: 6, tuning: { ...base.tuning, fuelPerShipPerTurn: 0 } };
+    const config = { ...base, turns: 6, tuning: { ...base.tuning, fuelPerShipPerTurn: 0, fuelPerMassDistance: 0 } };
     const registry = new Map<string, BotFactory>([["miner", () => new SellerBot()]]);
     const engine = new Engine(config, 0, registry);
     const metrics = engine.run();
@@ -31,11 +32,11 @@ describe("engine resolution order", () => {
     const credAt = (t: number) =>
       metrics.snapshots.find((s) => s.turn === t)!.credits["corp-0"]!;
 
-    // Turn 2 ships the first export, but the one-turn convoy has not arrived yet, so
-    // credits are unchanged from turn 1 — goods leave before payment.
-    expect(credAt(2)).toBe(credAt(1));
-    // Turn 3: the export reaches the hub and pays out.
-    expect(credAt(3)).toBeGreaterThan(credAt(2));
+    // Turn 1 produces goods; nothing has sold yet.
+    // Turn 2 ships the first export AND it crosses its one-turn hop within the same
+    // resolution (launch → interdiction window → arrival), so the payout lands on turn 2.
+    expect(credAt(2)).toBeGreaterThan(credAt(1));
+    expect(credAt(3)).toBeGreaterThanOrEqual(credAt(2));
   });
 
   it("seeds each player onto a distinct inner-ring starting system", () => {

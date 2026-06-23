@@ -201,6 +201,7 @@ describe("extractors, depletion & fog (Section 21)", () => {
   it("a finite deposit depletes and stops producing once its reserves run out", () => {
     const reg = new Map<string, BotFactory>([["noop", () => new ExtractorBot(() => ({ systemId: "s0", siteKey: "planet:0:metals" }))]]);
     const eng = new Engine(loadScenario(oneBodySystem()), 1, reg);
+    eng.galaxy.system("s0").stockpile.alloys = 100; // builds need materials ON HAND (no auto-buy)
     const site = () => eng.galaxy.system("s0").sites.find((s) => s.resource === "metals")!;
     eng.stepTurn(); // builds extractor levels + extracts
     const earlyMetals = eng.galaxy.system("s0").stockpile.metals;

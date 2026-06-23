@@ -198,6 +198,42 @@ describe("procedural generator — connectivity", () => {
   });
 });
 
+describe("procedural generator — galaxy scale (Phase 0)", () => {
+  const maxRadius = (s: ReturnType<typeof generateProceduralScenario>): number =>
+    Math.max(...s.systems.map((x) => Math.hypot(x.position!.x, x.position!.y)));
+
+  it("scale 1 is byte-identical to the historical (no-override) galaxy", () => {
+    for (const players of PLAYER_COUNTS) {
+      const base = generateProceduralScenario({ seed: 42, players });
+      const explicit = generateProceduralScenario({ seed: 42, players, galaxy: { scale: 1 } });
+      expect(JSON.stringify(explicit)).toBe(JSON.stringify(base));
+    }
+  });
+
+  it("a larger scale grows the system count and the spatial span together", () => {
+    const small = generateProceduralScenario({ seed: 7, players: 8 });
+    const large = generateProceduralScenario({ seed: 7, players: 8, galaxy: { scale: 2 } });
+    expect(large.systems.length).toBeGreaterThan(small.systems.length);
+    // sqrt(2) ≈ 1.41× radii: the outer shell should sit meaningfully farther out.
+    expect(maxRadius(large)).toBeGreaterThan(maxRadius(small) * 1.2);
+  });
+
+  it("keeps roughly constant density: ~scale× more systems for a 2× galaxy", () => {
+    const small = generateProceduralScenario({ seed: 9, players: 8 });
+    const large = generateProceduralScenario({ seed: 9, players: 8, galaxy: { scale: 2 } });
+    const ratio = large.systems.length / small.systems.length;
+    expect(ratio).toBeGreaterThan(1.7);
+    expect(ratio).toBeLessThan(2.3);
+  });
+
+  it("stays deterministic and fully hub-connected at a larger scale", () => {
+    const a = generateProceduralScenario({ seed: 555, players: 8, galaxy: { scale: 2 } });
+    const b = generateProceduralScenario({ seed: 555, players: 8, galaxy: { scale: 2 } });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    expect(reachableFromHub(a).size).toBe(a.systems.length);
+  });
+});
+
 describe("procedural reconstruction", () => {
   function runDigest(seed: number, players: number): string {
     const scenario = generateProceduralScenario({ seed, players });

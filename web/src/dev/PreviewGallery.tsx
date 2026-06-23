@@ -6,27 +6,37 @@
  */
 import { artManifest } from "../theme/artManifest";
 import { ArtSlot } from "../theme/ArtSlot";
-import { store } from "../match/store";
+import { store, useApp } from "../match/store";
 import type { AppState } from "../match/store";
 import {
-  Engine, loadScenario, generateProceduralScenario, buildClientState, defaultRegistry, coloniesOf,
-  type PlayerView, type ColonyInfo, type System, type GameOutcome,
+  Engine, RESOURCES, loadScenario, generateProceduralScenario, buildClientState, defaultRegistry, canHostPopulation, coloniesOf,
+  type PlayerView, type ColonyInfo, type System, type GameOutcome, type TurnReport,
 } from "@engine";
 import { reconstructView } from "../match/clientView";
+import { Combat } from "../screens/Combat";
+import { Exchange } from "../screens/Exchange";
+import { GalaxyMap } from "../screens/GalaxyMap";
+import { Finance } from "../screens/Finance";
+import { Ships } from "../screens/Ships";
+import { Report } from "../screens/Report";
 import { Research } from "../screens/Research";
 import { Standings } from "../screens/Standings";
 import { ColonyCard, colonyNames } from "../components/ColonyPanel";
+import { Inspector } from "../components/Inspector";
+import { SystemSummaryCard } from "../components/SystemSummaryCard";
 
 /** Boot a deterministic game and advance it so there are labs, research, and developed colonies. */
-function boot(): { view: PlayerView; claimedSecrets: Record<string, string>; outcome: GameOutcome } | null {
+function boot(): { view: PlayerView; claimedSecrets: Record<string, string>; outcome: GameOutcome; reports: TurnReport[] } | null {
   try {
     const eng = new Engine(loadScenario(generateProceduralScenario({ seed: 3, players: 8 })), 3, defaultRegistry());
-    for (let i = 0; i < 26; i++) eng.stepTurn();
+    // Collect per-turn reports exactly like the worker does — the Report/Combat screens read them.
+    const turnReports: TurnReport[] = [];
+    for (let i = 0; i < 26; i++) turnReports.push(eng.stepTurn());
     // Show the seat that has developed the most (richest Research + colony screens).
     const seat = [...eng.corps].sort((a, b) => b.ownedSystemIds.length - a.ownedSystemIds.length)[0]!;
-    const cs = buildClientState(eng, seat.id, "preview", []);
+    const cs = buildClientState(eng, seat.id, "preview", turnReports);
     const wire = JSON.parse(JSON.stringify(cs)); // mimic the network round-trip
-    return { view: reconstructView(wire), claimedSecrets: wire.claimedSecrets ?? {}, outcome: wire.outcome };
+    return { view: reconstructView(wire), claimedSecrets: wire.claimedSecrets ?? {}, outcome: wire.outcome, reports: wire.reports ?? [] };
   } catch (e) {
     console.error("[preview] engine boot failed", e);
     return null;
@@ -36,6 +46,14 @@ function boot(): { view: PlayerView; claimedSecrets: Record<string, string>; out
 const BOOT = boot();
 
 const slotsWithPrefix = (p: string) => Object.keys(artManifest).filter((k) => k.startsWith(p));
+
+/** Store-subscribed Inspector so staged orders (queue removals, build gating) re-render live,
+ *  exactly as in the real app shell. */
+function LiveInspector({ systemId }: { systemId: string }) {
+  const { view, humanCorpId } = useApp();
+  if (!view) return null;
+  return <Inspector view={view} humanCorpId={humanCorpId} selection={{ kind: "system", id: systemId }} />;
+}
 
 /** A compact contact strip of every slot in a category, at its real in-screen container size. */
 function ArtStrip({ title, prefix, cls, wrap }: { title: string; prefix: string; cls: string; wrap?: (n: React.ReactNode, slot: string) => React.ReactNode }) {
@@ -60,7 +78,7 @@ export function PreviewGallery() {
       ...store.state,
       status: "ready", phase: "play", turn: BOOT.view.turn, totalTurns: BOOT.view.config.turns,
       humanCorpId: BOOT.view.me.id, view: BOOT.view, outcome: BOOT.outcome,
-      claimedSecrets: BOOT.claimedSecrets, staged: [],
+      claimedSecrets: BOOT.claimedSecrets, staged: [], reports: BOOT.reports,
     } as AppState;
   }
 
@@ -71,7 +89,7 @@ export function PreviewGallery() {
     for (const id of v.me.ownedSystemIds) {
       const sys: System = v.galaxy.system(id);
       const colonies = coloniesOf(sys);
-      const populated = colonies.find((c: ColonyInfo) => c.population) ?? colonies[0];
+      const populated = colonies.find((c: ColonyInfo) => canHostPopulation(c)) ?? colonies[0];
       if (populated) {
         const name = colonyNames(sys.name, colonies).get(populated.key) ?? sys.name;
         colonyCard = <ColonyCard colony={populated} name={name} sys={sys} view={v} canBuild />;
@@ -106,8 +124,42 @@ export function PreviewGallery() {
 
       {BOOT && (
         <>
+          {/* The owned system with the deepest stockpile — exercises the combined stock+production readout. */}
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>System inspector — owned system (real game)</h1>
+          <div style={{ maxWidth: 360 }}>
+            <LiveInspector
+              systemId={[...BOOT.view.me.ownedSystemIds].sort((a, b) => {
+                const stockSum = (id: string) => RESOURCES.reduce((t, r) => t + BOOT!.view.galaxy.system(id).stockpile[r], 0);
+                return stockSum(b) - stockSum(a);
+              })[0]!}
+            />
+          </div>
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Map summary card — owned system (real game)</h1>
+          <div style={{ maxWidth: 360 }}>
+            <SystemSummaryCard view={BOOT.view} humanCorpId={BOOT.view.me.id} systemId={BOOT.view.me.ownedSystemIds[0]!} />
+          </div>
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Exchange screen (real game)</h1>
+          <Exchange />
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Ships screen (real game)</h1>
+          <Ships />
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Combat screen (real game)</h1>
+          <Combat />
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Galaxy map (real game — try the Raid reach toggle)</h1>
+          <div style={{ height: 520, display: "flex" }}><GalaxyMap /></div>
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Turn report (real game)</h1>
+          <Report />
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
           <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Research screen (real game)</h1>
           <Research />
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Finance screen (real game)</h1>
+          <Finance />
           <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
         </>
       )}

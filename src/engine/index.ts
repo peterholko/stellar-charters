@@ -8,6 +8,7 @@ export { Rng } from "./rng.js";
 export * from "./types.js";
 export {
   DEFAULT_TUNING,
+  RULESET_VERSION,
   constructionCpCost,
   loadScenario,
   normaliseYields,
@@ -17,7 +18,15 @@ export {
   type ScenarioRoute,
   type Tuning,
 } from "./config.js";
+export { CHARTER_SPECS, CHARTER_TYPES, type CharterSpec } from "./charters.js";
 export { Galaxy } from "./galaxy.js";
+export {
+  fleetSpeed,
+  planFleetMove,
+  previewFleetMove,
+  type FleetPlan,
+  type MovePreview,
+} from "./movement.js";
 export {
   effectiveYields,
   potentialYields,
@@ -67,7 +76,7 @@ export {
   type ResearchDivision,
   type ResearchMods,
 } from "./research.js";
-export { Market, type ClearableOrder, type MarketFill } from "./market.js";
+export { Market, quoteInstant, type ClearableOrder, type InstantQuote, type MarketFill } from "./market.js";
 export { resolveAuction, type AuctionResult } from "./auction.js";
 export {
   canRaidRoute,
@@ -77,7 +86,7 @@ export {
   type RaidResult,
 } from "./raiding.js";
 export { Engine, type EngineOptions } from "./engine.js";
-export { type TurnEvent, type TurnReport } from "./report.js";
+export { type LedgerCause, type LedgerEntry, type TurnEvent, type TurnReport } from "./report.js";
 export { computeOutcome, type GameOutcome, type Standing, type VictoryPath } from "./standings.js";
 export { HumanBot } from "./bots/human.js";
 export {
@@ -89,6 +98,7 @@ export {
   type ClientRoute,
   type ClientCorp,
   type ClientConvoy,
+  type ClientContact,
   type ClientPlayer,
   type GamePhase,
 } from "./clientState.js";

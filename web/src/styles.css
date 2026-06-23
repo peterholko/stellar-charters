@@ -13,6 +13,13 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Desktop runs the 3-column layout (above the 1180px drawer breakpoint); nudge the root up so
+   the rem-based type + spacing scale together for readability. Mobile/tablet keep the browser
+   default. Percentage (not px) so a user's larger browser base font is still respected. */
+@media (min-width: 1181px) {
+  html { font-size: 112.5%; } /* 16px → 18px at the default base */
+}
+
 body::before {
   content: "";
   position: fixed;
@@ -49,6 +56,7 @@ button { font-family: inherit; cursor: pointer; }
 input, select { font-family: inherit; }
 .hint { margin: 0.5rem 0 0; font-size: 0.74rem; color: var(--ink-faint); line-height: 1.5; }
 .hint--warn { color: var(--warn); display: flex; gap: 0.35rem; align-items: center; }
+.hint--ok { color: var(--positive); }
 
 /* ============================ shell ============================ */
 .shell { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; }
@@ -188,9 +196,22 @@ input, select { font-family: inherit; }
 .kv dd { margin: 0; font-size: 0.86rem; font-family: var(--font-display); }
 
 .field { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.7rem; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
-.field input, .field select { padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); font-size: 0.86rem; text-transform: none; letter-spacing: normal; }
+/* width/min-width pin the control to its container — a select otherwise sizes to its longest
+   option (e.g. a hull-class entry) and blows the whole screen grid out past a phone viewport. */
+.field input, .field select { width: 100%; min-width: 0; padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); font-size: 0.86rem; text-transform: none; letter-spacing: normal; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
 .toggle { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem; font-size: 0.74rem; color: var(--ink-dim); }
+/* Prominent local-stock readout in the order composer (playtest: the old one-line hint was missed). */
+.stockline { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.7rem; padding: 0.5rem 0.65rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); }
+.stockline__text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; flex: 1; }
+.stockline__label { font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
+.stockline__warn { display: flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: var(--warn); }
+.stockline__qty { font-family: var(--font-display); font-size: 1.35rem; color: var(--accent); }
+.stockline--short { border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.stockline--short .stockline__qty { color: var(--warn); }
+.stockline__max { padding: 0.25rem 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: transparent; color: var(--ink-dim); font-size: 0.64rem; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
+.stockline__max:hover { color: var(--accent); border-color: var(--accent); }
+
 .preview { margin-top: 0.8rem; padding: 0.7rem; border: 1px dashed var(--line); border-radius: var(--radius-sm); background: var(--panel-2); }
 .preview__row { display: flex; justify-content: space-between; font-size: 0.78rem; padding: 0.18rem 0; color: var(--ink-dim); }
 .preview__row strong { color: var(--ink); font-family: var(--font-display); }
@@ -323,6 +344,14 @@ input, select { font-family: inherit; }
 .bopt--maxed { opacity: 0.6; }
 .bopt__art { width: 56px; height: 56px; flex: none; border-radius: var(--radius-sm); object-fit: cover; }
 .bopt__art.artslot { font-size: 0.5rem; }
+.bopt__art--resource { display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--line-soft); }
+.bopt__mat { display: inline-flex; align-items: center; gap: 0.18rem; margin-left: 0.3rem; color: var(--ink-dim); white-space: nowrap; }
+.bopt__mat svg, .bopt__mat img { vertical-align: middle; }
+.bopt__short { color: var(--negative); }
+.bopt__note { color: var(--ink-faint); }
+.bopt__status { display: block; font-size: 0.62rem; margin-top: 0.2rem; }
+.bopt__status--ok { color: var(--positive); }
+.bopt__status--short { color: var(--negative); }
 .bopt__info { flex: 1; min-width: 0; }
 .bopt__top { display: flex; align-items: baseline; gap: 0.4rem; }
 .bopt__top strong { font-size: 0.78rem; text-transform: capitalize; }
@@ -335,6 +364,8 @@ input, select { font-family: inherit; }
 .bopt__btn:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 .bopt__btn:disabled { opacity: 0.4; cursor: default; border-color: var(--line-soft); color: var(--ink-dim); }
 .bopt__btn--poor { opacity: 0.7; }
+.bopt__btn--import { border-color: var(--warn); color: var(--warn); max-width: 96px; }
+.bopt__btn--import:hover:not(:disabled) { background: var(--warn); color: var(--on-accent); }
 .colony__queue { margin-top: 0.5rem; }
 .colony__queuelist { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.35rem; }
 .queue-row { display: flex; align-items: center; gap: 0.45rem; font-size: 0.66rem; }
@@ -344,6 +375,11 @@ input, select { font-family: inherit; }
 .queue-row__fill { display: block; height: 100%; background: var(--accent); }
 .queue-row__wait { flex: 1; color: var(--ink-dim); font-style: italic; }
 .queue-row__eta { min-width: 28px; text-align: right; color: var(--ink-dim); font-family: var(--font-display); }
+.queue-row--waiting .queue-row__wait { color: var(--warn); }
+.queue-row--removing { opacity: 0.55; }
+.queue-row__removing { color: var(--ink-faint); font-style: italic; }
+.queue-row__remove { width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border-radius: 4px; border: 1px solid var(--line); background: transparent; color: var(--ink-faint); font-size: 0.6rem; cursor: pointer; line-height: 1; }
+.queue-row__remove:hover { color: var(--negative); border-color: var(--negative); }
 
 /* ============================ research screen (Section 28) ============================ */
 .research { display: flex; flex-direction: column; gap: 1rem; }
@@ -444,6 +480,70 @@ input, select { font-family: inherit; }
 
 /* ============================ galaxy map ============================ */
 .mapscreen { display: flex; flex-direction: column; height: 100%; gap: 0.7rem; }
+
+/* Full-bleed desktop redesign: the canvas fills the workspace and all chrome floats over it. */
+.workspace--map { padding: 0; overflow: hidden; }
+.mapscreen--bleed { display: block; position: relative; height: 100%; gap: 0; }
+.mapscreen--bleed .mapscreen__canvas { position: absolute; inset: 0; border: none; border-radius: 0; min-height: 0; }
+/* Floating control clusters pinned to the canvas corners. */
+.mapctl {
+  position: absolute; z-index: 6; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
+  max-width: calc(100% - 1.5rem);
+  padding: 0.35rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(7px);
+}
+.mapctl--tl { top: 0.75rem; left: 0.75rem; }
+.mapctl--tr { top: 0.75rem; right: 0.75rem; }
+/* Compact icon buttons (replay, raid-reach) — square, icon-first, with an optional count badge. */
+.iconbtn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem;
+  min-width: 1.9rem; height: 1.9rem; padding: 0 0.45rem; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--panel-2); color: var(--accent); font-size: 0.82rem;
+}
+.iconbtn:disabled { opacity: 0.4; }
+.iconbtn.is-on { color: var(--negative); border-color: var(--negative); }
+.iconbtn__count { font-size: 0.62rem; color: var(--ink-dim); font-family: var(--font-display); }
+/* Legend as a small chip, bottom-centre over the canvas. */
+.maplegend {
+  position: absolute; bottom: 0.75rem; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; flex-wrap: wrap; gap: 0.7rem; font-size: 0.66rem; color: var(--ink-dim);
+  padding: 0.3rem 0.6rem; border: 1px solid var(--line); border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(7px);
+}
+.maplegend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+/* The map's own floating inspector — a non-modal card docked to the right edge. */
+.mapscreen__selpanel {
+  position: absolute; top: 4.25rem; right: 0.75rem; z-index: 7;
+  width: min(360px, calc(100% - 1.5rem)); max-height: calc(100% - 5.5rem); overflow-y: auto;
+  padding: 0.6rem; border: 1px solid var(--line); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+}
+.mapscreen__selclose {
+  position: absolute; top: 0.4rem; right: 0.4rem; z-index: 1; width: 1.6rem; height: 1.6rem;
+  display: grid; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink-dim); font-size: 1.05rem; line-height: 1;
+}
+.mapscreen__movebar--float {
+  position: absolute; top: 0.75rem; left: 50%; transform: translateX(-50%); z-index: 8;
+  width: max-content; max-width: calc(100% - 1.5rem); margin: 0;
+  background: color-mix(in srgb, var(--bg) 55%, color-mix(in srgb, var(--accent) 22%, transparent));
+  backdrop-filter: blur(7px);
+}
+/* Narrow viewports: stack the two corner clusters as full-width top rows (they'd otherwise
+   overlap), and dock the selection panel as a bottom sheet. */
+@media (max-width: 760px) {
+  .mapctl { left: 0.5rem; right: 0.5rem; max-width: none; }
+  /* Row 1: search + jump buttons kept to a single scrollable row so it can't grow tall and
+     collide with row 2. Row 2: overlay modes + replay/raid (wraps freely below it). */
+  .mapctl--tl { top: 0.5rem; flex-wrap: nowrap; overflow-x: auto; }
+  .mapctl--tl .mapscreen__search input { min-width: 5.5rem; }
+  .mapctl--tr { top: 3.7rem; justify-content: flex-start; }
+  .mapscreen__selpanel {
+    top: auto; bottom: 0.5rem; left: 0.5rem; right: 0.5rem; width: auto; max-height: 50%;
+  }
+  .maplegend { display: none; }
+}
 .mapscreen__head { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 0.5rem; }
 .mapscreen__head h2 { font-size: 1.05rem; }
 .mapscreen__legend { display: flex; flex-wrap: wrap; gap: 0.7rem; font-size: 0.66rem; color: var(--ink-dim); }
@@ -451,9 +551,22 @@ input, select { font-family: inherit; }
 .lg { width: 12px; height: 4px; border-radius: 2px; display: inline-block; }
 .lg--mine { background: var(--accent); } .lg--rival { background: #ff6f9c; } .lg--open { background: var(--ink-faint); }
 .lg--route-high { background: var(--warn); } .lg--route-uncharted { background: var(--ink-faint); opacity: 0.5; }
+.lg--raid { background: var(--negative); }
+.mapscreen__replay.is-on { color: var(--negative); border-color: var(--negative); }
+.mapscreen__overlays { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
+.mapscreen__overlays .mini-btn.is-on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.mapscreen__nav { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.mapscreen__search { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.5rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-2); color: var(--ink-dim); }
+.mapscreen__search input { background: transparent; border: none; outline: none; color: var(--ink); font-size: 0.72rem; min-width: 9rem; font-family: inherit; }
 .mapscreen__canvas { flex: 1; min-height: 320px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background:
   radial-gradient(700px 500px at 50% 40%, var(--map-glow), transparent 70%), var(--bg-2); position: relative; }
 .mapscreen__hint { margin: 0; font-size: 0.68rem; color: var(--ink-faint); text-align: center; }
+/* Move-mode banner: shown while a fleet is selected so "tap a destination" is obvious on phones
+   (where the inspector drawer is intentionally suppressed during a move). */
+.mapscreen__movebar { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+  margin: 0 0 0.45rem; padding: 0.4rem 0.7rem; border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 0.82rem; }
+.mapscreen__movebar span { display: inline-flex; align-items: center; gap: 0.4rem; }
 
 /* PixiJS WebGL galaxy fills the canvas; touch-action none lets it own pan/pinch gestures
    (incl. iOS), and disabling selection/callout keeps drags from selecting text or popping
@@ -465,10 +578,21 @@ input, select { font-family: inherit; }
 
 /* ============================ exchange ============================ */
 .exchange { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1rem; align-items: start; }
+.exchange__left { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+/* ----- Hub warehouse (ruleset v10): capacity-limited storage at the Exchange ----- */
+.warehouse__rows { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.6rem; }
+.warehouse__row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; }
+.warehouse__name { color: var(--ink-dim); }
+.warehouse__qty { margin-left: auto; font-family: var(--font-display); color: var(--accent); }
+.warehouse__btn { padding: 0.3rem 0.55rem; border-radius: var(--radius-sm); border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: 0.66rem; cursor: pointer; white-space: nowrap; }
+.warehouse__btn:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
+.warehouse__btn:disabled { opacity: 0.45; cursor: default; border-color: var(--line-soft); color: var(--ink-dim); }
+.warehouse__btn--upgrade { border-color: var(--line); color: var(--ink-dim); }
+.warehouse__btn--upgrade:hover:not(:disabled) { background: var(--panel-2); color: var(--ink); }
 .board { display: flex; flex-direction: column; gap: 0.3rem; }
-.board__row { display: grid; grid-template-columns: auto 1fr auto auto auto auto; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); border: 1px solid transparent; background: var(--panel-2); color: var(--ink); text-align: left; }
+.board__row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto auto; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); border: 1px solid transparent; background: var(--panel-2); color: var(--ink); text-align: left; }
 .board__row.is-active { border-color: var(--accent); }
-.board__name { font-size: 0.82rem; }
+.board__name { font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board__price { font-family: var(--font-display); }
 .board__move.is-up { color: var(--positive); font-size: 0.72rem; }
 .board__move.is-down { color: var(--negative); font-size: 0.72rem; }
@@ -554,10 +678,26 @@ input, select { font-family: inherit; }
 .convoy-card__top strong { font-size: 0.82rem; }
 .convoy-card__path { font-size: 0.66rem; color: var(--ink-faint); margin: 0.2rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .convoy-card__meta { display: flex; flex-wrap: wrap; gap: 0.7rem; font-size: 0.68rem; color: var(--ink-dim); }
+.convoys { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1rem; align-items: start; }
 .convoys__hint { margin: 0.7rem 0 0; font-size: 0.68rem; color: var(--ink-faint); }
+/* Ship-to-warehouse composer (ruleset v10): system -> hub storage freighter runs. */
+.convoys__shipper .bar { margin-top: 0.5rem; }
+.convoys__shipper-stock { align-items: stretch; }
+.convoys__shipper-stock .stockline__max { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.5rem 0.6rem; font-size: 0.78rem; }
+
+/* ============================ combat ============================ */
+.combat { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: start; }
+.combat__side { display: flex; flex-direction: column; gap: 1rem; }
+.combat__feed { margin-top: 0.7rem; }
+.combat__turn { flex: none; min-width: 30px; font-size: 0.62rem; color: var(--ink-faint); font-family: var(--font-display); padding-top: 0.15rem; }
+.combat__feed .ghost-btn { margin-top: 0.3rem; }
 
 /* ============================ fleet ============================ */
-.fleet { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
+/* Roster leads full-width; the shipyard order form and raid planner share the row below. */
+.fleet { display: grid; grid-template-columns: 1fr 1fr; grid-template-areas: "roster roster" "yard raids"; gap: 1rem; align-items: start; }
+.fleet__roster { grid-area: roster; }
+.fleet__yard { grid-area: yard; }
+.fleet__raids { grid-area: raids; }
 .ladder { display: flex; flex-direction: column; gap: 0.4rem; }
 .ladder__rung { display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line-soft); }
 .ladder__rung.is-next { border-color: var(--accent); }
@@ -568,9 +708,20 @@ input, select { font-family: inherit; }
 .ladder__info span { font-size: 0.64rem; color: var(--ink-faint); }
 .fleet__shipart { width: 100%; height: 120px; border-radius: var(--radius-sm); margin-bottom: 0.6rem; }
 .roster { display: flex; flex-direction: column; gap: 0.35rem; }
+.roster__group { display: flex; flex-direction: column; gap: 0.35rem; }
+.roster__group + .roster__group { margin-top: 0.6rem; }
+.roster__group-head { display: flex; align-items: center; gap: 0.5rem; padding: 0 0.1rem; }
+.roster__group-head strong { font-size: 0.74rem; }
+.roster__group-actions { margin-left: auto; display: flex; gap: 0.35rem; }
+.roster__group-actions .mini-btn { display: inline-flex; align-items: center; gap: 0.3rem; }
+/* Per-survey-vessel dispatch control in the Ships roster (pick a target system, send the scout). */
+.survey-dispatch { display: inline-flex; align-items: center; gap: 0.3rem; }
+.survey-dispatch select { font-size: 0.72rem; padding: 0.2rem 0.3rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); max-width: 9rem; }
+.survey-dispatch .mini-btn { display: inline-flex; align-items: center; gap: 0.3rem; }
 .roster__row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.76rem; padding: 0.35rem 0.45rem; border-radius: var(--radius-sm); background: var(--panel-2); }
 .roster__sub { color: var(--ink-faint); font-size: 0.66rem; }
 .roster__row .badge { margin-left: auto; }
+.roster__row .badge ~ .badge { margin-left: 0; }
 .raid-list { display: flex; flex-direction: column; gap: 0.4rem; }
 .raid-row { display: flex; align-items: center; gap: 0.55rem; padding: 0.4rem 0.5rem; border-radius: var(--radius-sm); background: var(--panel-2); }
 .raid-row__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
@@ -586,14 +737,66 @@ input, select { font-family: inherit; }
 .borrow__ctrl input { flex: 1; padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); }
 .borrow__ctrl .ghost-btn { width: auto; margin: 0; white-space: nowrap; }
 .stock { display: flex; flex-direction: column; gap: 0.5rem; }
-.stock-row { display: grid; grid-template-columns: 1.3fr 1fr auto; align-items: center; gap: 0.7rem; padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line-soft); }
+.stock-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.8fr) auto; align-items: center; gap: 0.7rem; padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line-soft); }
 .stock-row__id { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .stock-row__dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .stock-row__id strong { font-size: 0.8rem; display: block; }
 .stock-row__id span { font-size: 0.62rem; color: var(--ink-faint); }
 .stock-row__meter { font-size: 0.62rem; color: var(--ink-faint); display: flex; flex-direction: column; gap: 0.25rem; }
-.stock-row__buy { display: flex; gap: 0.35rem; align-items: center; }
+.stock-row__buy { display: flex; gap: 0.35rem; align-items: flex-end; }
 .stock-row__buy input { width: 54px; padding: 0.35rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+/* Labelled trade inputs — "what is this number?" must be answerable without a hover. */
+.stock-field { display: flex; flex-direction: column; gap: 2px; }
+.stock-field > span { font-size: 0.54rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
+.stock-row__buy .mini-btn { align-self: flex-end; }
+/* Own-charter row carries wider controls (Buy back / Raise cash) — give it two lines:
+   identity + management meter on top, the trade controls on their own row beneath. */
+.stock-row--own { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.5rem 0.55rem; margin-bottom: 0.7rem; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.stock-row--own .stock-row__buy { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: wrap; }
+/* Clickable charter header — unfolds the current ownership (Section 17 cap table). */
+.stock-row__head { display: flex; align-items: center; gap: 0.5rem; min-width: 0; background: none; border: none; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.stock-row__head strong { font-size: 0.8rem; display: block; }
+.stock-row__head > div { min-width: 0; }
+.stock-row__chev { margin-left: auto; padding-left: 0.4rem; color: var(--ink-faint); font-size: 0.72rem; flex: none; }
+.captable { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; padding-top: 0.45rem; border-top: 1px solid var(--line-soft); }
+.captable__row { display: grid; grid-template-columns: minmax(0, 2.2fr) 2.2em minmax(48px, 1fr); gap: 0.5rem; align-items: center; font-size: 0.68rem; color: var(--ink-dim); }
+.captable__row.is-you .captable__name { color: var(--accent); }
+.captable__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.captable__shares { font-family: var(--font-display); color: var(--ink); text-align: right; }
+/* Order ticket (Section 17): opens from a row's Buy/Sell — limit, volume, itemized fills. */
+.ticket { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.4rem; padding: 0.55rem 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); }
+.ticket__head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.ticket__head strong { font-size: 0.76rem; }
+.ticket__quote { font-size: 0.64rem; color: var(--ink-faint); }
+.ticket__fields { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; }
+.ticket__fields input { width: 84px; padding: 0.35rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); }
+.ticket__fills { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.66rem; color: var(--ink-dim); }
+.ticket__fill { display: flex; justify-content: space-between; gap: 0.6rem; }
+.ticket__fill--total { border-top: 1px solid var(--line-soft); padding-top: 0.25rem; color: var(--ink); }
+.ticket__warn { font-size: 0.64rem; color: var(--warn, #e8b34c); }
+.ticket__actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+
+/* Map-screen system summary card: a glance, not a dossier. */
+.syscard { display: flex; flex-direction: column; gap: 0.55rem; }
+.syscard__head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.syscard__head strong { font-size: 0.92rem; display: block; }
+.syscard__owner { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.66rem; color: var(--ink-faint); }
+.syscard__owner i { font-style: normal; }
+.syscard__star { font-size: 0.62rem; text-align: right; flex: none; }
+.syscard__line { font-size: 0.7rem; color: var(--ink-dim); margin: 0; }
+.syscard__res { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.syscard__chip { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.22rem 0.45rem; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line-soft); font-size: 0.7rem; font-family: var(--font-display); }
+.syscard__foot { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.syscard__more { align-self: flex-start; }
+
+/* Shipyard bill of materials (Section 07b): one chip per strategic input. */
+.matbill { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.55rem 0 0.2rem; }
+.matchip { display: flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--line-soft); background: var(--panel-2); font-size: 0.74rem; color: var(--ink); }
+.matchip strong { font-family: var(--font-display); font-size: 0.78rem; }
+.matchip__state { font-size: 0.6rem; letter-spacing: 0.04em; }
+.matchip--ok .matchip__state { color: var(--positive); }
+.matchip--short { border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.matchip--short .matchip__state { color: var(--warn); text-transform: uppercase; }
 
 /* ============================ report ============================ */
 .reportscreen { display: grid; grid-template-columns: 240px 1fr; gap: 1rem; align-items: start; }
@@ -704,8 +907,36 @@ input, select { font-family: inherit; }
 .standings__legend ul { margin: 0.4rem 0 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.76rem; color: var(--ink-dim); }
 .standings__legend strong { color: var(--ink); }
 @media (max-width: 720px) {
-  .standings__board { overflow-x: auto; }
-  .standings__head, .standings__row { min-width: 560px; }
+  /* Restack the 9-column scoreboard into per-charter stat cards — no sideways scroll on a
+     phone. The header row goes away; the five bare stat columns get ::before labels instead.
+     Scoped to .standings__board so the dashboard's mini-standings (same class names, flex
+     layout) is untouched. */
+  .standings__board .standings__head { display: none; }
+  .standings__board .standings__row {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    row-gap: 0.45rem;
+    padding: 0.55rem 0.65rem;
+  }
+  .standings__board .standings__rank { grid-row: 1; grid-column: 1; text-align: left; }
+  .standings__board .standings__name { grid-row: 1; grid-column: 2 / 5; }
+  .standings__board .standings__path { grid-row: 1; grid-column: 5 / 7; justify-self: end; }
+  .standings__board .standings__score { grid-row: 2; grid-column: 1 / -1; }
+  /* Valuation (the only wide stat) takes two tracks; sys/tech/secret/wonder auto-flow after it. */
+  .standings__board .standings__row > span:nth-child(4) { grid-column: 1 / 3; }
+  .standings__board .standings__row > span:nth-child(n+4):nth-child(-n+8) {
+    grid-row: 3;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    font-family: var(--font-display); font-size: 0.74rem; white-space: nowrap;
+  }
+  .standings__board .standings__row > span:nth-child(n+4):nth-child(-n+8)::before {
+    font-family: var(--font-body); font-size: 0.52rem; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  .standings__board .standings__row > span:nth-child(4)::before { content: "Val"; }
+  .standings__board .standings__row > span:nth-child(5)::before { content: "Sys"; }
+  .standings__board .standings__row > span:nth-child(6)::before { content: "Tech"; }
+  .standings__board .standings__row > span:nth-child(7)::before { content: "Secret"; }
+  .standings__board .standings__row > span:nth-child(8)::before { content: "Wonder"; }
 }
 
 /* ============================ mobile chrome ============================ */
@@ -792,8 +1023,12 @@ input, select { font-family: inherit; }
   .drawer-fab { display: inline-flex; position: fixed; right: 16px; bottom: 76px; z-index: 45; width: 52px; height: 52px; border-radius: 50%; border: none; background: var(--accent); color: var(--on-accent); align-items: center; justify-content: center; box-shadow: var(--glow), var(--shadow); }
   .drawer-fab__count { position: absolute; top: -2px; right: -2px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--negative); color: #fff; font-size: 0.66rem; display: grid; place-items: center; }
   .shell--drawer .drawer-scrim { display: block; position: fixed; inset: 0; z-index: 39; background: rgba(0,0,0,0.4); }
-  .dashboard__grid { grid-template-columns: 1fr; }
-  .exchange, .fleet, .finance, .reportscreen { grid-template-columns: 1fr; }
+  .dashboard__grid { grid-template-columns: minmax(0, 1fr); }
+  /* minmax(0,…) so a wide child (long select option, sparkline row) shrinks with the
+     viewport instead of blowing the single column out past the phone's width. */
+  .exchange, .fleet, .finance, .reportscreen, .combat, .convoys { grid-template-columns: minmax(0, 1fr); }
+  /* The fleet's named grid areas pin a 2-column layout — restack them for one column. */
+  .fleet { grid-template-areas: "roster" "yard" "raids"; }
 }
 
 @media (max-width: 760px) {
@@ -801,9 +1036,11 @@ input, select { font-family: inherit; }
   .navrail { display: none; }
   .workspace { padding: 0.8rem; }
   /* In-flow at the bottom of the 100dvh shell so it stays visible above the iOS toolbar, and
-     padded into the home-indicator / curved-corner safe area so the edge icons stay tappable. */
-  .mobilenav { display: flex; flex: none; z-index: 40; background: var(--nav-bg); border-top: 1px solid var(--line); overflow-x: auto; padding: 0.3rem; padding-bottom: calc(0.3rem + env(safe-area-inset-bottom)); padding-left: calc(0.3rem + env(safe-area-inset-left)); padding-right: calc(0.3rem + env(safe-area-inset-right)); gap: 0.2rem; backdrop-filter: blur(8px); }
-  .mobilenav button { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0.4rem 0.7rem; border: none; background: transparent; color: var(--ink-dim); font-size: 0.56rem; letter-spacing: 0.05em; text-transform: uppercase; border-radius: var(--radius-sm); }
+     padded into the home-indicator / curved-corner safe area so the edge icons stay tappable.
+     A 6×2 grid so all 12 screens are reachable without scrolling the nav sideways. */
+  .mobilenav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); flex: none; z-index: 40; background: var(--nav-bg); border-top: 1px solid var(--line); padding: 0.3rem; padding-bottom: calc(0.3rem + env(safe-area-inset-bottom)); padding-left: calc(0.3rem + env(safe-area-inset-left)); padding-right: calc(0.3rem + env(safe-area-inset-right)); gap: 0.2rem; backdrop-filter: blur(8px); }
+  .mobilenav button { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0.4rem 0.1rem; border: none; background: transparent; color: var(--ink-dim); font-size: 0.54rem; letter-spacing: 0.02em; text-transform: uppercase; border-radius: var(--radius-sm); }
+  .mobilenav button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobilenav button.is-active { color: var(--accent); }
   /* Inspector/order-tray drawer: a full-height modal panel above the in-flow nav. Fit the
      visible viewport (dvh, not the layout viewport behind the iOS toolbar), inset for the
@@ -818,13 +1055,27 @@ input, select { font-family: inherit; }
   .sidestack .tray { flex: none; box-shadow: none; }
   .sidestack .tray__list { overflow: visible; min-height: 0; }
   .shell--drawer .drawer-scrim { z-index: 49; }
-  .drawer-fab { bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 55; }
-  .dashboard__stats { grid-template-columns: repeat(3, 1fr); }
+  /* Clear the two-row bottom nav (6×2 grid ≈ 99px tall) so the turn FAB floats just above it
+     instead of overlapping its top row. */
+  .drawer-fab { bottom: calc(112px + env(safe-area-inset-bottom)); z-index: 55; }
+  /* minmax(0,…) so a stat's min-content (icon + "7,077 Cr") can't push the grid past the
+     viewport; below 480px even that gets tight, so drop to two-up. */
+  .dashboard__stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .topbar__brandtext .eyebrow { display: none; }
   .auction__grid { grid-template-columns: 1fr; }
   .auction__slip { position: static; }
   .topbar { flex-wrap: wrap; }
   .topbar__username { display: none; }
+  /* Stock rows (Section 17 cap table): the desktop 3-column grid (identity / control
+     meter / trade controls) can't fit a phone — stack it, and let the qty/limit inputs
+     and Buy/Sell buttons wrap onto their own lines instead of overlapping. */
+  .stock-row, .stock-row--own { grid-template-columns: 1fr; gap: 0.45rem; }
+  .stock-row__buy { flex-wrap: wrap; }
+  .stock-row__buy .mini-btn { flex: 1 1 calc(50% - 0.35rem); min-width: 0; }
+}
+
+@media (max-width: 480px) {
+  .dashboard__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ============================ generated art ============================ */
@@ -861,3 +1112,108 @@ input, select { font-family: inherit; }
 /* Event splash thumbnail on a dashboard digest line. */
 .digest__art { flex: none; width: 64px; height: 40px; border-radius: 5px; object-fit: cover; align-self: center; }
 .digest__art.artslot { min-height: 40px; }
+
+/* ----- Turn Report ledger + warnings (design rules #1/#2: visible money, loud throttles) ----- */
+.ledger { display: flex; flex-direction: column; gap: 0.15rem; margin-bottom: 0.6rem; }
+.ledger__group summary { cursor: pointer; list-style: none; }
+.ledger__group summary::-webkit-details-marker { display: none; }
+.ledger__group[open] summary { color: var(--ink); }
+.ledger__line { padding-left: 1rem; opacity: 0.85; }
+.ledger__net { border-top: 1px solid var(--line); margin-top: 0.3rem; padding-top: 0.35rem; }
+.ledger .pos { color: var(--positive, #6fcf97); }
+.ledger .neg { color: var(--negative); }
+.digest__row .mini-btn { margin-left: auto; align-self: center; flex-shrink: 0; }
+.powermeter { display: inline-flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+.dashboard__valparts { margin: 0.4rem 0 0.2rem; }
+.dashboard__valparts summary { cursor: pointer; }
+.dashboard__valparts .ledger { max-width: 420px; }
+.report-sub .mini-btn { vertical-align: middle; }
+
+/* ----- Charter pick overlay (review Section 5: asymmetric identity at setup) ----- */
+.charterpick { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(4, 5, 9, 0.78); backdrop-filter: blur(3px); padding: 1rem; }
+.charterpick__panel { max-width: 720px; width: 100%; }
+.charterpick__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.6rem; margin-top: 0.6rem; }
+.charterpick__card { display: flex; flex-direction: column; gap: 0.35rem; text-align: left; padding: 0.8rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); cursor: pointer; }
+.charterpick__card:hover { border-color: var(--accent); }
+.charterpick__card strong { font-family: var(--font-display); }
+.charterpick__blurb { font-size: 0.72rem; color: var(--ink-faint); }
+.charterpick__mods { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+/* ----- Build-structure overlay (playtest: the full build menu drowned the colony card) ----- */
+.buildmodal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(4, 5, 9, 0.78); backdrop-filter: blur(3px); padding: 1rem; }
+.buildmodal__inner { width: min(540px, 94vw); max-height: 86vh; display: flex; }
+.buildmodal__panel { flex: 1; overflow-y: auto; min-width: 0; }
+.buildmodal__panel .powermeter { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; }
+.buildmodal__close { width: 26px; height: 26px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-dim); cursor: pointer; line-height: 1; }
+.buildmodal__close:hover { color: var(--ink); border-color: var(--accent); }
+
+/* ----- Per-system production readout (playtest: show what a system actually produces) ----- */
+.prodgrid { display: flex; flex-direction: column; gap: 0.15rem; margin: 0.5rem 0; }
+.prodgrid__title { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin-bottom: 0.15rem; }
+.prodgrid__row { display: flex; align-items: center; gap: 0.45rem; font-size: 0.78rem; padding: 0.12rem 0; }
+.prodgrid__name { color: var(--ink-dim); }
+.prodgrid__now { margin-left: auto; font-family: var(--font-display); color: var(--ink); }
+.prodgrid__pot { font-size: 0.68rem; color: var(--ink-faint); }
+/* Owned-system variant: the shared system stockpile next to output, aligned in columns. */
+.prodgrid--stocked .prodgrid__head,
+.prodgrid--stocked .prodgrid__row { display: grid; grid-template-columns: 15px minmax(0, 1fr) 3rem 6rem; align-items: center; gap: 0.45rem; }
+.prodgrid--stocked .prodgrid__head { padding-bottom: 0.15rem; border-bottom: 1px solid var(--line-soft); margin-bottom: 0.15rem; }
+.prodgrid--stocked .prodgrid__title { grid-column: 1 / 3; margin-bottom: 0; }
+.prodgrid__col { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); text-align: right; }
+.prodgrid__stock { text-align: right; font-family: var(--font-display); font-size: 0.92rem; color: var(--accent); }
+.prodgrid__rate { display: flex; align-items: baseline; justify-content: flex-end; gap: 0.3rem; white-space: nowrap; }
+.prodgrid--stocked .prodgrid__now { margin-left: 0; }
+.prodgrid__none { color: var(--ink-faint); }
+
+/* ===================== mobile galaxy map: landscape-primary ===================== */
+/* Landscape phones (short viewports): the bottom 6×2 nav is hidden above 760px wide, but the
+   desktop/tablet left navrail is too tall for ~375px of height. Slim it to an icon-only,
+   scrollable rail and shave the topbar so the map gets nearly the whole screen. Placed last so it
+   wins over the ≤1180 / ≤760 blocks where they also match. max-height:500px keeps tablets (≥768
+   tall in landscape) and desktops on their normal layout. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .topbar { padding-top: calc(0.25rem + env(safe-area-inset-top)); padding-bottom: 0.25rem; gap: 0.6rem; }
+  .topbar__brandtext, .topbar__phase { display: none; }
+
+  .shell__body, .shell__body--full { grid-template-columns: 52px minmax(0, 1fr); }
+  .navrail {
+    display: flex; padding: 0.3rem 0.15rem; gap: 1px; overflow-y: auto;
+    padding-left: calc(0.15rem + env(safe-area-inset-left));
+  }
+  .navrail button { padding: 0.45rem 0.1rem; }
+  .navrail button span:not(.navrail__count) { display: none; } /* icon-only; keep the staged badge */
+
+  /* Floating map chrome inset for the side notch, and the selection panel tucked under the
+     top-right controls with a tighter offset for the short viewport. */
+  .mapctl--tl { left: calc(0.6rem + env(safe-area-inset-left)); }
+  .mapctl--tr { right: calc(0.6rem + env(safe-area-inset-right)); }
+  .mapscreen__selpanel {
+    top: 3.3rem; right: calc(0.6rem + env(safe-area-inset-right));
+    width: min(320px, 44%); max-height: calc(100% - 4rem);
+  }
+  .maplegend { bottom: calc(0.5rem + env(safe-area-inset-bottom)); }
+}
+
+/* Touch devices: enlarge the floating map control targets (phones + tablets), leaving the
+   mouse-driven desktop untouched. */
+@media (pointer: coarse) {
+  .mapctl .iconbtn { min-width: 2.4rem; height: 2.4rem; }
+  .mapctl .mini-btn { padding: 0.5rem 0.7rem; }
+  .mapscreen__selclose { width: 2rem; height: 2rem; font-size: 1.2rem; }
+}
+
+/* Portrait quick-check nudge: a dismissible "rotate for the full map" chip, shown only on
+   portrait phones (the secondary orientation). Hidden everywhere else. */
+.maprotate {
+  position: absolute; left: 50%; bottom: 0.6rem; transform: translateX(-50%); z-index: 9;
+  display: none; align-items: center; gap: 0.5rem; padding: 0.4rem 0.45rem 0.4rem 0.7rem;
+  border: 1px solid var(--line); border-radius: 999px; font-size: 0.7rem; color: var(--ink-dim);
+  background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(7px);
+}
+.maprotate__close {
+  display: grid; place-items: center; width: 1.4rem; height: 1.4rem; border: none; border-radius: 999px;
+  background: var(--panel-2); color: var(--ink-dim); font-size: 0.95rem; line-height: 1;
+}
+@media (orientation: portrait) and (max-width: 760px) {
+  .maprotate { display: inline-flex; }
+}

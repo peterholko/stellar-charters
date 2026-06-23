@@ -45,7 +45,9 @@ export class Market {
   /**
    * Clear a batch of orders for one turn. Price is computed first from net
    * imbalance (so all fills in a turn share a single clearing price per resource),
-   * then each order fills against its strict/limit condition.
+   * then each order fills against its strict/limit condition. Instant trades
+   * (ruleset v10) are NOT in this batch — they already moved the posted price at
+   * execution time via `quoteInstant`, so this clearing starts from that price.
    */
   clear(orders: ClearableOrder[]): { fills: MarketFill[]; clearingPrices: Record<Resource, number> } {
     const demand: Record<Resource, number> = zero();
@@ -82,6 +84,42 @@ export class Market {
     for (const r of RESOURCES) this.prices[r] = clearingPrices[r];
     return { fills, clearingPrices };
   }
+}
+
+/** A priced instant trade: total credits at the executed prices, the average per unit, and the
+ *  posted price the market lands on afterwards. */
+export interface InstantQuote {
+  total: number;
+  avgPrice: number;
+  newPrice: number;
+}
+
+/**
+ * Walk-the-curve pricing for instant Exchange trades (ruleset v10). Each unit executes at the
+ * current price ± the spread, then nudges the posted price along the SAME per-unit elasticity
+ * the turn clearing uses — so a large order pays its own slippage, and cornering a market
+ * costs real money instead of timing. Pure (no mutation): the engine commits `newPrice` after
+ * affordability checks pass; the client uses it verbatim for previews.
+ */
+export function quoteInstant(
+  tuning: Tuning,
+  postedPrice: number,
+  resource: Resource,
+  side: "buy" | "sell",
+  quantity: number,
+  spread = tuning.instantSpread,
+): InstantQuote {
+  const qty = Math.max(0, Math.floor(quantity));
+  const step = tuning.priceElasticity / tuning.priceReferenceVolume;
+  const floor = tuning.basePrices[resource] * tuning.priceFloorFrac;
+  const ceil = tuning.basePrices[resource] * tuning.priceCeilFrac;
+  let p = postedPrice;
+  let total = 0;
+  for (let i = 0; i < qty; i++) {
+    total += side === "buy" ? p * (1 + spread) : p * (1 - spread);
+    p = clamp(p * (1 + (side === "buy" ? step : -step)), floor, ceil);
+  }
+  return { total, avgPrice: qty > 0 ? total / qty : postedPrice, newPrice: round2(p) };
 }
 
 function zero(): Record<Resource, number> {

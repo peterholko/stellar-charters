@@ -69,12 +69,15 @@ export function OrderTray({
           <p className="eyebrow">Turn Orders</p>
           <h2>Order Queue</h2>
         </div>
-        <span className="tray__count">{staged.length}</span>
+        {/* The order budget (design rule #4): a near-optimal turn is <= ~10 orders, forever. */}
+        <span className="tray__count" title="A good turn fits in ~10 orders — if you need more, something is demanding too much attention" style={staged.length > 10 ? { color: "var(--warn)" } : undefined}>
+          {staged.length} / ~10
+        </span>
       </header>
 
       <div className="tray__list">
         {staged.length === 0 ? (
-          <EmptyState icon="report">No orders staged. Act from the map, systems, exchange, or fleet.</EmptyState>
+          <EmptyState icon="report">No orders queued. Act from the map, systems, exchange, or fleet.</EmptyState>
         ) : (
           infos.map(({ s, info }) => (
             <article key={s.id} className={`order order--${info.tone}`}>

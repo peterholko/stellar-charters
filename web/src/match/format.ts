@@ -1,8 +1,10 @@
 import {
+  HULL_CLASS_NAMES,
   RESOURCES,
   potentialYields,
   type MegastructureKind,
   type PlanetType,
+  type RangeTier,
   type Resource,
   type StarType,
   type Stockpile,
@@ -21,6 +23,26 @@ export const resourceLabels: Record<Resource, string> = {
   polymers: "Polymers",
   components: "Components",
   antimatter: "Antimatter",
+};
+
+/**
+ * Named extraction structures (playtest feedback): a worked deposit IS a leveled building —
+ * "Metal Mine L2" — not a bare geology row with a cryptic "Deepen" verb. The engine's
+ * `extractorLevel` (1..EXTRACTOR_CAP) is the level; these are its player-facing names.
+ */
+export const extractorNames: Record<Resource, string> = {
+  metals: "Metal Mine",
+  ice: "Ice Harvester",
+  silicates: "Silicate Quarry",
+  helium3: "Helium-3 Skimmer",
+  rareIsotopes: "Isotope Refinery",
+  food: "Agri Combine",
+  antimatter: "Antimatter Trap",
+  // Manufactured goods never occur as deposits; present for Record totality.
+  fuel: "Fuel Plant",
+  alloys: "Alloy Works",
+  polymers: "Polymer Plant",
+  components: "Component Fab",
 };
 
 export const resourceShort: Record<Resource, string> = {
@@ -79,13 +101,46 @@ export function corpColor(corpId: string): string {
   return corpColors[Number.isFinite(n) ? n % corpColors.length : 0]!;
 }
 
+/** "Frigate" — the named warship hull class for a range tier (the tier stays the range stat). */
+export function hullName(tier: RangeTier): string {
+  return HULL_CLASS_NAMES[tier];
+}
+
+/**
+ * Sci-fi flavour per hull class (Section 04 "name things, folklore is a feature"). UI-only —
+ * the engine's reports keep the bare class name. `epithet` is a short nickname surfaced next to
+ * the hull name; `line` is a one-sentence identity shown as a tooltip / subtitle.
+ */
+export const HULL_FLAVOR: Record<RangeTier, { epithet: string; line: string }> = {
+  1: { epithet: "Skiff", line: "Cheapest charter hull — half civilian runabout." },
+  2: { epithet: "Picket", line: "Light frontier escort and route scout." },
+  3: { epithet: "Clipper", line: "Dependable frontier workhorse; first true deep-range hull." },
+  4: { epithet: "Linebreaker", line: "Heavy combat and logistics — the gateway to capital hulls." },
+  5: { epithet: "Capital line", line: "First true capital — a mobile corporate fortress." },
+  6: { epithet: "Raider-of-the-line", line: "Fast capital, built to run down convoys and break blockades." },
+  7: { epithet: "Broadside", line: "Apex line warship — slow, ruinous, unmistakable." },
+  8: { epithet: "Charter-killer", line: "The apex war-monster only the richest charters can field." },
+};
+
+/** "Skiff" — the hull class's flavour nickname. */
+export function hullEpithet(tier: RangeTier): string {
+  return HULL_FLAVOR[tier].epithet;
+}
+
+/** Shipyard art for a hull class — one asset per named hull; raiders share the deniable corsair. */
+export function hullArtSlot(tier: RangeTier, raider: boolean): string {
+  if (raider) return "ship-raider"; // privateers run anonymous, look-alike hulls by design
+  return `ship-${hullName(tier).toLowerCase()}`; // ship-cutter … ship-dreadnought
+}
+
 export function formatCredits(value: number): string {
   const v = Math.round(value);
   return `${v.toLocaleString("en-US")}`;
 }
 
 export function formatCr(value: number): string {
-  return `${formatCredits(value)} cr`;
+  // Suffix code, financial-convention style ("2,450 Cr" — like "100 USD" or EVE's ISK).
+  return `${formatCredits(value)} Cr`;
 }
 
 export function dominantResource(yields: Stockpile): Resource {
@@ -216,4 +271,33 @@ export function sizeBucket(value: number): string {
   if (value >= 600) return "Large";
   if (value >= 200) return "Medium";
   return "Small";
+}
+
+/** Deterministic FNV-1a hash → unsigned 32-bit, for stable cosmetic derivations from ids. */
+function hashId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+const SHIP_PREFIXES = ["SS", "MV", "CSV", "ISV", "SCV", "MSV", "TLV", "GSV"];
+const SHIP_NAMES = [
+  "Meridian", "Calypso", "Halcyon", "Aurelia", "Perdita", "Stalwart", "Wayfarer", "Tempest",
+  "Lodestar", "Vesper", "Sojourner", "Equinox", "Marauder", "Solstice", "Peregrine", "Nomad",
+  "Zephyr", "Corsair", "Andromeda", "Persephone", "Icarus", "Daedalus", "Orpheus", "Aegis",
+  "Valkyrie", "Nautilus", "Leviathan", "Seraphim", "Onyx", "Cinder", "Ember", "Quasar",
+  "Pulsar", "Nebula", "Cassiopeia", "Borealis", "Drifter", "Vanguard", "Sentinel", "Harbinger",
+  "Odyssey", "Mistral", "Sirocco", "Albatross", "Kestrel", "Osprey", "Falcon", "Tycho",
+];
+
+/** A stable, ship-like name for a convoy, derived from its id (so cargo stays hidden — the
+ *  contents are known only to the exporter). The same convoy always reads the same name. */
+export function convoyName(id: string): string {
+  const h = hashId(id);
+  const prefix = SHIP_PREFIXES[h % SHIP_PREFIXES.length]!;
+  const name = SHIP_NAMES[(h >>> 8) % SHIP_NAMES.length]!;
+  return `${prefix} ${name}`;
 }

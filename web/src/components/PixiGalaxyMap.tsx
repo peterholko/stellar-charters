@@ -9,14 +9,28 @@
  * rest of the UI stay unchanged.
  */
 import { useEffect, useRef } from "react";
-import { Application, Container, Graphics, Text } from "pixi.js";
-import type { PlayerView } from "@engine";
+import { Application, Assets, Container, CullerPlugin, extensions, Graphics, Sprite, Text, Texture } from "pixi.js";
+
+// Viewport culling (Galaxy Map Expansion, Phase 1): the CullerPlugin skips rendering display
+// objects whose world bounds fall outside the screen, so a large galaxy (scale 2–3 = 150–225
+// systems) only pays for what's on screen. Culling runs per render against `renderer.screen`,
+// using each object's *world* bounds — so it tracks the camera automatically as you pan/zoom,
+// and objects reappear when scrolled back into view. Only data-layer leaves are marked cullable
+// (see `markCullable` in draw); the full-viewport nebula/starfield backdrop is left alone.
+// `extensions.add` is idempotent-guarded so HMR re-imports don't double-register.
+let cullerRegistered = false;
+function ensureCuller(): void {
+  if (cullerRegistered) return;
+  cullerRegistered = true;
+  extensions.add(CullerPlugin);
+}
+import { canRaidRoute } from "@engine";
+import type { ClientContact, ClientMovement, Order, PlayerView, PopulationStage } from "@engine";
 import { computeLayout } from "../match/layout";
 import {
   corpColor,
   resourceColors,
   routeRisk,
-  starTypeColor,
   systemArchetype,
   systemDominant,
 } from "../match/format";
@@ -27,22 +41,66 @@ interface Props {
   humanCorpId: string;
   selection: Selection;
   onSelect: (sel: Selection) => void;
+  /** Issue a fleet move: called when a fleet is selected and a destination system is tapped. */
+  onFleetMove?: (fromSystemId: string, toSystemId: string) => void;
+  /** Dispatch a survey vessel: called when a survey ship is selected and a target system is tapped. */
+  onSurveyDispatch?: (fromSystemId: string, toSystemId: string) => void;
+  /** Last turn's convoy/fleet legs, animated by the "Last turn movements" replay. */
+  movementLog?: ClientMovement[];
+  /** Rival fleets your ships' sensors are currently detecting (Section 04) — drawn as contact blips. */
+  contacts?: ClientContact[];
+  /** Increment to trigger a one-shot replay of `movementLog` (a play-button click). */
+  replaySignal?: number;
+  /** Highlight warp lanes the player's raiders/privateers can currently interdict (Section 13). */
+  raidOverlay?: boolean;
+  /** Strategic overlay wash painted under the lanes (Phase 4): owner territory, resource geography,
+   *  or detected-threat highlighting. "none" leaves the plain map. */
+  overlayMode?: OverlayMode;
+  /** Phase 2 navigation: when `nonce` changes, pan/zoom to frame `ids` (search / jump-to / frame-
+   *  my-systems). Empty `ids` re-fits the whole galaxy. */
+  focusTarget?: { ids: string[]; nonce: number };
+  /** Staged (not yet submitted) orders, drawn as ghost arrows/markers so the map shows next-turn
+   *  intent (Phase 3). Only the spatial kinds are rendered. */
+  stagedOrders?: Order[];
 }
+
+/** Strategic map overlays (Galaxy Map Expansion, Phase 4). */
+export type OverlayMode = "none" | "territory" | "resource" | "threat";
 
 type SceneProps = Props;
 
+/** The three kinds of own fleet the map distinguishes: line warships, raider strikes, survey skiffs. */
+type FleetKind = "war" | "raid" | "survey";
+interface TransitFleet {
+  x: number;
+  y: number;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  angle: number;
+  ships: number;
+  offLane: boolean;
+  kind: FleetKind;
+  /** Largest hull tier in the group — picks the warship icon (escort→capital). */
+  maxTier: number;
+}
+
 interface Scene {
   draw: () => void;
+  playReplay: () => void;
+  /** Pan/zoom the camera to frame a set of systems (Phase 2 navigation: search, jump-to). */
+  frame: (systemIds: string[]) => void;
   destroy: () => void;
 }
 
-export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect }: Props) {
+export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, focusTarget, stagedOrders }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<Scene | null>(null);
-  const propsRef = useRef<SceneProps>({ view, humanCorpId, selection, onSelect });
+  const propsRef = useRef<SceneProps>({ view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, stagedOrders });
   // Keep the latest props reachable from Pixi event handlers / the ticker without
-  // re-creating the scene. Assigned on every render so `onSelect` is never stale.
-  propsRef.current = { view, humanCorpId, selection, onSelect };
+  // re-creating the scene. Assigned on every render so the callbacks are never stale.
+  propsRef.current = { view, humanCorpId, selection, onSelect, onFleetMove, onSurveyDispatch, movementLog, contacts, replaySignal, raidOverlay, overlayMode, stagedOrders };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -69,7 +127,17 @@ export function PixiGalaxyMap({ view, humanCorpId, selection, onSelect }: Props)
   // Redraw when the authoritative view or the selection changes (turn resolution, picks).
   useEffect(() => {
     sceneRef.current?.draw();
-  }, [view, selection, humanCorpId]);
+  }, [view, selection, humanCorpId, raidOverlay, contacts, overlayMode, stagedOrders]);
+
+  // Play the "Last turn movements" replay when the signal increments (a button click).
+  useEffect(() => {
+    if (replaySignal && replaySignal > 0) sceneRef.current?.playReplay();
+  }, [replaySignal]);
+
+  // Frame a set of systems when a jump is requested (search box / "frame my systems").
+  useEffect(() => {
+    if (focusTarget) sceneRef.current?.frame(focusTarget.ids);
+  }, [focusTarget?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div ref={hostRef} className="pixigalaxy" />;
 }
@@ -85,6 +153,7 @@ interface Camera {
 }
 
 async function createScene(host: HTMLElement, getProps: () => SceneProps): Promise<Scene | null> {
+  ensureCuller();
   const app = new Application();
   const palette0 = readPalette(host);
   await app.init({
@@ -95,6 +164,8 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     antialias: true,
     autoDensity: true,
     resolution: Math.min(window.devicePixelRatio || 1, 2),
+    // Recompute world transforms each cull so culling tracks the camera with no one-frame lag.
+    culler: { updateTransform: true },
   });
   if (!host.isConnected) {
     app.destroy(true);
@@ -115,28 +186,89 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   const layers = {
     nebula: new Container(),
     starfield: new Container(),
+    // Strategic overlays (Phase 4): territory/resource washes painted behind the lanes so they
+    // read as a background tint, never obscuring glyphs. Threat markers go in `rings` (on top).
+    overlay: new Container(),
     lanes: new Container(),
     traffic: new Container(),
     convoys: new Container(),
+    fleets: new Container(),
     systems: new Container(),
     rings: new Container(),
+    // Staged-order ghosts (Phase 3): your planned next-turn moves, drawn on top so the map shows
+    // intent, not just the present.
+    ghosts: new Container(),
+    replay: new Container(),
   };
   layers.nebula.blendMode = "add";
   layers.starfield.blendMode = "add";
+  layers.overlay.blendMode = "add";
   layers.traffic.blendMode = "add";
+  layers.replay.blendMode = "add";
   world.addChild(
     layers.nebula,
     layers.starfield,
+    layers.overlay,
     layers.lanes,
     layers.traffic,
     layers.convoys,
+    layers.fleets,
     layers.systems,
     layers.rings,
+    layers.ghosts,
+    layers.replay,
   );
 
   // Labels live in screen space (constant pixel size) and are reprojected on camera moves.
   const labelLayer = new Container();
   app.stage.addChild(labelLayer);
+
+  // Minimap (Phase 2 navigation): a screen-space overview pinned to a corner. Drawn here (not in
+  // `world`) and from the SAME post-layout `points` the camera uses, so its dots and the live
+  // viewport rectangle share one coordinate space. Click it to recentre the camera there.
+  const MINI_W = 180;
+  const MINI_H = 120;
+  const MINI_PAD = 12;
+  const minimap = new Container();
+  minimap.eventMode = "none"; // we hit-test it manually in onPointerDown (DOM coords)
+  const miniBg = new Graphics();
+  const miniDots = new Graphics();
+  const miniRect = new Graphics();
+  minimap.addChild(miniBg, miniDots, miniRect);
+  app.stage.addChild(minimap);
+  // World→minimap mapping, recomputed whenever the layout (and thus `bounds`) changes.
+  let miniScale = 1;
+  let miniOffX = 0;
+  let miniOffY = 0;
+  let miniAccent = 0x66ccff; // cached so the per-pan viewport redraw never re-reads CSS vars
+
+  // Preload the galaxy-map fleet-icon sprites (Section 04) once — tiny side-profile pixel ships,
+  // one per fleet kind / size band. A missing texture just falls back to the procedural glyph, so
+  // an ungenerated asset never breaks the map.
+  const iconTex = new Map<string, Texture>();
+  await Promise.all(
+    FLEET_ICON_SLOTS.map(async (slot) => {
+      try {
+        const tex = (await Assets.load(`/assets/${slot}.png`)) as Texture;
+        if (tex) iconTex.set(slot, tex);
+      } catch {
+        /* asset not generated yet → glyph fallback */
+      }
+    }),
+  );
+
+  /** A fleet-icon sprite scaled to fit a `box`-px square, optionally flipped to face travel / tinted. */
+  function fleetSprite(slot: string, box: number, opts?: { tint?: number; alpha?: number; flip?: boolean }): Sprite | null {
+    const tex = iconTex.get(slot);
+    if (!tex) return null;
+    const sp = new Sprite(tex);
+    sp.anchor.set(0.5);
+    const k = box / Math.max(tex.width, tex.height);
+    sp.scale.set(opts?.flip ? -k : k, k); // icons face right; flip X to face the other way (never upside-down)
+    if (opts?.tint !== undefined) sp.tint = opts.tint;
+    if (opts?.alpha !== undefined) sp.alpha = opts.alpha;
+    return sp;
+  }
 
   const camera: Camera = { x: 0, y: 0, zoom: 1 };
   let userAdjusted = false; // set once the user pans/zooms, so resizes stop auto-refitting
@@ -145,12 +277,20 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   let bounds = { minX: -1, minY: -1, w: 2, h: 2 };
   let unit = 1; // size base derived from galaxy span (keeps glyph proportions stable)
   let signature = "";
+  // Level of detail (Phase 5): zoomed far out, the additive halos and animated traffic pulses
+  // collapse into noise on a large galaxy, so a redraw at that tier drops them. Tracked so we only
+  // redraw when the tier actually flips (not every zoom frame). Hysteresis avoids thrash at the edge.
+  let drawnOnce = false;
+  let lodFar = false;
+  const lodFarFor = (zoom: number): boolean => (lodFar ? zoom < fitZoom * 0.85 : zoom < fitZoom * 0.7);
 
   // Animated handles, refreshed each draw.
   let pulses: { g: Graphics; ax: number; ay: number; bx: number; by: number; phase: number; speed: number }[] = [];
   let halos: { g: Graphics; base: number }[] = [];
   let selRing: { g: Graphics; base: number } | null = null;
   let hubGlow: Graphics | null = null;
+  // "Last turn movements" replay: comets gliding along each visible leg, animated by the ticker.
+  let replay: { elapsed: number; duration: number; loopsLeft: number; dots: { g: Graphics; ax: number; ay: number; bx: number; by: number }[] } | null = null;
 
   // Screen-space label handles for projection.
   let labels: { t: Text; wx: number; wy: number; priority: boolean }[] = [];
@@ -171,6 +311,37 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       l.t.visible = visible;
       if (visible) l.t.position.set(p.x, p.y);
     }
+    updateMinimapViewport();
+    // If the zoom crossed the LOD threshold, rebuild the scene at the new detail tier. Guarded by
+    // `drawnOnce` so it never fires before the first real draw, and the flag is updated before the
+    // redraw (whose own applyCamera re-checks) so it can't recurse.
+    if (drawnOnce) {
+      const far = lodFarFor(camera.zoom);
+      if (far !== lodFar) {
+        lodFar = far;
+        draw();
+      }
+    }
+  }
+
+  // Mark the per-object data layers cullable so the CullerPlugin skips off-screen lanes, fleets,
+  // convoys, systems, traffic, rings and replay traces (Phase 1). The nebula/starfield backdrop
+  // and screen-space labels are intentionally excluded — the backdrop fills the view and labels
+  // are already viewport-culled in applyCamera. Re-run after every layer rebuild (draw/replay).
+  function markCullable(): void {
+    for (const layer of [
+      layers.overlay,
+      layers.lanes,
+      layers.traffic,
+      layers.convoys,
+      layers.fleets,
+      layers.systems,
+      layers.rings,
+      layers.ghosts,
+      layers.replay,
+    ]) {
+      for (const child of layer.children) child.cullable = true;
+    }
   }
 
   function resizeBg(): void {
@@ -179,6 +350,65 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     const pal = readPalette(host);
     bg.clear();
     bg.rect(0, 0, W, H).fill({ color: pal.bg, alpha: 1 });
+  }
+
+  // ----- minimap (Phase 2) -----
+  function positionMinimap(): void {
+    // Pin to the bottom-left, but hide it on small canvases where it would crowd the view.
+    const show = app.screen.width > MINI_W * 2.2 && app.screen.height > MINI_H * 2;
+    minimap.visible = show;
+    minimap.position.set(MINI_PAD, app.screen.height - MINI_H - MINI_PAD);
+  }
+  function worldToMini(wx: number, wy: number): { x: number; y: number } {
+    return { x: miniOffX + (wx - bounds.minX) * miniScale, y: miniOffY + (wy - bounds.minY) * miniScale };
+  }
+  function rebuildMinimap(pal: Palette): void {
+    miniAccent = pal.accent;
+    miniScale = Math.min(MINI_W / bounds.w, MINI_H / bounds.h) * 0.9;
+    miniOffX = (MINI_W - bounds.w * miniScale) / 2;
+    miniOffY = (MINI_H - bounds.h * miniScale) / 2;
+    miniBg.clear();
+    miniBg.roundRect(0, 0, MINI_W, MINI_H, 6).fill({ color: pal.bg, alpha: 0.72 }).stroke({ width: 1, color: pal.faint, alpha: 0.5 });
+    miniDots.clear();
+    const { view } = getProps();
+    const g = view.galaxy;
+    for (const s of g.allSystems()) {
+      const p = points.get(s.id);
+      if (!p) continue;
+      const isHub = s.id === g.hubId;
+      const m = worldToMini(p.x, p.y);
+      const col = isHub ? pal.accent2 : s.owner === getProps().humanCorpId ? pal.accent : s.owner ? cssNum(corpColor(s.owner)) : pal.faint;
+      miniDots.circle(m.x, m.y, isHub ? 2.4 : 1.6).fill({ color: col, alpha: s.owner || isHub ? 0.95 : 0.55 });
+    }
+  }
+  function updateMinimapViewport(): void {
+    if (!minimap.visible) return;
+    const W = app.screen.width;
+    const H = app.screen.height;
+    // Visible world rectangle (inverse of the camera transform), mapped into the minimap.
+    const tl = worldToMini((0 - camera.x) / camera.zoom, (0 - camera.y) / camera.zoom);
+    const br = worldToMini((W - camera.x) / camera.zoom, (H - camera.y) / camera.zoom);
+    const x = Math.max(0, Math.min(MINI_W, tl.x));
+    const y = Math.max(0, Math.min(MINI_H, tl.y));
+    const w = Math.max(2, Math.min(MINI_W, br.x) - x);
+    const h = Math.max(2, Math.min(MINI_H, br.y) - y);
+    miniRect.clear();
+    miniRect.rect(x, y, w, h).stroke({ width: 1.5, color: miniAccent, alpha: 0.9 });
+  }
+  /** If a canvas-local point is inside the minimap, recentre the camera on the world point it maps
+   *  to and return true (so the gesture is consumed instead of starting a pan/tap). */
+  function minimapPanTo(lx: number, ly: number): boolean {
+    if (!minimap.visible) return false;
+    const localX = lx - minimap.position.x;
+    const localY = ly - minimap.position.y;
+    if (localX < 0 || localX > MINI_W || localY < 0 || localY > MINI_H) return false;
+    const wx = bounds.minX + (localX - miniOffX) / miniScale;
+    const wy = bounds.minY + (localY - miniOffY) / miniScale;
+    userAdjusted = true;
+    camera.x = app.screen.width / 2 - wx * camera.zoom;
+    camera.y = app.screen.height / 2 - wy * camera.zoom;
+    applyCamera();
+    return true;
   }
 
   function fitCamera(): void {
@@ -195,7 +425,40 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   }
 
   function clampZoom(z: number): number {
-    return Math.min(fitZoom * 6, Math.max(fitZoom * 0.4, z));
+    // Allow zooming much closer than the fit (player feedback: needed to pick fleets out from the
+    // systems) — up to 16× the whole-galaxy fit.
+    return Math.min(fitZoom * 16, Math.max(fitZoom * 0.4, z));
+  }
+
+  // Pan/zoom to frame a set of systems (Phase 2 navigation). Empty/unknown ids re-fit the whole
+  // galaxy; a single system zooms in to a readable close-up; several systems fit their bounding box.
+  // Counts as a manual adjustment so a later resize won't snap back to the whole-galaxy fit.
+  function frame(systemIds: string[]): void {
+    const pts = systemIds.map((id) => points.get(id)).filter((p): p is { x: number; y: number } => !!p);
+    if (pts.length === 0) {
+      userAdjusted = false;
+      fitCamera();
+      applyCamera();
+      return;
+    }
+    userAdjusted = true;
+    const W = app.screen.width;
+    const H = app.screen.height;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    // A single system has zero span — frame a comfortable close-up; otherwise fit the box with pad.
+    const spanX = Math.max(maxX - minX, unit * 40);
+    const spanY = Math.max(maxY - minY, unit * 24);
+    const z = clampZoom(Math.min(W / (spanX * 1.4), H / (spanY * 1.4)));
+    camera.zoom = z;
+    camera.x = W / 2 - cx * z;
+    camera.y = H / 2 - cy * z;
+    applyCamera();
   }
 
   // ----- interaction -----
@@ -227,7 +490,10 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
   const onPointerDown = (ev: PointerEvent) => {
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
-    pointers.set(ev.pointerId, localPoint(ev));
+    const lp = localPoint(ev);
+    // A click on the minimap recentres the camera there and consumes the gesture (no pan/select).
+    if (pointers.size === 0 && minimapPanTo(lp.x, lp.y)) return;
+    pointers.set(ev.pointerId, lp);
     gestureMoved = false;
     pinchPrev = null;
     if (pointers.size === 1) beginPan();
@@ -282,21 +548,135 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       // A tap selects whatever is under the pointer — handled here so it works identically
       // for mouse and touch (Pixi's own touch `pointertap` is unreliable on iOS).
       const sel = pickAt(released.x, released.y);
-      if (sel) getProps().onSelect(sel);
-      // A second quick tap in the same place also zooms in (touch has no wheel).
-      const now = performance.now();
-      if (now - lastTapTime < 300 && Math.hypot(released.x - lastTapPos.x, released.y - lastTapPos.y) < 30) {
-        zoomAt(released.x, released.y, 1.9);
+      const props = getProps();
+      const cur = props.selection;
+      // Fleet-move mode: with a fleet selected, tapping a different system orders it there. We then
+      // DESELECT (not select the destination) so move-mode ends cleanly without popping that
+      // system's inspector/drawer over the map — the order lands in the tray as the confirmation.
+      if (cur?.kind === "fleet" && sel?.kind === "system" && sel.id !== cur.id) {
+        props.onFleetMove?.(cur.id, sel.id);
+        props.onSelect(null);
+        lastTapTime = 0; // a move order is not a double-tap zoom
+      } else if (cur?.kind === "survey" && sel?.kind === "system" && sel.id !== cur.id) {
+        // Survey vessel selected + a target tapped → dispatch it to scout that system, then deselect.
+        props.onSurveyDispatch?.(cur.id, sel.id);
+        props.onSelect(null);
         lastTapTime = 0;
       } else {
-        lastTapTime = now;
-        lastTapPos = released;
+        if (sel) props.onSelect(sel);
+        // A second quick tap in the same place also zooms in (touch has no wheel).
+        const now = performance.now();
+        if (now - lastTapTime < 300 && Math.hypot(released.x - lastTapPos.x, released.y - lastTapPos.y) < 30) {
+          zoomAt(released.x, released.y, 1.9);
+          lastTapTime = 0;
+        } else {
+          lastTapTime = now;
+          lastTapPos = released;
+        }
       }
     }
   };
 
-  // Unified pick: returns the Selection under a canvas-local point, testing convoys, then
-  // systems, then lanes (matching the visual stacking order). Pure world-space geometry, so
+  // Your idle combat ships, grouped by the system they're stationed at — a "fleet". Drawn as a
+  // chevron offset up-right from the node (so the system glyph stays clickable) and used for hit
+  // testing. Only your own ships are known (rivals are fogged), so only your fleets appear.
+  function myStationedFleets(): { systemId: string; x: number; y: number; ships: number; combat: number; raiders: number; maxTier: number }[] {
+    const { view } = getProps();
+    const byStation = new Map<string, { ships: number; combat: number; raiders: number; maxTier: number }>();
+    for (const s of view.me.ships) {
+      if (s.combat <= 0 || s.transit || !s.stationedAt) continue;
+      const e = byStation.get(s.stationedAt) ?? { ships: 0, combat: 0, raiders: 0, maxTier: 1 };
+      e.ships += 1;
+      e.combat += s.combat;
+      if (s.raider) e.raiders += 1;
+      e.maxTier = Math.max(e.maxTier, s.rangeTier);
+      byStation.set(s.stationedAt, e);
+    }
+    const out: { systemId: string; x: number; y: number; ships: number; combat: number; raiders: number; maxTier: number }[] = [];
+    for (const [systemId, e] of byStation) {
+      const p = points.get(systemId);
+      if (!p) continue;
+      out.push({ systemId, x: p.x + unit * 3.0, y: p.y - unit * 3.0, ships: e.ships, combat: e.combat, raiders: e.raiders, maxTier: e.maxTier });
+    }
+    return out;
+  }
+
+  // Your idle survey vessels, grouped by station — offset up-LEFT of the node (mirroring the combat
+  // fleet's up-right marker) so a system that hosts both shows them side by side. Selectable so the
+  // ship can be sent to scout from the map (combat-0, so never part of myStationedFleets).
+  function myStationedSurveyors(): { systemId: string; x: number; y: number; count: number }[] {
+    const { view } = getProps();
+    const byStation = new Map<string, number>();
+    for (const s of view.me.ships) {
+      if (!s.surveyor || s.transit || !s.stationedAt) continue;
+      byStation.set(s.stationedAt, (byStation.get(s.stationedAt) ?? 0) + 1);
+    }
+    const out: { systemId: string; x: number; y: number; count: number }[] = [];
+    for (const [systemId, count] of byStation) {
+      const p = points.get(systemId);
+      if (!p) continue;
+      out.push({ systemId, x: p.x - unit * 3.0, y: p.y - unit * 3.0, count });
+    }
+    return out;
+  }
+
+  // Your fleets currently in transit, grouped by shared leg AND fleet kind so the map can show a
+  // distinct icon per type: a war fleet (line warships), a raider strike (interdiction), and an
+  // unarmed survey skiff. Interpolated along the current segment like convoys. When two kinds run
+  // the same leg they're nudged apart perpendicular to travel so the icons don't stack.
+  function myTransitFleets(): TransitFleet[] {
+    const { view } = getProps();
+    const turn = view.turn;
+    const groups = new Map<string, { ships: number; fromId: string; toId: string; launchedTurn: number; offLane: boolean; kind: FleetKind; legKey: string; maxTier: number }>();
+    for (const s of view.me.ships) {
+      const tr = s.transit;
+      if (!tr) continue;
+      const fromId = tr.path[tr.position];
+      const toId = tr.path[tr.position + 1];
+      if (!fromId || !toId) continue;
+      const kind: FleetKind = s.surveyor ? "survey" : s.raider ? "raid" : "war";
+      const legKey = `${fromId}>${toId}|${tr.launchedTurn}`;
+      const key = `${legKey}|${kind}`;
+      const e = groups.get(key) ?? { ships: 0, fromId, toId, launchedTurn: tr.launchedTurn, offLane: tr.routeIds[tr.position] === "", kind, legKey, maxTier: 1 };
+      e.ships += 1;
+      e.maxTier = Math.max(e.maxTier, s.rangeTier);
+      groups.set(key, e);
+    }
+    // Count how many distinct kinds share each leg so we can fan them out symmetrically.
+    const perLeg = new Map<string, { total: number; seen: number }>();
+    for (const g of groups.values()) {
+      const e = perLeg.get(g.legKey) ?? { total: 0, seen: 0 };
+      e.total += 1;
+      perLeg.set(g.legKey, e);
+    }
+    const out: TransitFleet[] = [];
+    for (const g of groups.values()) {
+      const from = points.get(g.fromId);
+      const to = points.get(g.toId);
+      if (!from || !to) continue;
+      const frac = g.launchedTurn >= turn ? 0.18 : 0.5;
+      const angle = Math.atan2(to.y - from.y, to.x - from.x);
+      const leg = perLeg.get(g.legKey)!;
+      const idx = leg.seen++;
+      const spread = (idx - (leg.total - 1) / 2) * unit * 1.5; // perpendicular nudge
+      const ox = -Math.sin(angle) * spread;
+      const oy = Math.cos(angle) * spread;
+      out.push({
+        x: from.x + (to.x - from.x) * frac + ox,
+        y: from.y + (to.y - from.y) * frac + oy,
+        ax: from.x, ay: from.y, bx: to.x, by: to.y,
+        angle,
+        ships: g.ships,
+        offLane: g.offLane,
+        kind: g.kind,
+        maxTier: g.maxTier,
+      });
+    }
+    return out;
+  }
+
+  // Unified pick: returns the Selection under a canvas-local point, testing fleets, then convoys,
+  // then systems, then lanes (matching the visual stacking order). Pure world-space geometry, so
   // it is independent of Pixi's event system and behaves the same for mouse and touch.
   function pickAt(lx: number, ly: number): Selection {
     const { view } = getProps();
@@ -304,6 +684,12 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     const wx = (lx - camera.x) / camera.zoom;
     const wy = (ly - camera.y) / camera.zoom;
 
+    for (const f of myStationedFleets()) {
+      if (Math.hypot(wx - f.x, wy - f.y) <= unit * 2.6) return { kind: "fleet", id: f.systemId };
+    }
+    for (const f of myStationedSurveyors()) {
+      if (Math.hypot(wx - f.x, wy - f.y) <= unit * 2.6) return { kind: "survey", id: f.systemId };
+    }
     for (const c of view.convoys) {
       const route = galaxy.routes.get(c.routeIds[c.position] ?? "");
       const a = route && points.get(route.a);
@@ -364,6 +750,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     const H = Math.max(1, host.clientHeight);
     app.renderer.resize(W, H);
     resizeBg();
+    positionMinimap();
     // Keep the galaxy framed across viewport changes until the user takes manual control.
     if (!userAdjusted) fitCamera();
     applyCamera();
@@ -381,10 +768,62 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     attributeFilter: ["data-theme"],
   });
 
+  // Build and start the "Last turn movements" replay from the latest movement log.
+  function playReplay(): void {
+    layers.replay.removeChildren().forEach((c) => c.destroy());
+    replay = null;
+    const { movementLog, humanCorpId } = getProps();
+    if (!movementLog || movementLog.length === 0) return;
+    const pal = readPalette(host);
+    const dots: { g: Graphics; ax: number; ay: number; bx: number; by: number }[] = [];
+    for (const m of movementLog) {
+      const a = points.get(m.fromSystemId);
+      const b = points.get(m.toSystemId);
+      if (!a || !b) continue;
+      const color = m.owner === humanCorpId ? pal.accent : pal.rival;
+      // A bright trace of the leg (dashed if off-lane) stays lit for the whole replay, with a
+      // travelling comet sweeping along it so the movement reads clearly.
+      const line = new Graphics();
+      if (m.offLane) {
+        drawDashed(line, a, b, unit * 1.4, unit * 1.0, unit * 0.45, color, 0.6);
+      } else {
+        line.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: unit * 0.45, color, alpha: 0.55, cap: "round" });
+      }
+      layers.replay.addChild(line);
+      const dot = new Graphics();
+      dot.circle(0, 0, unit * 1.4).fill({ color, alpha: 1 });
+      dot.circle(0, 0, unit * 2.4).fill({ color, alpha: 0.25 }); // soft glow halo
+      layers.replay.addChild(dot);
+      dots.push({ g: dot, ax: a.x, ay: a.y, bx: b.x, by: b.y });
+    }
+    if (dots.length === 0) return;
+    markCullable(); // replay traces were rebuilt after draw — make them cullable too
+    replay = { elapsed: 0, duration: 2.2, loopsLeft: 1, dots }; // plays through twice
+  }
+
   // ----- animation -----
   let elapsed = 0;
   const tick = (ticker: { deltaMS: number }) => {
-    elapsed += ticker.deltaMS / 1000;
+    const dt = ticker.deltaMS / 1000;
+    elapsed += dt;
+    if (replay) {
+      replay.elapsed += dt;
+      const t = Math.min(1, replay.elapsed / replay.duration);
+      const a = 0.3 + 0.7 * Math.sin(t * Math.PI); // fade in then out across the leg
+      for (const d of replay.dots) {
+        d.g.position.set(d.ax + (d.bx - d.ax) * t, d.ay + (d.by - d.ay) * t);
+        d.g.alpha = a;
+      }
+      if (t >= 1) {
+        if (replay.loopsLeft > 0) {
+          replay.loopsLeft -= 1;
+          replay.elapsed = 0; // play the sweep again so it's hard to miss
+        } else {
+          layers.replay.removeChildren().forEach((c) => c.destroy());
+          replay = null;
+        }
+      }
+    }
     for (const p of pulses) {
       const t = (elapsed * p.speed + p.phase) % 1;
       p.g.position.set(p.ax + (p.bx - p.ax) * t, p.ay + (p.by - p.ay) * t);
@@ -443,7 +882,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   }
 
   function draw(): void {
-    const { view, humanCorpId, selection } = getProps();
+    const { view, humanCorpId, selection, raidOverlay, overlayMode, stagedOrders } = getProps();
     const galaxy = view.galaxy;
     const pal = readPalette(host);
 
@@ -469,10 +908,12 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     }
 
     const turn = view.turn;
+    lodFar = lodFarFor(camera.zoom); // current detail tier for this build
     const pt = (id: string) => points.get(id) ?? { x: 0, y: 0 };
 
-    // Reset dynamic layers.
-    for (const c of [layers.lanes, layers.traffic, layers.convoys, layers.systems, layers.rings]) {
+    // Reset dynamic layers. A redraw (turn resolution / new selection) also cancels any in-flight
+    // replay, whose dots reference the previous frame's geometry.
+    for (const c of [layers.overlay, layers.lanes, layers.traffic, layers.convoys, layers.fleets, layers.systems, layers.rings, layers.ghosts, layers.replay]) {
       c.removeChildren().forEach((ch) => ch.destroy());
     }
     labelLayer.removeChildren().forEach((ch) => ch.destroy());
@@ -480,7 +921,63 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     halos = [];
     selRing = null;
     hubGlow = null;
+    replay = null;
     labels = [];
+
+    // ----- strategic overlays (Phase 4) -----
+    // A background wash under the lanes that re-reads the map by a chosen strategic dimension.
+    // All three lean on data the seat already has (owner, fogged deposits, sensor contacts), so
+    // nothing here leaks hidden state. Threat markers are drawn into `rings` (on top) further down.
+    const mode = overlayMode ?? "none";
+    if (mode === "territory") {
+      // Owner influence blooms: a soft, owner-coloured disc behind every claimed world (incl. the
+      // hub), so fronts and spheres of control read at a glance without clicking each system.
+      for (const s of sys) {
+        const isHub = s.id === galaxy.hubId;
+        if (!s.owner && !isHub) continue;
+        const p = pt(s.id);
+        const col = isHub ? pal.accent2 : s.owner === humanCorpId ? pal.accent : cssNum(corpColor(s.owner!));
+        const region = s.position?.region ?? (isHub ? "hub" : "core");
+        const bloom = new Graphics();
+        const rad = nodeRadius(region, unit) * 4.2;
+        for (let k = 3; k >= 1; k--) bloom.circle(0, 0, (rad * k) / 3).fill({ color: col, alpha: 0.05 });
+        bloom.position.set(p.x, p.y);
+        layers.overlay.addChild(bloom);
+      }
+    } else if (mode === "resource") {
+      // Resource geography: a disc tinted to each world's dominant deposit (fogged worlds report
+      // muted/zero potential, so unsurveyed space naturally stays dim). Answers "where do I expand?".
+      for (const s of sys) {
+        if (s.id === galaxy.hubId) continue;
+        const p = pt(s.id);
+        const col = cssNum(resourceColors[systemDominant(s)]);
+        const region = s.position?.region ?? "core";
+        const disc = new Graphics();
+        const rad = nodeRadius(region, unit) * 2.8;
+        disc.circle(0, 0, rad).fill({ color: col, alpha: 0.16 });
+        disc.position.set(p.x, p.y);
+        layers.overlay.addChild(disc);
+      }
+    } else if (mode === "threat") {
+      // Detected-threat highlighting: bloom the destination of every rival fleet your sensors are
+      // tracking, so an incoming assault is a glance, not a hunt through the contact list.
+      for (const c of getProps().contacts ?? []) {
+        const to = points.get(c.toSystemId);
+        if (!to) continue;
+        const col = pal.negative;
+        const scale = c.forceEstimate === "heavy" ? 1.5 : c.forceEstimate === "medium" ? 1.2 : 1.0;
+        const bloom = new Graphics();
+        const rad = unit * 6 * scale;
+        for (let k = 3; k >= 1; k--) bloom.circle(0, 0, (rad * k) / 3).fill({ color: col, alpha: 0.06 });
+        bloom.position.set(to.x, to.y);
+        layers.overlay.addChild(bloom);
+        // A bright ring on top so the threatened world reads at any zoom (sits above the systems).
+        const ring = new Graphics();
+        ring.circle(0, 0, unit * 3 * scale).stroke({ width: unit * 0.4, color: col, alpha: 0.85 });
+        ring.position.set(to.x, to.y);
+        layers.rings.addChild(ring);
+      }
+    }
 
     // ----- warp lanes -----
     for (const r of galaxy.routes.values()) {
@@ -492,12 +989,18 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       const g = new Graphics();
 
       if (!r.charted) {
-        drawDashed(g, a, b, unit * 1.4, unit * 1.4, unit * 0.45, pal.faint, 0.5);
+        drawDashed(g, a, b, unit * 1.4, unit * 1.4, unit * 0.3, pal.faint, 0.38);
       } else {
-        const color =
-          risk.level === "severe" ? pal.negative : risk.level === "high" ? pal.warn : pal.accent2;
-        const baseAlpha = risk.level === "guarded" ? 0.35 : 0.5;
-        const width = unit * (0.3 + Math.min(1.1, traffic * 0.22));
+        // Raid-reach overlay (Section 13): lanes the player can interdict right now burn hot;
+        // everything out of reach recedes, so "where can I hunt?" is one glance, not N clicks.
+        const inReach = raidOverlay ? canRaidRoute(galaxy, view.me, r) : false;
+        const color = raidOverlay
+          ? (inReach ? pal.negative : pal.faint)
+          : risk.level === "severe" ? pal.negative : risk.level === "high" ? pal.warn : pal.accent2;
+        // Warp lanes are now the fuel-efficient *option*, not the skeleton of the galaxy: draw them
+        // thinner and dimmer so systems and fleets read first (selection/traffic still emphasise).
+        const baseAlpha = raidOverlay ? (inReach ? 0.85 : 0.1) : risk.level === "guarded" ? 0.22 : 0.32;
+        const width = unit * (0.16 + Math.min(0.6, traffic * 0.12)) * (inReach ? 1.8 : 1);
         if (selected) {
           g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: width + unit * 1.6, color: pal.accent, alpha: 0.3, cap: "round" });
         }
@@ -506,8 +1009,8 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
       layers.lanes.addChild(g);
 
-      // Recent traffic → animated pulses (charted lanes only).
-      if (r.charted && traffic > 0) {
+      // Recent traffic → animated pulses (charted lanes only; dropped at the far LOD tier).
+      if (r.charted && traffic > 0 && !lodFar) {
         const dots = Math.min(3, Math.ceil(traffic / 2));
         const color = risk.level === "high" || risk.level === "severe" ? pal.warn : pal.accent2;
         for (let i = 0; i < dots; i++) {
@@ -536,19 +1039,150 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
 
       const cont = new Container();
       cont.position.set(x, y);
-      cont.rotation = angle;
       const halo = new Graphics();
-      halo.circle(0, 0, unit * 1.6).fill({ color, alpha: 0.22 });
+      halo.circle(0, 0, unit * 1.9).fill({ color, alpha: 0.22 });
       halo.blendMode = "add";
       cont.addChild(halo);
-      halos.push({ g: halo, base: unit * 1.6 });
-      const body = new Graphics();
-      const s = unit * 1.15;
-      body.poly([s, 0, -s * 0.8, s * 0.8, -s * 0.3, 0, -s * 0.8, -s * 0.8]).fill({ color, alpha: 1 });
-      if (selected) body.stroke({ width: unit * 0.35, color: pal.ink, alpha: 0.9 });
-      cont.addChild(body);
+      halos.push({ g: halo, base: unit * 1.9 });
 
+      // Trade ship sprite (light trader vs bulk freighter by value). Own convoys keep their natural
+      // colour; rival convoys are tinted to the rival hue. The selection ring is drawn below.
+      const sprite = fleetSprite(convoyIconSlot(c.value), unit * 6, { flip: b.x < a.x, tint: mine ? undefined : color, alpha: mine ? 1 : 0.95 });
+      if (sprite) {
+        cont.addChild(sprite);
+      } else {
+        cont.rotation = angle;
+        const body = new Graphics();
+        const s = unit * 1.15;
+        body.poly([s, 0, -s * 0.8, s * 0.8, -s * 0.3, 0, -s * 0.8, -s * 0.8]).fill({ color, alpha: 1 });
+        if (selected) body.stroke({ width: unit * 0.35, color: pal.ink, alpha: 0.9 });
+        cont.addChild(body);
+      }
       layers.convoys.addChild(cont);
+    }
+
+    // ----- fleets (your own; rivals are fogged) -----
+    // A parked garrison reads as an upward chevron; a raider-heavy garrison burns amber so a
+    // standing strike force is distinct from a defensive escort wing.
+    for (const f of myStationedFleets()) {
+      const selected = selection?.kind === "fleet" && selection.id === f.systemId;
+      const raiderHeavy = f.raiders * 2 >= f.ships;
+      // A raider-heavy garrison shows the corsair; otherwise the warship icon for its biggest hull.
+      const slot = raiderHeavy ? "fleeticon-raider" : warIconSlot(f.maxTier);
+      const cont = new Container();
+      cont.position.set(f.x, f.y);
+      const halo = new Graphics();
+      halo.circle(0, 0, unit * 1.9).fill({ color: pal.accent, alpha: 0.16 });
+      halo.blendMode = "add";
+      cont.addChild(halo);
+      halos.push({ g: halo, base: unit * 1.9 });
+      if (selected) {
+        const ring = new Graphics();
+        ring.circle(0, 0, unit * 3).stroke({ width: unit * 0.5, color: pal.accent, alpha: 1 });
+        cont.addChild(ring);
+        selRing = { g: ring, base: unit * 3 };
+      }
+      const sprite = fleetSprite(slot, unit * 5.5);
+      if (sprite) {
+        cont.addChild(sprite);
+      } else {
+        const col = raiderHeavy ? pal.warn : pal.accent;
+        const g = new Graphics();
+        const s = unit * 1.15;
+        g.poly([0, -s, s * 0.95, s * 0.7, 0, s * 0.2, -s * 0.95, s * 0.7]).fill({ color: col, alpha: 0.95 });
+        g.stroke({ width: unit * 0.28, color: pal.ink, alpha: 0.7 });
+        cont.addChild(g);
+      }
+      layers.fleets.addChild(cont);
+    }
+    // ----- stationed survey vessels (selectable → dispatch to scout from the map) -----
+    for (const f of myStationedSurveyors()) {
+      const selected = selection?.kind === "survey" && selection.id === f.systemId;
+      const cont = new Container();
+      cont.position.set(f.x, f.y);
+      const halo = new Graphics();
+      halo.circle(0, 0, unit * 1.7).fill({ color: pal.accent2, alpha: 0.16 });
+      halo.blendMode = "add";
+      cont.addChild(halo);
+      halos.push({ g: halo, base: unit * 1.7 });
+      if (selected) {
+        const ring = new Graphics();
+        ring.circle(0, 0, unit * 2.9).stroke({ width: unit * 0.5, color: pal.accent2, alpha: 1 });
+        cont.addChild(ring);
+        selRing = { g: ring, base: unit * 2.9 };
+      }
+      const sprite = fleetSprite("fleeticon-survey", unit * 5);
+      if (sprite) {
+        cont.addChild(sprite);
+      } else {
+        const g = new Graphics();
+        const s = unit * 1.0;
+        g.poly([s, 0, 0, s * 0.82, -s, 0, 0, -s * 0.82]).stroke({ width: unit * 0.32, color: pal.accent2, alpha: 0.95 });
+        g.circle(0, 0, unit * 0.34).fill({ color: pal.accent2, alpha: 1 });
+        cont.addChild(g);
+      }
+      layers.fleets.addChild(cont);
+    }
+    for (const f of myTransitFleets()) {
+      const col = fleetKindColor(f.kind, pal);
+      // Off-lane fleets have no warp lane beneath them — draw a faint dashed track so the direct
+      // jump reads as deliberately "off the lanes".
+      if (f.offLane) {
+        const track = new Graphics();
+        drawDashed(track, { x: f.ax, y: f.ay }, { x: f.bx, y: f.by }, unit * 1.1, unit * 0.9, unit * 0.25, col, 0.3);
+        layers.fleets.addChild(track);
+      }
+      const cont = new Container();
+      cont.position.set(f.x, f.y);
+      const halo = new Graphics();
+      halo.circle(0, 0, unit * 1.7).fill({ color: pal.accent, alpha: 0.18 });
+      halo.blendMode = "add";
+      cont.addChild(halo);
+      halos.push({ g: halo, base: unit * 1.7 });
+      // Ship-type sprite by kind + flagship size, flipped to face travel direction.
+      const sprite = fleetSprite(transitIconSlot(f.kind, f.maxTier), unit * 5.5, { flip: f.bx < f.ax });
+      if (sprite) {
+        cont.addChild(sprite);
+      } else {
+        cont.rotation = f.angle;
+        cont.addChild(fleetGlyph(f.kind, unit, col, pal.ink));
+      }
+      layers.fleets.addChild(cont);
+    }
+
+    // ----- rival contacts (Section 04 — ship-mounted sensors) -----
+    // A detected rival fleet in transit: a hollow hostile chevron at the midpoint of the leg it is
+    // crossing, sized by the rough force band — visually distinct from your filled fleet triangle.
+    for (const c of getProps().contacts ?? []) {
+      const from = points.get(c.fromSystemId);
+      const to = points.get(c.toSystemId);
+      if (!from || !to) continue;
+      const col = cssNum(corpColor(c.owner));
+      const scale = c.forceEstimate === "heavy" ? 1.35 : c.forceEstimate === "medium" ? 1.1 : 0.9;
+      if (c.offLane) {
+        const track = new Graphics();
+        drawDashed(track, { x: from.x, y: from.y }, { x: to.x, y: to.y }, unit * 1.1, unit * 0.9, unit * 0.22, col, 0.3);
+        layers.fleets.addChild(track);
+      }
+      const cont = new Container();
+      cont.position.set(from.x + (to.x - from.x) * 0.5, from.y + (to.y - from.y) * 0.5);
+      // Rival fleet, fogged to a force band: a size-appropriate ship tinted to the rival's colour,
+      // inside a hostile ring so it reads as "theirs, roughly this big" — never an exact type.
+      const ring = new Graphics();
+      ring.circle(0, 0, unit * 1.9 * scale).stroke({ width: unit * 0.3, color: col, alpha: 0.5 });
+      ring.blendMode = "add";
+      cont.addChild(ring);
+      const sprite = fleetSprite(contactIconSlot(c.forceEstimate), unit * 5.5 * scale, { tint: col, alpha: 0.95, flip: to.x < from.x });
+      if (sprite) {
+        cont.addChild(sprite);
+      } else {
+        cont.rotation = Math.atan2(to.y - from.y, to.x - from.x);
+        const g = new Graphics();
+        const s = unit * 1.0 * scale;
+        g.poly([s, 0, -s * 0.7, s * 0.75, -s * 0.7, -s * 0.75]).stroke({ width: unit * 0.4, color: col, alpha: 0.95 });
+        cont.addChild(g);
+      }
+      layers.fleets.addChild(cont);
     }
 
     // ----- systems -----
@@ -581,27 +1215,39 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
         hubGlow = glow;
       }
 
-      const r = nodeRadius(region, unit);
+      // Visual radius is scaled down from the (full-size) hit/separation footprint, so the dots
+      // read smaller without becoming harder to click or crowding together.
+      const r = nodeRadius(region, unit) * SYSTEM_GLYPH_SCALE;
       // Soft halo + luminous core, with a region-specific accent so worlds aren't identical dots.
-      const glyph = new Graphics();
-      glyph.circle(0, 0, r * 1.35).fill({ color: fill, alpha: 0.1 });
-      glyph.blendMode = "normal";
-      cont.addChild(glyph);
-      // Star-type aura (Section 21): a faint additive ring in the star's colour so a red giant,
-      // white dwarf, neutron star, etc. read distinctly at a glance without changing the
-      // resource/owner-coloured core.
-      if (!isHub && s.bodies?.starType) {
-        const starGlow = new Graphics();
-        starGlow.circle(0, 0, r * 1.55).stroke({ width: unit * 0.45, color: cssNum(starTypeColor[s.bodies.starType]), alpha: 0.5 });
-        starGlow.blendMode = "add";
-        cont.addChild(starGlow);
+      // The soft halo is dropped at the far LOD tier (it just smears into noise when zoomed out).
+      if (!lodFar) {
+        const glyph = new Graphics();
+        glyph.circle(0, 0, r * 1.35).fill({ color: fill, alpha: 0.1 });
+        glyph.blendMode = "normal";
+        cont.addChild(glyph);
       }
       drawGlyph(cont, region, arch, r, fill, open, pal);
 
-      if (mine && !isHub) {
-        const ownRing = new Graphics();
-        ownRing.circle(0, 0, r * 1.7).stroke({ width: unit * 0.4, color: pal.accent, alpha: 0.85 });
-        cont.addChild(ownRing);
+      // Claimed-territory + development indicator — exactly ONE ring per system (player feedback).
+      // A claimed system (yours or a rival's) wears a single owner-coloured ring; how built-up it is
+      // reads as the ring's WEIGHT (a busier colony, or one with a megastructure, wears a bolder,
+      // brighter ring) rather than a stack of extra rings or pips.
+      if (s.owner && !isHub) {
+        const ownerCol = mine ? pal.accent : cssNum(corpColor(s.owner));
+        const mega = s.megastructures && s.megastructures.length > 0 ? 1 : 0;
+        const dev = Math.min(5, developmentTier(s) + mega); // 1 (outpost) … 5 (metropolis / megastructure)
+        const ring = new Graphics();
+        ring.circle(0, 0, r * 1.7).stroke({ width: unit * (0.28 + dev * 0.09), color: ownerCol, alpha: (mine ? 0.62 : 0.5) + dev * 0.06 });
+        cont.addChild(ring);
+      }
+
+      // Warp Disruptor (Section 04): a glowing outer ring marks the system as a slow-zone that holds
+      // rival fleet arrivals.
+      if (s.hasDisruptor && !isHub) {
+        const disRing = new Graphics();
+        disRing.circle(0, 0, r * 2.05).stroke({ width: unit * 0.35, color: pal.accent2, alpha: 0.7 });
+        disRing.blendMode = "add";
+        cont.addChild(disRing);
       }
 
       layers.systems.addChild(cont);
@@ -620,7 +1266,7 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
         text: s.name,
         style: {
           fill: isHub ? pal.accent : mine ? pal.ink : pal.inkDim,
-          fontSize: 11,
+          fontSize: 12, // tracks the desktop type bump (styles.css root scale) so labels read consistently
           fontFamily: "ui-monospace, Menlo, monospace",
           fontWeight: isHub || mine ? "600" : "400",
         },
@@ -629,6 +1275,65 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       t.resolution = Math.min(window.devicePixelRatio || 1, 2);
       labelLayer.addChild(t);
       labels.push({ t, wx: p.x, wy: p.y + r * 2.4, priority: isHub || mine || selected });
+    }
+
+    // ----- staged-order ghosts (Phase 3) -----
+    // Your planned next-turn moves drawn over the live map, so the map shows intent. Movement orders
+    // become arrows (red when the destination is a rival's — i.e. an invasion); system/route orders
+    // become pending markers. Reads the staged tray the order UI already writes to.
+    const isRival = (id: string): boolean => {
+      const o = galaxy.system(id)?.owner;
+      return !!o && o !== humanCorpId;
+    };
+    const ghostArrow = (fromId: string, toId: string, color: number): void => {
+      const a = points.get(fromId);
+      const b = points.get(toId);
+      if (!a || !b) return;
+      const g = new Graphics();
+      drawDashed(g, a, b, unit * 1.6, unit * 1.1, unit * 0.4, color, 0.9);
+      // Arrowhead at the destination end.
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      const hx = b.x - Math.cos(ang) * nodeRadius(galaxy.system(toId)?.position?.region ?? "core", unit) * 2;
+      const hy = b.y - Math.sin(ang) * nodeRadius(galaxy.system(toId)?.position?.region ?? "core", unit) * 2;
+      const s = unit * 1.3;
+      g.poly([
+        hx + Math.cos(ang) * s, hy + Math.sin(ang) * s,
+        hx + Math.cos(ang + 2.5) * s, hy + Math.sin(ang + 2.5) * s,
+        hx + Math.cos(ang - 2.5) * s, hy + Math.sin(ang - 2.5) * s,
+      ]).fill({ color, alpha: 0.95 });
+      layers.ghosts.addChild(g);
+    };
+    const ghostRing = (systemId: string, color: number): void => {
+      const p = points.get(systemId);
+      if (!p) return;
+      const region = galaxy.system(systemId)?.position?.region ?? "core";
+      const r = nodeRadius(region, unit) * 2.5;
+      const ring = new Graphics();
+      // A double ring marks a pending system order (claim / invade / sabotage) distinctly from the
+      // solid owner/selection rings already on the map.
+      ring.circle(p.x, p.y, r).stroke({ width: unit * 0.45, color, alpha: 0.9 });
+      ring.circle(p.x, p.y, r + unit * 0.9).stroke({ width: unit * 0.25, color, alpha: 0.55 });
+      layers.ghosts.addChild(ring);
+    };
+    for (const o of stagedOrders ?? []) {
+      if (o.kind === "moveFleet" || o.kind === "redeployShip") {
+        ghostArrow(o.fromSystemId, o.toSystemId, isRival(o.toSystemId) ? pal.negative : pal.accent);
+      } else if (o.kind === "surveySystem") {
+        ghostArrow(o.fromSystemId, o.targetSystemId, pal.accent2);
+      } else if (o.kind === "invade" || o.kind === "sabotage") {
+        ghostRing(o.systemId, pal.negative);
+      } else if (o.kind === "claim") {
+        ghostRing(o.systemId, pal.accent);
+      } else if (o.kind === "interdict") {
+        const r = galaxy.routes.get(o.routeId);
+        const a = r && points.get(r.a);
+        const b = r && points.get(r.b);
+        if (a && b) {
+          const mark = new Graphics();
+          mark.circle((a.x + b.x) / 2, (a.y + b.y) / 2, unit * 1.4).stroke({ width: unit * 0.5, color: pal.warn, alpha: 0.95 });
+          layers.ghosts.addChild(mark);
+        }
+      }
     }
 
     // Selection ring for a selected convoy.
@@ -648,11 +1353,17 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
       }
     }
 
+    positionMinimap();
+    rebuildMinimap(pal);
+    markCullable();
+    drawnOnce = true;
     applyCamera();
   }
 
   return {
     draw,
+    playReplay,
+    frame,
     destroy: () => {
       app.ticker.remove(tick);
       ro.disconnect();
@@ -681,6 +1392,14 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
  * consistent.
  */
 const LAYOUT_SPREAD = 0.62;
+
+/**
+ * Visual size of a system glyph relative to its `nodeRadius` footprint. < 1 draws smaller dots
+ * while leaving hit-testing and glyph-separation on the full `nodeRadius` — so the nodes read
+ * smaller (more breathing room on the larger map) without making them harder to click or letting
+ * them crowd together.
+ */
+const SYSTEM_GLYPH_SCALE = 0.5;
 
 function layoutPoints(galaxy: PlayerView["galaxy"]): Map<string, { x: number; y: number }> {
   const all = galaxy.allSystems();
@@ -755,21 +1474,52 @@ function enforceGlyphSeparation(
   hubId: string,
   unit: number,
 ): void {
-  const GLYPH_FOOTPRINT = 1.6; // clear the faint halo (1.35·r) + owner/star rings (1.7·r)
-  const GAP = unit * 1.1; // a visible lane of empty space between any two glyphs
+  const GLYPH_FOOTPRINT = 1.95; // clear the halo (1.35·r), star aura (1.55·r) + owner ring & dev pips (1.7·r + pip)
+  const GAP = unit * 1.7; // a generous lane of empty space between any two glyphs
   const MAX_ITERS = 200;
-  const list = systems.map((s) => ({
+  const list = systems.map((s, i) => ({
     p: points.get(s.id),
     r: nodeRadius(s.position?.region ?? (s.id === hubId ? "hub" : "core"), unit) * GLYPH_FOOTPRINT,
     hub: s.id === hubId,
-  })).filter((e): e is { p: { x: number; y: number }; r: number; hub: boolean } => !!e.p);
+    i,
+  })).filter((e): e is { p: { x: number; y: number }; r: number; hub: boolean; i: number } => !!e.p);
+
+  // Spatial grid (Galaxy Map Expansion, Phase 1): a node can only overlap another within
+  // `maxR + maxR + GAP` of it, so binning into cells of that size means each node only checks the
+  // 3×3 cell neighbourhood instead of all N others — turning the relaxation from O(N²) per pass
+  // into O(N·neighbours), which keeps a scale-2/3 galaxy (150–225 systems) layout cheap. The grid
+  // is rebuilt each pass because nodes move; rebuilding a Map of N entries is itself O(N).
+  let maxR = 0;
+  for (const e of list) if (e.r > maxR) maxR = e.r;
+  const cell = Math.max(1e-3, maxR * 2 + GAP);
+  const keyOf = (x: number, y: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
     let moved = false;
-    for (let i = 0; i < list.length; i++) {
-      const a = list[i]!;
-      for (let j = i + 1; j < list.length; j++) {
-        const b = list[j]!;
+    const grid = new Map<string, (typeof list)[number][]>();
+    for (const e of list) {
+      const k = keyOf(e.p.x, e.p.y);
+      const bucket = grid.get(k);
+      if (bucket) bucket.push(e);
+      else grid.set(k, [e]);
+    }
+    for (const a of list) {
+      const cx = Math.floor(a.p.x / cell);
+      const cy = Math.floor(a.p.y / cell);
+      // Gather the 3×3 neighbourhood and process by ascending index. Non-neighbour pairs are
+      // always ≥ `cell` (= maxR·2 + GAP ≥ minD) apart, so they can't overlap and are skipped with
+      // no effect — mirroring the original ascending i<j double loop's no-ops. The convergence
+      // guarantee (iterate until no moves) is unchanged, so the final layout is fully separated.
+      const candidates: (typeof list)[number][] = [];
+      for (let gx = cx - 1; gx <= cx + 1; gx++) {
+        for (let gy = cy - 1; gy <= cy + 1; gy++) {
+          const bucket = grid.get(`${gx},${gy}`);
+          if (!bucket) continue;
+          for (const b of bucket) if (b.i > a.i) candidates.push(b);
+        }
+      }
+      candidates.sort((m, n) => m.i - n.i);
+      for (const b of candidates) {
         const minD = a.r + b.r + GAP;
         let dx = b.p.x - a.p.x;
         let dy = b.p.y - a.p.y;
@@ -777,7 +1527,7 @@ function enforceGlyphSeparation(
         if (dist >= minD) continue;
         if (dist < 1e-6) {
           // Coincident points — separate along a stable per-pair axis so it stays deterministic.
-          const ang = (((i * 73856093) ^ (j * 19349663)) % 628) / 100;
+          const ang = (((a.i * 73856093) ^ (b.i * 19349663)) % 628) / 100;
           dx = Math.cos(ang);
           dy = Math.sin(ang);
           dist = 1;
@@ -835,6 +1585,83 @@ function drawGlyph(
   }
   if (open) g.circle(0, 0, r).stroke({ width: r * 0.12, color: fill, alpha: 0.8 });
   cont.addChild(g);
+}
+
+/** How built-up a claimed system is (Section 08): one development pip per population stage. */
+const POP_RANK: Record<PopulationStage, number> = {
+  outpost: 1,
+  settlement: 2,
+  colony: 3,
+  city: 4,
+  metropolis: 5,
+};
+
+function developmentTier(s: { populationStage: PopulationStage }): number {
+  return POP_RANK[s.populationStage] ?? 1;
+}
+
+/** Every galaxy-map fleet-icon asset (`/assets/<slot>.png`), preloaded once per scene. */
+const FLEET_ICON_SLOTS = [
+  "fleeticon-trader",
+  "fleeticon-freighter",
+  "fleeticon-escort",
+  "fleeticon-frigate",
+  "fleeticon-cruiser",
+  "fleeticon-capital",
+  "fleeticon-raider",
+  "fleeticon-survey",
+];
+
+/** Warship size band → icon by largest hull tier: escort (R1–2), frigate (R3–4), cruiser (R5–6), capital (R7–8). */
+function warIconSlot(maxTier: number): string {
+  if (maxTier >= 7) return "fleeticon-capital";
+  if (maxTier >= 5) return "fleeticon-cruiser";
+  if (maxTier >= 3) return "fleeticon-frigate";
+  return "fleeticon-escort";
+}
+
+/** A transiting own fleet's icon: survey skiff / raider / warship-by-size, MoO-style flagship read. */
+function transitIconSlot(kind: FleetKind, maxTier: number): string {
+  return kind === "survey" ? "fleeticon-survey" : kind === "raid" ? "fleeticon-raider" : warIconSlot(maxTier);
+}
+
+/** A fogged rival contact's icon by rough force band (exact type never leaks — Section 04). */
+function contactIconSlot(force: "light" | "medium" | "heavy"): string {
+  return force === "heavy" ? "fleeticon-capital" : force === "medium" ? "fleeticon-frigate" : "fleeticon-escort";
+}
+
+/** Trade-convoy icon: a bulk freighter for high-value runs, a light trader otherwise. */
+function convoyIconSlot(value: number): string {
+  return value >= 1800 ? "fleeticon-freighter" : "fleeticon-trader";
+}
+
+/** Marker colour per own-fleet kind: war = theme accent, raid = amber, survey = cool cyan. */
+function fleetKindColor(kind: FleetKind, pal: Palette): number {
+  return kind === "raid" ? pal.warn : kind === "survey" ? pal.accent2 : pal.accent;
+}
+
+/**
+ * The icon for an own fleet in transit, drawn pointing along travel (+x) so it reads at a glance:
+ * a filled arrowhead for a line war fleet, a longer swept dagger for a raider strike, and a hollow
+ * scan-diamond with a sensor boom + bright core for an unarmed survey skiff.
+ */
+function fleetGlyph(kind: FleetKind, unit: number, color: number, ink: number): Graphics {
+  const g = new Graphics();
+  if (kind === "raid") {
+    const s = unit * 1.15;
+    g.poly([s * 1.35, 0, -s * 0.45, s * 0.62, -s * 0.85, 0, -s * 0.45, -s * 0.62]).fill({ color, alpha: 0.95 });
+    g.stroke({ width: unit * 0.26, color: ink, alpha: 0.7 });
+  } else if (kind === "survey") {
+    const s = unit * 1.0;
+    g.poly([s, 0, 0, s * 0.82, -s, 0, 0, -s * 0.82]).stroke({ width: unit * 0.32, color, alpha: 0.95 });
+    g.moveTo(-s * 1.5, 0).lineTo(-s * 0.95, 0).stroke({ width: unit * 0.22, color, alpha: 0.7 });
+    g.circle(0, 0, unit * 0.34).fill({ color, alpha: 1 });
+  } else {
+    const s = unit * 1.1;
+    g.poly([s, 0, -s * 0.7, s * 0.75, -s * 0.7, -s * 0.75]).fill({ color, alpha: 0.92 });
+    g.stroke({ width: unit * 0.28, color: ink, alpha: 0.7 });
+  }
+  return g;
 }
 
 /** Shortest distance from a point to a line segment (world space), for lane hit testing. */

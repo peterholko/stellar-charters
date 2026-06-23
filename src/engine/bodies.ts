@@ -168,10 +168,6 @@ export interface ColonyInfo {
   habitable: boolean;
   sites: ExtractionSite[];
   buildings: BodyBuildings;
-  /** Pending builds on this body (Section 24, Phase 4a), front = under construction. */
-  queue: QueueItem[];
-  /** This body's own population (Section 24, Phase 4b), if it hosts one (habitable or agri-domed). */
-  population?: ColonyPopulation;
 }
 
 /** True if a body can host a population (Section 24, Phase 4b): a habitable world, or any world
@@ -198,8 +194,6 @@ export function coloniesOf(sys: System): ColonyInfo[] {
       key, kind, bodyType, bodyLabel, orbit, habitable,
       sites: sitesByKey.get(key) ?? [],
       buildings: sys.bodyBuildings[key] ?? emptyBodyBuildings(),
-      queue: sys.buildQueues?.[key] ?? [],
-      population: sys.colonyPop?.[key],
     });
   };
   if (sys.bodies) {
@@ -253,6 +247,26 @@ export function canBuildOnBody(kind: BuildingKind, bodyType: BodyType): boolean 
     default:
       return false;
   }
+}
+
+/**
+ * The best body in a system to host a building of `kind` (review Section 10: the queue's items
+ * auto-choose their landing body by affinity, overridable per order). Agri-domes go to the richest
+ * farmland, factories to the cheapest industrial world; otherwise the first eligible body in
+ * orbital order. Null when nothing in the system can host it. Shared by the engine's default
+ * body choice and the bots, so "what the player gets by default" and "what the AI does" agree.
+ */
+export function bestBodyFor(sys: System, kind: BuildingKind): string | null {
+  // One queued BUILDING per body: a body whose build is already in the system queue is not a
+  // candidate, so auto-placement (and the bots) flow to the next-best free world. Waiting
+  // extractors are per-deposit and don't occupy the body's building slot.
+  const occupied = new Set(sys.queue.filter((q) => q.kind !== "extractor").map((q) => q.bodyKey));
+  const cands = coloniesOf(sys).filter((c) => canBuildOnBody(kind, c.bodyType) && !occupied.has(c.key));
+  if (cands.length === 0) return null;
+  if (kind === "agridome") cands.sort((a, b) => agriFoodMult(b.bodyType) - agriFoodMult(a.bodyType));
+  else if (kind === "factory") cands.sort((a, b) => factoryCostMult(a.bodyType) - factoryCostMult(b.bodyType));
+  else if (kind === "habitat") cands.sort((a, b) => Number(b.habitable) - Number(a.habitable));
+  return cands[0]!.key;
 }
 
 /** Agri-dome food-output multiplier by world type — ocean worlds are the breadbaskets, barren

@@ -23,6 +23,7 @@ import {
   maybeSurvey,
   planRaid,
   routeExposureScore,
+  maintainMaterialReserves,
   sellSurplus,
   valueSystem,
   type BotState,
@@ -49,6 +50,7 @@ export class RaiderBot implements Bot {
     const orders: Order[] = [];
     // Raiders still export their own modest output to stay solvent.
     orders.push(...sellSurplus(view, 0));
+    orders.push(...maintainMaterialReserves(view)); // no auto-buy: stock build materials up front
     orders.push(...maybeBuildExtractor(view));
     orders.push(...maybeResearch(view, RESEARCH_PLANS.raider));
     // Scout rival systems for raid/seizure targets with a survey vessel (Section 25).

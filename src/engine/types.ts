@@ -80,6 +80,22 @@ export type RangeTier = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 /** The deepest range tier a corporation can research/field. */
 export const MAX_RANGE_TIER: RangeTier = 8;
 
+/**
+ * Player-facing warship hull class per range tier (Section 04 ship progression). The tier
+ * itself stays the jump-range *stat*; these are the names the UI, reports, and logs use.
+ * Range 5+ are the capital hulls (Section 22).
+ */
+export const HULL_CLASS_NAMES: Record<RangeTier, string> = {
+  1: "Cutter",
+  2: "Corvette",
+  3: "Frigate",
+  4: "Destroyer",
+  5: "Cruiser",
+  6: "Battlecruiser",
+  7: "Battleship",
+  8: "Dreadnought",
+};
+
 /** Spatial region a system belongs to, from the protected core out to the deep abyss. */
 export type SystemRegion = "hub" | "core" | "frontier" | "abyss";
 
@@ -265,19 +281,36 @@ export function emptyColonyPopulation(): ColonyPopulation {
 }
 
 /** The building kinds that run through a colony's construction queue (Section 24, Phase 4a). System
- *  structures (platforms, depot, megastructures) and per-site extractors stay instant-on-affordability. */
-export type QueueBuildingKind = "factory" | "reactor" | "agridome" | "mining" | "habitat" | "power" | "lab";
+ *  structures (platforms, depot, megastructures) stay instant-on-affordability. Extractors are a
+ *  hybrid: instant when their bill is on hand, otherwise they wait in the queue as a zero-CP item
+ *  and come online the moment the materials arrive. */
+export type QueueBuildingKind = "factory" | "reactor" | "agridome" | "mining" | "habitat" | "power" | "lab" | "extractor";
 
-/** One item in a colony's build queue. Credits + resources are charged when the item is *queued*;
- *  the building materialises once `cpDone` reaches `cpCost`, gated by the colony's construction rate. */
+/** One item in a colony's build queue. The bill (credits + materials) is charged the moment it is
+ *  affordable — at enqueue if the resources are on hand, otherwise the item WAITS in the queue
+ *  (`paid: false`) and the engine retries each turn until the bill clears or the player cancels
+ *  (`cancelBuild`). Construction points only flow into paid items; the building materialises once
+ *  `cpDone` reaches `cpCost`. Each body holds at most ONE queued item at a time. */
 export interface QueueItem {
   kind: QueueBuildingKind;
   /** Recipe id for a factory (`kind === "factory"`). */
   recipeId?: string;
+  /** The deposit an extractor works (`kind === "extractor"`) — identifies the item for cancel. */
+  siteKey?: string;
+  /** The extractor's resource (`kind === "extractor"`), for labels without a site lookup. */
+  resource?: Resource;
+  /** Body this build lands on — auto-chosen by affinity at enqueue, overridable per order. */
+  bodyKey: string;
   /** Construction points required to finish (Section 24). */
   cpCost: number;
   /** Construction points accumulated so far. */
   cpDone: number;
+  /** True once the bill below has been charged; false = waiting for materials/credits. */
+  paid: boolean;
+  /** Credit cost quoted at enqueue (refunded in full on cancel of a paid item). */
+  creditCost: number;
+  /** Material bill quoted at enqueue (Section 27 — no auto-buy; must be on hand to start). */
+  mats: Partial<Record<Resource, number>>;
 }
 
 export interface System {
@@ -297,38 +330,36 @@ export interface System {
   claimCost: number;
   upkeep: number;
   /**
-   * System-level population AGGREGATE (Section 24, Phase 4b): the highest stage / its progress /
-   * peak unrest across the system's populated colonies (`colonyPop`). Kept for valuation,
-   * megastructure gating, and the system pop-meter; the authoritative per-body state is `colonyPop`.
+   * THE system's population (review Section 10: the system is the unit of attention — one
+   * population per system). Habitable-world count and quality multiply its growth and tax, so a
+   * multi-habitable system stays a genuinely richer prize without per-world feeding orders.
    */
   populationStage: PopulationStage;
-  /** Progress (0..100) toward the next population stage of the leading colony (Section 08). */
+  /** Progress (0..100) toward the next population stage (Section 08). */
   populationProgress: number;
-  /** Peak social unrest across the system's colonies (0..1); lowers tax and production. */
+  /** Social unrest (0..1); lowers tax and production. */
   unrest: number;
   /**
-   * Per-body population (Section 24, Phase 4b): bodyKey → its colony's stage/progress/unrest. Only
-   * habitable bodies (or those with an agri-dome) appear here; pure-industrial worlds host no people.
-   */
-  colonyPop: Record<string, ColonyPopulation>;
-  /**
    * Buildings, owned per-body (Section 24): each planet/belt keyed by its body key
-   * ("planet:2", "belt:0", "star:0") holds its own factories/reactors/agri-domes/upgrades. The
-   * system aggregates these (shared stockpile + pooled power), but construction is per-body.
+   * ("planet:2", "belt:0", "star:0") holds its own factories/reactors/agri-domes/upgrades. Bodies
+   * are CONTENT (affinities, geology) — management happens through the single system queue.
    */
   bodyBuildings: Record<string, BodyBuildings>;
   /**
-   * Per-body construction queues (Section 24, Phase 4a): each body key maps to its FIFO list of
-   * pending builds. A colony pours `construction.pointsPerTurn` into the front item each turn; when
-   * it finishes, the building lands in `bodyBuildings` and the leftover points roll to the next item.
+   * THE system's construction queue (review Section 10: one queue per system). Each item records
+   * the body it lands on (`QueueItem.bodyKey`, auto-chosen by affinity, overridable per order).
+   * The system pours `construction.pointsPerTurn` into the front item each turn.
    */
-  buildQueues: Record<string, QueueItem[]>;
+  queue: QueueItem[];
   /** Number of stationary defense platforms built here (each adds raid defense). */
   platforms: number;
   /** Megastructures built here (Section 22) — the metals/alloys demand sink + valuation race. */
   megastructures: MegastructureKind[];
   /** True if a Trade Depot has been built here (Section 12). */
   hasDepot: boolean;
+  /** True if a Warp Disruptor has been built here (Section 04): holds rival fleet arrivals for
+   *  `disruptorDelay` extra turns. One per system. */
+  hasDisruptor: boolean;
   /** Defensive strength against raids at this system's tunnel mouths. */
   defense: number;
   /** Ids of warp routes incident to this system. */
@@ -341,6 +372,35 @@ export interface System {
   innerRing: boolean;
   /** Atlas coordinates / region (procedural scenarios carry this; legacy JSON may omit it). */
   position?: SystemPosition;
+  /**
+   * Last production resolution's visibility state (design rule #2: no silent multipliers).
+   * Set each turn for systems running processors; owner-only in the client view.
+   */
+  production?: SystemProduction;
+}
+
+/** The four corporate charter types pickable at join (review Section 5). */
+export type CharterType = "extraction" | "shipping" | "security" | "bank";
+
+/** Named terms of a charter's valuation (Section 17), so share-price moves decompose on demand. */
+export type ValuationComponent =
+  | "cash"
+  | "debt"
+  | "fleet"
+  | "momentum"
+  | "yields"
+  | "extractors"
+  | "population"
+  | "infrastructure"
+  | "megastructures"
+  | "stockpiles";
+
+/** Why a system's processors under-delivered this turn — the brown-out factor and limiting inputs. */
+export interface SystemProduction {
+  /** 0..1 — power capacity ÷ power need. Below 1 the whole system is browned out by this factor. */
+  powerFactor: number;
+  /** Recipes that ran short of an input, with the input and the fraction that actually ran. */
+  limited: { recipeId: string; input: Resource; ratio: number }[];
 }
 
 export interface WarpRoute {
@@ -391,6 +451,19 @@ export interface Convoy {
 }
 
 /**
+ * One leg a mover traversed during the last resolved turn (Section 04), surfaced for the map's
+ * "Last turn movements" replay. `from`→`to` are the segment endpoints it crossed; `offLane` marks
+ * a direct laneless hop so the client can draw it as a straight dashed line rather than along a lane.
+ */
+export interface ClientMovement {
+  kind: "convoy" | "fleet";
+  owner: string;
+  fromSystemId: string;
+  toSystemId: string;
+  offLane: boolean;
+}
+
+/**
  * A warship in transit between systems (Section 23 — mobile fleets). Ships ordered to move travel
  * along charted routes over turns, exactly like a convoy. While in transit a ship's `stationedAt`
  * is "" so it neither defends nor escorts. On arriving at a non-allied rival system it gives
@@ -405,10 +478,19 @@ export interface ShipTransit {
   position: number;
   /** Turns remaining on the current route segment. */
   segmentTurnsLeft: number;
-  /** Turn the move was ordered (a fleet does not advance on its launch turn). */
+  /**
+   * Turns each segment takes, parallel to `path` segments. Used for off-lane legs, whose
+   * `routeIds` entry is "" and therefore has no `WarpRoute.transitTime` to read (Section 04).
+   * Optional: lane-only transits (e.g. survey vessels) fall back to the route's own transitTime.
+   */
+  segmentTimes?: number[];
+  /** Turn the move was ordered (the launch turn counts as the first travel segment, like a convoy). */
   launchedTurn: number;
   /** Destination is a non-allied rival system → resolve a battle on arrival. */
   attack: boolean;
+  /** Set once a rival Warp Disruptor has held this fleet on its final approach, so the hold fires
+   *  exactly once (Section 04). */
+  disrupted?: boolean;
   /** Survey vessel only (Section 25): system to fly home to after surveying the destination. */
   surveyReturnTo?: string;
 }
@@ -465,11 +547,51 @@ export interface War {
   endTurn: number;
 }
 
+/** shareRegister keys with this prefix are NPC institutional blocks, not corporations. */
+export const NPC_HOLDER_PREFIX = "npc:";
+
+export function isNpcHolderId(id: string): boolean {
+  return id.startsWith(NPC_HOLDER_PREFIX);
+}
+
+/**
+ * A seeded institutional shareholder block on a charter's cap table (Section 17).
+ * NPC holders own shares from charter creation, post standing asks (they sell into
+ * hostile sweeps and buybacks at a premium over the traded base) and standing bids
+ * (they absorb player sales at a discount, a few shares per turn). They never trade
+ * on their own initiative and can never hold control of a charter.
+ */
+export interface NpcHolder {
+  /** shareRegister key ("npc:<corpId>:<slot>"). */
+  id: string;
+  /** Named for the turn report (design rule #13 — folklore is a feature). */
+  name: string;
+  /** Sells to buyers at tradedBase × askPremium. */
+  askPremium: number;
+  /** Buys from sellers at tradedBase × bidDiscount. */
+  bidDiscount: number;
+  /** Max shares this block absorbs (buys) per turn. */
+  absorbPerTurn: number;
+}
+
+/** This turn's sentiment moves, decomposed so the UI never shows a mystery number. */
+export interface SentimentParts {
+  events: number;
+  reversion: number;
+  jitter: number;
+}
+
 export interface Corporation {
   id: string;
   name: string;
   credits: number;
   debt: number;
+  /** Goods held in this corp's warehouse AT the Wormhole Exchange (ruleset v10): instant
+   *  sells draw from here; instant hub buys can land here. Capacity-limited (anti-hoarding) —
+   *  see `warehouseLevel` and Tuning.warehouse. */
+  hubStockpile: Stockpile;
+  /** Warehouse upgrade level (0..Tuning.warehouse.levelCap); each level adds capacity. */
+  warehouseLevel: number;
   ownedSystemIds: string[];
   ships: Ship[];
   privateers: Privateer[];
@@ -480,14 +602,37 @@ export interface Corporation {
   research: CorpResearch;
   /** Best range tier the corporation can field (from research/licensing). */
   rangeTier: RangeTier;
+  /**
+   * Charter type picked at join (review Section 5 — asymmetric identity): one strong bonus, one
+   * real penalty. Undefined for bots and for humans who haven't picked yet.
+   */
+  charter?: CharterType;
+  /** Turn the charter's effects begin (event-sourcing: replay applies it from here, not turn 0). */
+  charterFrom?: number;
   /** Latest computed valuation (Section 17). */
   valuation: number;
+  /**
+   * Per-component breakdown of the latest valuation (the win metric is not a black box —
+   * the owner's UI decomposes the share price from these). Self-only in the client view.
+   */
+  valuationParts?: Record<ValuationComponent, number>;
   /** Latest per-share price = valuation / sharesOutstanding. */
   sharePrice: number;
   /** Total shares issued by this corporation (constant). */
   sharesOutstanding: number;
-  /** Who holds this corporation's shares: holderCorpId -> share count. */
+  /** Who holds this corporation's shares: holder id -> share count. Corp-id keys are
+   *  player/bot stakes; NPC_HOLDER_PREFIX keys are the seeded institutional blocks
+   *  (see npcHolders), which can buy and sell but never take control of a charter. */
   shareRegister: Record<string, number>;
+  /** The seeded institutional blocks on this charter's cap table (Section 17). */
+  npcHolders: NpcHolder[];
+  /** Market-mood multiplier on share trades: tradedBase = sharePrice × sentiment.
+   *  Moves on events (raids, invasions, war, distress), mean-reverts toward 1.0, and
+   *  carries a small seeded jitter. Affects trade execution ONLY — valuation,
+   *  standings, and debt ceilings always read pure book value. */
+  sentiment: number;
+  /** This turn's sentiment delta, decomposed for the report/Finance UI. */
+  sentimentParts?: SentimentParts;
   /** Original controlling player's id (the founder block holder). */
   founderId: string;
   /** Recent per-turn net earnings, for valuation momentum (Section 17). */
@@ -589,6 +734,11 @@ export interface BuildDepotOrder {
   systemId: string;
 }
 
+export interface BuildDisruptorOrder {
+  kind: "buildDisruptor";
+  systemId: string;
+}
+
 export interface BuildHydroponicsOrder {
   kind: "buildHydroponics";
   systemId: string;
@@ -632,6 +782,24 @@ export interface BuildLabOrder {
   systemId: string;
   /** Planet/belt to build on (Section 24); defaults to the system's primary body if omitted. */
   bodyKey?: string;
+}
+
+/** Remove a queued build from a system's construction queue. Buildings are identified by
+ *  `bodyKey` (one queued building per body); waiting extractors by `siteKey` (one per deposit).
+ *  A paid item refunds its full bill: credits to the corp, materials to the system's stockpile;
+ *  accumulated construction progress is lost. */
+export interface CancelBuildOrder {
+  kind: "cancelBuild";
+  systemId: string;
+  bodyKey: string;
+  /** Set to cancel a waiting extractor on this deposit instead of the body's building. */
+  siteKey?: string;
+}
+
+/** Raise the corp's Exchange warehouse one level (ruleset v10) — more hub storage for
+ *  instant trading; cost scales with the level reached. */
+export interface UpgradeWarehouseOrder {
+  kind: "upgradeWarehouse";
 }
 
 /** Set the charter's research queue (Section 28): the ordered list of tech ids to pursue, active first. */
@@ -721,10 +889,33 @@ export interface AllianceBreakOrder {
   targetId: string;
 }
 
+/** Buy shares of a charter (Section 17). Fills walk the target's cap table from the
+ *  cheapest ask upward (NPC blocks at their personality premiums, rival corp stakes
+ *  and finally the management block at holdout multiples), all scaled by sentiment.
+ *  Buying your OWN charter is a buyback: shares return to your management block. */
 export interface BuySharesOrder {
   kind: "buyShares";
   targetId: string;
   shares: number;
+  /** Max per-share price (after the buyer's research discount). The cascade stops at
+   *  the first block whose ask exceeds this. Mandatory: turns are asynchronous, so
+   *  resolved prices are never knowable at staging — an uncapped order would be a
+   *  blank cheque. (Legacy orders in old event logs may lack it; the engine replays
+   *  those as uncapped, preserving their original resolution.) */
+  limitPrice: number;
+}
+
+/** Sell shares you hold (Section 17) into the NPC blocks' standing bids, best bid
+ *  first, each block absorbing a few shares per turn. Selling your OWN charter's
+ *  shares is equity financing: the management block shrinks (takeover risk rises)
+ *  and the proceeds land in the corp treasury. */
+export interface SellSharesOrder {
+  kind: "sellShares";
+  targetId: string;
+  shares: number;
+  /** Min per-share price. The cascade stops at the first bid below this. Mandatory —
+   *  see BuySharesOrder.limitPrice. */
+  limitPrice: number;
 }
 
 export interface BorrowOrder {
@@ -745,12 +936,15 @@ export type Order =
   | TargetConvoyOrder
   | EscortOrder
   | BuildDepotOrder
+  | BuildDisruptorOrder
   | BuildHydroponicsOrder
   | BuildProcessorOrder
   | BuildReactorOrder
   | UpgradeInfrastructureOrder
   | BuildPlatformOrder
   | BuildLabOrder
+  | CancelBuildOrder
+  | UpgradeWarehouseOrder
   | SetResearchOrder
   | BuildMegastructureOrder
   | BuildExtractorOrder
@@ -763,4 +957,5 @@ export type Order =
   | AlliancePledgeOrder
   | AllianceBreakOrder
   | BuySharesOrder
+  | SellSharesOrder
   | BorrowOrder;

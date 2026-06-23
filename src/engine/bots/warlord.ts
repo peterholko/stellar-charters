@@ -23,6 +23,7 @@ import {
   RESEARCH_PLANS,
   maybeSurvey,
   planRaid,
+  maintainMaterialReserves,
   sellSurplus,
   valueSystem,
   type BotState,
@@ -41,6 +42,7 @@ export class WarlordBot implements Bot {
     const orders: Order[] = [];
     // Keep just enough economy running to bankroll the war machine.
     orders.push(...sellSurplus(view));
+    orders.push(...maintainMaterialReserves(view)); // no auto-buy: stock build materials up front
     orders.push(...maybeBuildExtractor(view));
     orders.push(...maybeResearch(view, RESEARCH_PLANS.warlord));
     orders.push(...maybeSurvey(view)); // scout conquest targets (Section 25)

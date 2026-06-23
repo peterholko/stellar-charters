@@ -98,4 +98,43 @@ describe("raid eligibility", () => {
       ),
     ).toBe(true);
   });
+
+  it("a raider fleet stationed at an endpoint grants access (Section 13) — the hub included", () => {
+    const galaxy = new Galaxy(tinyScenario(2, 3));
+    galaxy.system("s0").owner = "victim";
+    const hubRoute = galaxy.routeBetween("hub", "s0")!;
+
+    // Parked at the hub with no territory at all: the lane's vulnerable mouth (s0) is one hop away.
+    expect(
+      canRaidRoute(
+        galaxy,
+        corp({ ownedSystemIds: [], ships: [{ rangeTier: 1, combat: 3, raider: true, stationedAt: "hub" }] }),
+        hubRoute,
+      ),
+    ).toBe(true);
+
+    // A raider mid-transit has no station — grants nothing until it arrives.
+    expect(
+      canRaidRoute(
+        galaxy,
+        corp({
+          ownedSystemIds: [],
+          ships: [{
+            rangeTier: 1, combat: 3, raider: true, stationedAt: "",
+            transit: { path: ["s0", "hub"], routeIds: ["route-0"], position: 0, segmentTurnsLeft: 1, launchedTurn: 1, attack: false },
+          }],
+        }),
+        hubRoute,
+      ),
+    ).toBe(false);
+
+    // Escorts don't raid: a non-raider warship parked at the hub grants nothing.
+    expect(
+      canRaidRoute(
+        galaxy,
+        corp({ ownedSystemIds: [], ships: [{ rangeTier: 1, combat: 3, raider: false, stationedAt: "hub" }] }),
+        hubRoute,
+      ),
+    ).toBe(false);
+  });
 });
