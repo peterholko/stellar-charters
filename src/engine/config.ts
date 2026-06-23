@@ -22,6 +22,7 @@ import { emptyStockpile, RESOURCES, type QueueBuildingKind } from "./types.js";
  * with its recipe tier so a higher-tier plant takes proportionally longer to raise.
  */
 export function constructionCpCost(tuning: Tuning, kind: QueueBuildingKind, recipeTier = 1): number {
+  if (kind === "extractor") return 0; // instant once paid — extractors only queue to WAIT for materials
   const c = tuning.construction;
   const base =
     kind === "factory" ? c.factory
@@ -129,6 +130,29 @@ export interface Tuning {
   priceReferenceVolume: number;
   /** Per-unit shipping fee multiplier applied along a path. */
   shippingFeePerHop: number;
+  /**
+   * Bid/ask spread instant Exchange trades pay around the posted price (ruleset v10) — buys
+   * pay posted×(1+s), sells receive posted×(1−s). Sealed orders clear at mid: patience earns
+   * the better price, and round-tripping the market needs real movement > 2s to profit.
+   */
+  instantSpread: number;
+  /** Per-corp warehouse at the Exchange (ruleset v10) — hub storage for instant trading.
+   *  Capacity is total units across all resources; the cap counters hoarding until upgraded. */
+  warehouse: {
+    baseCapacity: number;
+    capacityPerLevel: number;
+    levelCap: number;
+    /** Credit cost of an upgrade, × the level being reached. */
+    upgradeCreditCost: number;
+    /** Metals consumed by an upgrade, × the level being reached. */
+    upgradeMetalsCost: number;
+  };
+  /**
+   * Commodity staging (review Section 13): a resource lists on the Exchange once ANY charter
+   * fields this range tier (deterministic, public). Early game trades ~6 goods; the deep-frontier
+   * commodities arrive as the map opens, so market literacy grows with reach.
+   */
+  resourceTierGate: Record<Resource, RangeTier>;
   /** Refund fraction for losing auction bids (Section 05: 0.90–0.95). */
   bidRefundFrac: number;
   /** Costs. */
@@ -151,6 +175,16 @@ export interface Tuning {
   rangeResearchCost: Record<RangeTier, number>;
   /** Debt interest applied per turn. */
   debtInterest: number;
+  /**
+   * Feature gates (review Section 13: defer what doesn't defend the identity). Gated systems
+   * stay in the codebase but cannot be researched/ordered; flip per scenario to re-enable.
+   */
+  features: { terraforming: boolean; espionage: boolean };
+  /**
+   * Hegemon tariff (review Risk 5): a charter whose valuation exceeds `valuationMultiple` ×
+   * the median pays a small Exchange tariff — the runaway leader funds everyone's catch-up.
+   */
+  hegemon: { valuationMultiple: number; tariff: number };
   /** Population food consumption per stage, per turn. */
   foodNeed: Record<PopulationStage, number>;
   /** Population ice (life-support) consumption per stage, per turn (Section 07/08). */
@@ -161,6 +195,13 @@ export interface Tuning {
   growthRate: Record<PopulationStage, number>;
   /** Progress points required to advance to the next stage. */
   growthThreshold: number;
+  /**
+   * One population per SYSTEM (review Section 10): each habitable/domed world beyond the first
+   * multiplies growth and tax, so multi-habitable systems stay richer prizes without per-world
+   * feeding orders, unrest, or tax accounting.
+   */
+  habitableGrowthBonusPerWorld: number;
+  habitableTaxBonusPerWorld: number;
   /** Unrest added per starved turn; production multiplier = 1 - unrestProductionPenalty*unrest. */
   unrestPerStarvedTurn: number;
   unrestRecoveryPerFedTurn: number;
@@ -194,6 +235,35 @@ export interface Tuning {
   depotComponentCost: number;
   /** Fuel each ship burns per turn to stay operational (Section 07b fleet sink). */
   fuelPerShipPerTurn: number;
+  /**
+   * Movement fuel (Section 04/07b). Moving anything costs fuel scaled by mass × distance, and
+   * warp lanes are engineered to channel mass with far less fuel — so bulk freighters depend on
+   * lanes while light combat hulls can afford to jump off-lane. Distances are atlas world units.
+   */
+  fuelPerMassDistance: number;
+  /** Combat-hull mass by range tier (a freighter's mass is its cargo quantity). */
+  hullMass: Record<RangeTier, number>;
+  /** Max fraction of mass-fuel a perfect lane removes; scaled by lane quality (capacity/stability). */
+  laneFuelEfficiency: number;
+  /** Capacity that counts as a full-throughput lane when scoring lane quality. */
+  laneCapacityRef: number;
+  /** World-distance a ship covers per turn off-lane (also the off-lane route-time reference). */
+  distancePerTurn: number;
+  /** Max direct (off-lane) jump distance a hull of each range tier can make in one move. */
+  maxOffLaneJumpDist: Record<RangeTier, number>;
+  /**
+   * Per-hull SPEED multiplier (Section 04): 1.0 = baseline, >1 faster (fewer turns), <1 slower. It
+   * scales BOTH off-lane jump time and lane-segment transit time, so a light scout zips while a
+   * capital hull crawls. A fleet travels at its slowest ship's speed. Keep tier 1 at 1.0 so the
+   * baseline lane/off-lane timings are unchanged.
+   */
+  shipSpeed: Record<RangeTier, number>;
+  /**
+   * Per-hull SENSOR radius in atlas world units (Section 04). A ship — stationed or in transit —
+   * projects this bubble around its current position; a rival fleet in transit inside any of your
+   * ships' bubbles surfaces as a map contact. Picket your space to see incoming attacks.
+   */
+  shipSensorRange: Record<RangeTier, number>;
   /** Reactor (Section 07b power): build cost, power capacity added, helium3 burned per turn. */
   reactorCost: number;
   reactorPowerOutput: number;
@@ -300,6 +370,15 @@ export interface Tuning {
   depotShippingDiscount: number; // fraction off shipping on incident routes
   depotTransitBonus: number; // turns shaved off incident routes (min 1)
   depotDefenseBonus: number; // added to local raid defense on incident routes
+  /**
+   * Warp Disruptor platform (Section 04): a defensive structure that holds any rival fleet whose
+   * destination is this system for `disruptorDelay` extra turns on its final approach. One per
+   * system (like a Trade Depot); built instantly on affordability.
+   */
+  disruptorCost: number;
+  disruptorComponentCost: number; // components consumed per disruptor build
+  disruptorDelay: number; // extra turns a rival arrival is held in the disruption field
+  disruptorDefenseBonus: number; // added to local raid defense (kept small to avoid turtling)
   /** Equity & acquisition (Section 17). */
   sharesOutstanding: number;
   acquisitionThreshold: number; // fraction of shares for control
@@ -307,6 +386,43 @@ export interface Tuning {
   maxDebtToValuation: number;
   /** Credits floor below which a charter falls into distress liquidation. */
   distressCreditFloor: number;
+  /** Equity market structure (Section 17): the seeded cap table, holdout pricing, and
+   *  the sentiment dials that move traded prices (never valuation). */
+  equity: {
+    /** Institutional blocks seeded onto every charter's cap table, in ask order slots.
+     *  Shares not covered by these blocks form the founder's management block. */
+    npcBlocks: { shares: number; askPremium: number; bidDiscount: number; absorbPerTurn: number }[];
+    /** Ask multiple for prying shares from an unwilling rival corp's stake (holdouts). */
+    corpHoldoutMult: number;
+    /** Ask multiple on the management block itself — the last line of a hostile sweep. */
+    managementHoldoutMult: number;
+    /** Concentration premium (Section 17): the marginal share costs more as the buyer's
+     *  stake grows — QUADRATIC in position — so creeping to control is priced like the
+     *  takeover it is and early-game snipes are priced out (doc pacing: turns 12–15).
+     *  Marginal multiplier = 1 + positionImpact × (held/outstanding)². Buying back your
+     *  OWN charter is exempt: consolidation is not concentration. */
+    positionImpact: number;
+    sentiment: {
+      min: number;
+      max: number;
+      /** Fraction of the gap to 1.0 closed per turn — shock windows heal on their own. */
+      reversion: number;
+      /** Half-width of the seeded per-turn jitter. */
+      jitter: number;
+      /** Multiplicative impulse per convoy raid suffered this turn. */
+      raidImpulse: number;
+      /** Impulse per system lost to invasion this turn. */
+      systemLostImpulse: number;
+      /** Impulse when a war is declared on the corp this turn. */
+      warImpulse: number;
+      /** Impulse while credits sit below half the distress floor. */
+      nearDistressImpulse: number;
+      /** Impulse by the sign of last turn's earnings. */
+      earningsImpulse: number;
+      /** Per-turn clamp on the summed event shock (positive or negative). */
+      maxShockPerTurn: number;
+    };
+  };
   /** Valuation weights (Section 17). */
   valuation: {
     perSystemYieldValue: number;
@@ -340,6 +456,14 @@ export interface Tuning {
   };
 }
 
+/**
+ * Movement/fuel ruleset epoch. Bumped when resolution rules change (e.g. off-lane fleet
+ * movement + mass×distance fuel) so an in-progress event-sourced game — which replays its whole
+ * order log through the current engine — can be abandoned for a fresh seed rather than silently
+ * re-deriving its history under new rules. Surfaced in ClientState for visibility.
+ */
+export const RULESET_VERSION = 12; // v12 (Section 04): a fleet's launch turn counts as travel (distance-1 = 1 turn); per-hull speed scales lane + off-lane transit; ship-mounted sensors surface rival fleet contacts; the Warp Disruptor platform holds rival arrivals for extra turns
+
 export const DEFAULT_TUNING: Tuning = {
   startingCredits: 6500,
   basePrices: {
@@ -361,7 +485,17 @@ export const DEFAULT_TUNING: Tuning = {
   priceCeilFrac: 2.5,
   priceElasticity: 0.06,
   priceReferenceVolume: 40,
+  instantSpread: 0.025,
+  warehouse: { baseCapacity: 50, capacityPerLevel: 50, levelCap: 3, upgradeCreditCost: 400, upgradeMetalsCost: 10 },
   shippingFeePerHop: 1.5,
+  // Commodity staging (review Section 13): the early game lives on ~6 goods; the rest list as
+  // range tiers are fielded (silicates/polymers mid, components/isotopes deep, antimatter last).
+  resourceTierGate: {
+    ice: 1, metals: 1, helium3: 1, food: 1, fuel: 1, alloys: 1,
+    silicates: 2, polymers: 2,
+    components: 3, rareIsotopes: 3,
+    antimatter: 4,
+  },
   bidRefundFrac: 0.92,
   surveyCost: 300,
   shipCost: { 1: 380, 2: 720, 3: 1400, 4: 2800, 5: 4400, 6: 6500, 7: 9000, 8: 12000 },
@@ -378,11 +512,16 @@ export const DEFAULT_TUNING: Tuning = {
   plunderFenceRate: 0.85,
   rangeResearchCost: { 1: 0, 2: 1100, 3: 2200, 4: 3800, 5: 5000, 6: 6500, 7: 8200, 8: 10000 },
   debtInterest: 0.05,
+  features: { terraforming: false, espionage: false }, // deferred from v1 (review Section 13)
+  hegemon: { valuationMultiple: 3, tariff: 0.1 },
   foodNeed: { outpost: 0, settlement: 2, colony: 6, city: 14, metropolis: 30 },
   iceNeed: { outpost: 1, settlement: 1, colony: 2, city: 4, metropolis: 8 },
   taxPerStage: { outpost: 0, settlement: 55, colony: 180, city: 430, metropolis: 920 },
   growthRate: { outpost: 60, settlement: 30, colony: 18, city: 10, metropolis: 0 },
   growthThreshold: 100,
+  // Per-system population (review Section 10): extra habitable/domed worlds multiply growth/tax.
+  habitableGrowthBonusPerWorld: 0.35,
+  habitableTaxBonusPerWorld: 0.3,
   unrestPerStarvedTurn: 0.25,
   unrestRecoveryPerFedTurn: 0.15,
   unrestProductionPenalty: 0.6,
@@ -414,6 +553,20 @@ export const DEFAULT_TUNING: Tuning = {
   },
   depotComponentCost: 3,
   fuelPerShipPerTurn: 0.5,
+  // Movement fuel (Section 04/07b). Placeholder values — balance is out of scope; these only
+  // need to keep the sim running and make lanes meaningfully cheaper for massive freighters.
+  fuelPerMassDistance: 0.0008,
+  hullMass: { 1: 3, 2: 5, 3: 8, 4: 14, 5: 22, 6: 32, 7: 44, 8: 60 },
+  laneFuelEfficiency: 0.75,
+  laneCapacityRef: 40,
+  distancePerTurn: 600,
+  maxOffLaneJumpDist: { 1: 400, 2: 650, 3: 900, 4: 1200, 5: 1500, 6: 1900, 7: 2300, 8: 3000 },
+  // Speed taper: light hulls fast, capitals ~1.67× slower. Tier 1 is exactly 1.0 so existing
+  // baseline timings are unchanged. Tune against `npm run sim --procedural`.
+  shipSpeed: { 1: 1.0, 2: 0.95, 3: 0.9, 4: 0.85, 5: 0.8, 6: 0.72, 7: 0.66, 8: 0.6 },
+  // Sensor radius grows with hull tier — a single picket covers a corridor, not a whole region,
+  // so off-lane raiders keep a fog advantage in open space.
+  shipSensorRange: { 1: 500, 2: 650, 3: 800, 4: 1000, 5: 1200, 6: 1500, 7: 1850, 8: 2200 },
   reactorCost: 700,
   reactorPowerOutput: 6,
   reactorHelium3Use: 2,
@@ -482,10 +635,50 @@ export const DEFAULT_TUNING: Tuning = {
   depotShippingDiscount: 0.35,
   depotTransitBonus: 1,
   depotDefenseBonus: 3,
+  disruptorCost: 2500,
+  disruptorComponentCost: 4,
+  disruptorDelay: 2,
+  disruptorDefenseBonus: 2,
   sharesOutstanding: 100,
   acquisitionThreshold: 0.5,
   maxDebtToValuation: 1.0,
   distressCreditFloor: -2000,
+  equity: {
+    // Float totals 45: control (>50) ALWAYS requires prying ≥6 management shares at the
+    // holdout multiple — a real tender premium that also pays the victim's treasury (the
+    // comeback fund). Selling management shares (equity financing) widens the sweepable
+    // float — cash now, takeover exposure later.
+    npcBlocks: [
+      // Institutional trust: the willing seller — modest premium, decent bid, deep absorption.
+      { shares: 20, askPremium: 1.05, bidDiscount: 0.95, absorbPerTurn: 5 },
+      // Pension fund: the holdout — sells dear, bids low, absorbs little.
+      { shares: 15, askPremium: 1.3, bidDiscount: 0.85, absorbPerTurn: 2 },
+      // Retail float: sells near spot, fair bid, modest absorption.
+      { shares: 10, askPremium: 1.0, bidDiscount: 0.92, absorbPerTurn: 3 },
+    ],
+    corpHoldoutMult: 1.75,
+    managementHoldoutMult: 2.5,
+    // ≈ ×1.5 ask at a 25% stake, ×3 at 50%: control costs ~1.2× the target's whole
+    // market cap, unaffordable from a turn-3 bankroll but routine for a late war chest.
+    positionImpact: 8,
+    sentiment: {
+      min: 0.5,
+      max: 1.6,
+      // Raiding is endemic in this economy, so shocks must heal faster than they land
+      // for a calm corp — sentiment should be a WINDOW after a bad stretch, not a
+      // permanent discount (sweeps tune these: median sentiment should sit near 1.0).
+      reversion: 0.1,
+      jitter: 0.03,
+      raidImpulse: -0.05,
+      systemLostImpulse: -0.1,
+      warImpulse: -0.12,
+      nearDistressImpulse: -0.2,
+      earningsImpulse: 0.04,
+      /** Total event shock per turn is clamped to ±this (a triple-raid turn is a bad
+       *  day, not a death spiral). */
+      maxShockPerTurn: 0.25,
+    },
+  },
   valuation: {
     perSystemYieldValue: 40,
     populationValue: {
@@ -529,6 +722,14 @@ function fullStockpile(partial: Partial<Stockpile> | undefined): Stockpile {
   }
   return out;
 }
+
+/** Institutional name pools per cap-table slot (Section 17; named per design rule #13).
+ *  Index matches equity.npcBlocks order: trust, pension, retail. */
+export const NPC_HOLDER_NAMES: readonly (readonly string[])[] = [
+  ["Meridian Trust", "Halcyon Mutual", "Aldebaran Capital", "Cygnus Holdings", "Vega Continuity Fund", "Procyon & Sons"],
+  ["Outremer Pension Group", "Earthside Annuity Board", "Coreward Provident", "Mandate Workers' Trust", "Lagrange Assurance", "Heliopause Retirement Fund"],
+  ["Frontier smallholders", "Dockside retail float", "Colonial scrip holders", "Spacer credit unions"],
+];
 
 /** Normalise a parsed scenario object into a GameConfig with full tuning. */
 export function loadScenario(scenario: Scenario): GameConfig {

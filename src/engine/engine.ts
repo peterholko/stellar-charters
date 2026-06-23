@@ -9,11 +9,12 @@
  * available only in the next order window. Newly launched convoys therefore do not
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
-import { constructionCpCost, type GameConfig } from "./config.js";
+import { NPC_HOLDER_NAMES, constructionCpCost, type GameConfig } from "./config.js";
 import { RESEARCH_TREE, SECRET_TECH_IDS, canResearch, researchMods, techById, type ResearchMods } from "./research.js";
 import {
   EXTRACTOR_CAP,
   agriFoodMult,
+  bestBodyFor,
   bodyTypeOfKey,
   buildingTotal,
   canBuildOnBody,
@@ -23,15 +24,16 @@ import {
   factoryCostMult,
   getBodyBuildings,
   planetLabel,
-  primaryBodyKey,
   siteBodyKey,
   siteOutput,
   systemBuildings,
   systemHasHabitableBody,
   systemSeed,
 } from "./bodies.js";
+import { CHARTER_SPECS } from "./charters.js";
 import { Galaxy } from "./galaxy.js";
-import { Market, type ClearableOrder } from "./market.js";
+import { fleetHullMass, fleetSpeed, laneFuelFactor, planFleetMove, segmentDistance } from "./movement.js";
+import { Market, quoteInstant, type ClearableOrder } from "./market.js";
 import {
   canRaidRoute,
   raidStrength,
@@ -45,24 +47,31 @@ import {
   type TurnSnapshot,
 } from "./metrics.js";
 import {
+  HULL_CLASS_NAMES,
+  NPC_HOLDER_PREFIX,
   RESOURCES,
-  emptyColonyPopulation,
+  emptyStockpile,
   emptyCorpResearch,
+  isNpcHolderId,
+  type NpcHolder,
   type Convoy,
   type Corporation,
   type MegastructureKind,
   type Order,
   type PopulationStage,
+  type CharterType,
+  type ClientMovement,
   type QueueBuildingKind,
   type QueueItem,
   type Resource,
   type Ship,
   type System,
+  type ValuationComponent,
   type War,
 } from "./types.js";
 import type { Bot, BotFactory, PlayerView } from "./bots/bot.js";
 import { HybridBot } from "./bots/hybrid.js";
-import type { TurnEvent, TurnReport } from "./report.js";
+import type { LedgerCause, LedgerEntry, TurnEvent, TurnReport } from "./report.js";
 import { computeOutcome, type GameOutcome } from "./standings.js";
 
 export interface EngineOptions {
@@ -80,6 +89,7 @@ function queueLabel(item: QueueItem): string {
     case "habitat": return "habitat upgrade";
     case "power": return "power upgrade";
     case "lab": return "Research lab";
+    case "extractor": return `${item.resource ?? "deposit"} extractor`;
   }
 }
 
@@ -89,6 +99,18 @@ const MEGASTRUCTURE_LABEL: Record<MegastructureKind, string> = {
   spaceElevator: "Space Elevator",
   ringworld: "Ringworld",
 };
+
+/**
+ * Deterministic 0..1 evidence roll for deniable privateer raids (review Section 11). A pure
+ * FNV-style hash of (seed, turn, convoyId) — deliberately NOT the seeded Rng, so the intel
+ * layer never consumes from the resolution stream (event payloads must not perturb replay).
+ */
+function evidenceHash(seed: number, turn: number, convoyId: string): number {
+  let h = (2166136261 ^ seed) >>> 0;
+  h = Math.imul(h ^ turn, 16777619) >>> 0;
+  for (let i = 0; i < convoyId.length; i++) h = Math.imul(h ^ convoyId.charCodeAt(i), 16777619) >>> 0;
+  return (h >>> 8) / 0x1000000;
+}
 
 export class Engine {
   readonly config: GameConfig;
@@ -108,6 +130,13 @@ export class Engine {
 
   /** Observations collected during the current turn for the interactive TurnReport. */
   private events: TurnEvent[] = [];
+  /** Credits as of the last report — earnings baseline that charges planning-window instant
+   *  actions to the turn they precede (set at end of stepTurn). */
+  private planningCreditsBase: Map<string, number> | null = null;
+  /** Every credit movement this turn, with cause (design rule #1: no invisible hands). */
+  private ledgerLines: LedgerEntry[] = [];
+  /** Convoy/fleet legs traversed during the most recent turn, for the map's movement replay. */
+  private movements: ClientMovement[] = [];
   /** Tax levied during the most recent turn (surfaced in the TurnReport). */
   private lastTaxLevied = 0;
 
@@ -132,13 +161,34 @@ export class Engine {
       const factory = registry.get(botId);
       if (!factory) throw new Error(`Unknown bot '${botId}'`);
       const id = `corp-${i}`;
+      // Cap table (Section 17): every charter is publicly traded by law. The seeded
+      // institutional blocks hold the float; what they don't cover is the founder's
+      // management block. Names are seeded so each game's cast differs (rule #13).
+      const npcHolders: NpcHolder[] = config.tuning.equity.npcBlocks.map((block, slot) => {
+        const pool = NPC_HOLDER_NAMES[slot] ?? NPC_HOLDER_NAMES[NPC_HOLDER_NAMES.length - 1]!;
+        return {
+          id: `${NPC_HOLDER_PREFIX}${id}:${slot}`,
+          name: pool[Math.floor(this.rng.next() * pool.length)]!,
+          askPremium: block.askPremium,
+          bidDiscount: block.bidDiscount,
+          absorbPerTurn: block.absorbPerTurn,
+        };
+      });
+      const npcShares = config.tuning.equity.npcBlocks.reduce((s, b) => s + b.shares, 0);
+      const managementShares = Math.max(0, config.tuning.sharesOutstanding - npcShares);
+      const shareRegister: Record<string, number> = { [id]: managementShares };
+      config.tuning.equity.npcBlocks.forEach((block, slot) => {
+        shareRegister[npcHolders[slot]!.id] = block.shares;
+      });
       const corp: Corporation = {
         id,
         name: `Corp ${i + 1}`,
         credits: config.tuning.startingCredits,
         debt: 0,
+        hubStockpile: emptyStockpile(),
+        warehouseLevel: 0,
         ownedSystemIds: [],
-        ships: [{ rangeTier: 1, combat: 0, raider: false, stationedAt: "" }],
+        ships: [{ rangeTier: 1, combat: 0, raider: false, surveyor: true, stationedAt: "" }],
         privateers: [],
         surveyedSystemIds: [],
         research: emptyCorpResearch(),
@@ -146,7 +196,9 @@ export class Engine {
         valuation: 0,
         sharePrice: 0,
         sharesOutstanding: config.tuning.sharesOutstanding,
-        shareRegister: { [id]: config.tuning.sharesOutstanding },
+        shareRegister,
+        npcHolders,
+        sentiment: 1,
         founderId: id,
         recentEarnings: [],
         isFreeOperator: false,
@@ -158,6 +210,11 @@ export class Engine {
       this.corps.push(corp);
       this.bots.set(corp.id, factory());
     }
+
+    // Value the corps immediately (cash + starting ship): share prices must be real
+    // from turn 0, or the equity ticket quotes a ladder of zeros before the first
+    // resolution. Pure arithmetic — consumes no Rng, so replay is unaffected.
+    this.updateValuations();
 
     this.metrics = {
       seed,
@@ -175,6 +232,7 @@ export class Engine {
       depotsBuilt: 0,
       shipsBuilt: 0,
       platformsBuilt: 0,
+      disruptorsBuilt: 0,
       finalStageCounts: { outpost: 0, settlement: 0, colony: 0, city: 0, metropolis: 0 },
     };
 
@@ -214,6 +272,11 @@ export class Engine {
       sys.owner = corp.id;
       corp.ownedSystemIds.push(sys.id);
       corp.hasCharter = true;
+      // Base the corp's starting survey skiff at its home system so it can be dispatched on a
+      // sensor mission from turn 1 (an unstationed ship has nowhere to launch from — Section 25).
+      for (const ship of corp.ships) {
+        if (!ship.stationedAt && !ship.transit) ship.stationedAt = sys.id;
+      }
       this.ensureStartHabitable(sys);
       this.grantStarterExtractor(sys);
     });
@@ -275,6 +338,12 @@ export class Engine {
   run(): GameMetrics {
     for (this.turn = 1; this.turn <= this.config.turns; this.turn++) {
       this.runNormalTurn();
+      // Same per-turn buffer lifecycle as stepTurn (which resets AFTER building each report so
+      // planning-window instant actions accumulate into the next turn) — headless games have no
+      // planning window, so reset right away or ledger-derived metrics compound across turns.
+      this.events = [];
+      this.ledgerLines = [];
+      this.planningCreditsBase = new Map(this.corps.map((c) => [c.id, c.credits]));
     }
     for (const c of this.corps) {
       this.metrics.finalValuation[c.id] = c.valuation;
@@ -309,6 +378,11 @@ export class Engine {
     return computeOutcome(this.corps, this.galaxy, this.config.tuning, this.turn, this.config.turns);
   }
 
+  /** Convoy/fleet legs traversed during the most recent resolved turn (for the map replay). */
+  get lastMovements(): ClientMovement[] {
+    return this.movements;
+  }
+
   /** The current turn number (0 before the first turn, then 1..N as turns resolve). */
   get currentTurn(): number {
     return this.turn;
@@ -324,9 +398,39 @@ export class Engine {
     return this.wars;
   }
 
-  /** The Exchange tariff `corpId` pays as a war aggressor (Section 23); 0 if not at war. */
+  /**
+   * Resources currently listed on the Exchange (review Section 13: commodity staging). A good
+   * lists once ANY charter fields its gate tier — deterministic and public, so the market's
+   * vocabulary grows with the frontier. Unlisted goods can't be bought or sold on the Exchange
+   * (production, stockpiles, and administrative procurement are unaffected).
+   */
+  listedResources(): Resource[] {
+    const maxTier = this.corps.reduce((m, c) => (c.rangeTier > m ? c.rangeTier : m), 1 as number);
+    return RESOURCES.filter((r) => this.config.tuning.resourceTierGate[r] <= maxTier);
+  }
+
+  /** Tech ids locked behind feature gates (review Section 13: deferred from v1). */
+  private gatedTechs(): Set<string> {
+    const f = this.config.tuning.features;
+    const out = new Set<string>();
+    if (!f.terraforming) out.add("col-terraform");
+    if (!f.espionage) out.add("acq-espionage");
+    return out;
+  }
+
+  /**
+   * The Exchange tariff `corpId` pays (Section 23 + review Risk 5): the war-aggressor tariff
+   * while at war, otherwise the hegemon tariff once valuation runs past a multiple of the
+   * median — the runaway leader's trades fund everyone else's catch-up.
+   */
   warTariffFor(corpId: string): number {
-    return this.isAggressorAtWar(corpId) ? this.config.tuning.war.aggressorTariff : 0;
+    if (this.isAggressorAtWar(corpId)) return this.config.tuning.war.aggressorTariff;
+    const h = this.config.tuning.hegemon;
+    const corp = this.corps.find((c) => c.id === corpId);
+    if (!corp || h.tariff <= 0) return 0;
+    const vals = this.corps.map((c) => c.valuation).sort((a, b) => a - b);
+    const median = vals.length % 2 ? vals[(vals.length - 1) / 2]! : (vals[vals.length / 2 - 1]! + vals[vals.length / 2]!) / 2;
+    return median > 0 && corp.valuation > median * h.valuationMultiple ? h.tariff : 0;
   }
 
   /** A player's full view of the game (the same surface bots reason over). */
@@ -370,7 +474,124 @@ export class Engine {
         if (c.isFreeOperator) this.metrics.finalFreeOperators += 1;
       }
     }
-    return this.buildReport("normal");
+    const report = this.buildReport("normal");
+    // Buffers reset AFTER the report so planning-window instant actions (instantBuy) recorded
+    // between turns accumulate into the NEXT turn's events + ledger (ledger invariant holds:
+    // their credit deltas land in the same turn their lines are reported).
+    this.events = [];
+    this.ledgerLines = [];
+    this.planningCreditsBase = new Map(this.corps.map((c) => [c.id, c.credits]));
+    return report;
+  }
+
+  // ----- Instant Exchange actions (ruleset v10) -----
+  //
+  // THE RULE: trades execute instantly at the Exchange when the goods are at the hub — the
+  // Exchange supplies buys; sells need YOUR stock in the hub warehouse. Instant trades pay a
+  // spread around the posted price and walk it along the clearing's own elasticity curve as
+  // they fill (large orders pay their own slippage), so timing the market costs real money.
+  // Physical movement is always convoys. The worker logs these calls and replays them in
+  // submission order between turns, keeping the event-sourced game deterministic. Each
+  // method returns null on success or a human-readable rejection (a no-op during replay).
+
+  /** Total capacity of a corp's Exchange warehouse (units across all resources). */
+  warehouseCapacity(corp: Corporation): number {
+    const w = this.config.tuning.warehouse;
+    return w.baseCapacity + w.capacityPerLevel * corp.warehouseLevel;
+  }
+
+  /** Units currently stored in a corp's Exchange warehouse. */
+  warehouseUsed(corp: Corporation): number {
+    return RESOURCES.reduce((s, r) => s + corp.hubStockpile[r], 0);
+  }
+
+  /** Instant BUY: into the warehouse when `destSystemId` is the hub (no convoy, no shipping),
+   *  otherwise a freighter departs at once and flies during the coming resolution. */
+  instantBuy(corpId: string, resource: Resource, quantity: number, destSystemId: string): string | null {
+    if (this.isOver) return "the match is over";
+    const corp = this.corps.find((c) => c.id === corpId);
+    if (!corp) return "unknown corporation";
+    const qty = Math.floor(quantity);
+    if (!Number.isFinite(qty) || qty <= 0 || qty > 1_000_000) return "invalid quantity";
+    if (!this.listedResources().includes(resource)) return `${resource} is not listed on the Exchange yet`;
+    const t = this.config.tuning;
+    const marketEdge = this.mods(corp).marketEdge; // Market Algorithms (Section 28): better fills
+    const quote = quoteInstant(t, this.market.prices[resource], resource, "buy", qty);
+
+    if (destSystemId === this.galaxy.hubId) {
+      const free = this.warehouseCapacity(corp) - this.warehouseUsed(corp);
+      if (qty > free) return `warehouse full — ${Math.max(0, Math.floor(free))} units free (upgrade it for more)`;
+      const cost = quote.total * (1 - marketEdge) * (1 + this.warTariffFor(corp.id));
+      if (corp.credits < cost) return `costs ${Math.ceil(cost)} Cr — only ${Math.floor(corp.credits)} Cr on hand`;
+      this.market.prices[resource] = quote.newPrice;
+      this.credit(corp, -cost, "marketBuy", `${qty} ${resource} @ ~${quote.avgPrice.toFixed(1)} → warehouse (instant)`);
+      corp.hubStockpile[resource] += qty;
+      this.events.push({ type: "fill", corpId: corp.id, side: "buy", resource, quantity: qty, price: quote.avgPrice, systemId: this.galaxy.hubId });
+      this.log(`  ${corp.name} instant-buys ${qty} ${resource} into the hub warehouse`);
+      return null;
+    }
+
+    const dest = this.galaxy.systems.get(destSystemId);
+    if (!dest) return "unknown destination system";
+    const path = this.galaxy.shortestWarpPath(this.galaxy.hubId, destSystemId, corp.rangeTier);
+    if (!path) return "no charted path from the Hub at your range";
+    const hops = path.routes.length;
+    const shipMult = this.shippingMultiplier(path.systems, corp.id);
+    const cost = (quote.total * (1 - marketEdge) + t.shippingFeePerHop * hops * shipMult * qty) * (1 + this.warTariffFor(corp.id));
+    if (corp.credits < cost) return `costs ${Math.ceil(cost)} Cr — only ${Math.floor(corp.credits)} Cr on hand`;
+    this.market.prices[resource] = quote.newPrice;
+    this.credit(corp, -cost, "marketBuy", `${qty} ${resource} @ ~${quote.avgPrice.toFixed(1)} + shipping (instant)`, destSystemId);
+    this.events.push({ type: "fill", corpId: corp.id, side: "buy", resource, quantity: qty, price: quote.avgPrice, systemId: destSystemId });
+    this.convoys.push(
+      this.makeConvoy(corp.id, "buy", resource, qty, path.systems, path.routes, 0, 0, qty * t.basePrices[resource]),
+    );
+    for (const rid of path.routes) this.galaxy.recordTraffic(rid, this.turn + 1); // it flies next resolution
+    this.log(`  ${corp.name} instant-buys ${qty} ${resource} → ${dest.name}`);
+    return null;
+  }
+
+  /** Instant SELL from the hub warehouse — the rule's sell side: goods already AT the
+   *  Exchange trade instantly, at the walked-down price minus the spread. */
+  instantSell(corpId: string, resource: Resource, quantity: number): string | null {
+    if (this.isOver) return "the match is over";
+    const corp = this.corps.find((c) => c.id === corpId);
+    if (!corp) return "unknown corporation";
+    const qty = Math.floor(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return "invalid quantity";
+    if (!this.listedResources().includes(resource)) return `${resource} is not listed on the Exchange yet`;
+    const have = Math.floor(corp.hubStockpile[resource]);
+    if (have < qty) return have <= 0 ? `no ${resource} in your hub warehouse — ship some there first` : `only ${have} ${resource} in your hub warehouse`;
+    const quote = quoteInstant(this.config.tuning, this.market.prices[resource], resource, "sell", qty);
+    const proceeds = quote.total * (1 + this.mods(corp).marketEdge) * (1 - this.warTariffFor(corp.id));
+    this.market.prices[resource] = quote.newPrice;
+    corp.hubStockpile[resource] -= qty;
+    this.credit(corp, proceeds, "convoyPayout", `${qty} ${resource} sold from warehouse @ ~${quote.avgPrice.toFixed(1)} (instant)`);
+    this.events.push({ type: "fill", corpId: corp.id, side: "sell", resource, quantity: qty, price: quote.avgPrice, systemId: this.galaxy.hubId });
+    this.log(`  ${corp.name} instant-sells ${qty} ${resource} from the hub warehouse`);
+    return null;
+  }
+
+  /** Instant DISPATCH: ship warehouse goods home — the freighter departs at once and flies
+   *  during the coming resolution (normal transit, normal raid exposure). */
+  instantDispatch(corpId: string, resource: Resource, quantity: number, destSystemId: string): string | null {
+    if (this.isOver) return "the match is over";
+    const corp = this.corps.find((c) => c.id === corpId);
+    if (!corp) return "unknown corporation";
+    const qty = Math.floor(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return "invalid quantity";
+    const have = Math.floor(corp.hubStockpile[resource]);
+    if (have < qty) return have <= 0 ? `no ${resource} in your hub warehouse` : `only ${have} ${resource} in your hub warehouse`;
+    const dest = this.galaxy.systems.get(destSystemId);
+    if (!dest || dest.owner !== corp.id) return "destination must be one of your systems";
+    const path = this.galaxy.shortestWarpPath(this.galaxy.hubId, destSystemId, corp.rangeTier);
+    if (!path) return "no charted path from the Hub at your range";
+    corp.hubStockpile[resource] -= qty;
+    this.convoys.push(
+      this.makeConvoy(corp.id, "transfer", resource, qty, path.systems, path.routes, 0, 0, qty * this.config.tuning.basePrices[resource]),
+    );
+    for (const rid of path.routes) this.galaxy.recordTraffic(rid, this.turn + 1);
+    this.log(`  ${corp.name} dispatches ${qty} ${resource} from the warehouse → ${dest.name}`);
+    return null;
   }
 
   private buildReport(phase: "auction" | "normal" = "normal"): TurnReport {
@@ -378,6 +599,7 @@ export class Engine {
       turn: this.turn,
       phase,
       events: this.events.slice(),
+      ledger: this.ledgerLines.slice(),
       prices: { ...this.market.prices },
       corps: this.corps.map((c) => ({
         id: c.id,
@@ -393,8 +615,12 @@ export class Engine {
 
   private runNormalTurn(): void {
     this.log(`\n=== Turn ${this.turn} ===`);
-    this.events = [];
-    const creditsBefore = new Map(this.corps.map((c) => [c.id, c.credits]));
+    // events/ledgerLines deliberately NOT cleared here: planning-window instant actions have
+    // already written into them and belong to this turn's report (cleared at end of stepTurn).
+    this.movements = [];
+    // Earnings baseline: credits as of the LAST report, so instant spends made during the
+    // planning window count against this turn's earnings delta.
+    const creditsBefore = this.planningCreditsBase ?? new Map(this.corps.map((c) => [c.id, c.credits]));
 
     // 0. End wars whose ceasefire has arrived (lifts the aggressor's trade tariff); fade grudges.
     this.expireWars();
@@ -447,16 +673,28 @@ export class Engine {
     // 8.5 Research: generate points (labs + population) and advance each charter's tech queue (Section 28).
     this.resolveResearch();
 
-    // 9. Valuation + share prices.
+    // 9. Valuation + share prices, then market sentiment (Section 17: sentiment scales
+    // trade execution only, so it must be fresh before the equity batch resolves).
     this.updateValuations();
+    this.updateSentiment();
 
     // 9.5 Equity: share purchases, acquisitions, distress liquidation (Sections 17–18).
     const equityStats = this.resolveEquity(ordersByCorp);
     equityStats.taxLevied = popStats.taxLevied;
 
-    // Record per-turn earnings for valuation momentum.
+    // Record per-turn earnings for valuation momentum. Share trades are capital flows,
+    // not operating income: without netting them out, a defensive buyback reads as an
+    // earnings crash (amplified by the momentum weight) that cheapens the very shares
+    // being defended, and a block sale reads as a windfall quarter.
+    const equityFlows = new Map<string, number>();
+    for (const line of this.ledgerLines) {
+      if (line.cause === "shareTrade") {
+        equityFlows.set(line.corpId, (equityFlows.get(line.corpId) ?? 0) + line.delta);
+      }
+    }
     for (const corp of this.corps) {
-      const delta = corp.credits - (creditsBefore.get(corp.id) ?? corp.credits);
+      const delta =
+        corp.credits - (creditsBefore.get(corp.id) ?? corp.credits) - (equityFlows.get(corp.id) ?? 0);
       corp.recentEarnings.push(delta);
       if (corp.recentEarnings.length > 3) corp.recentEarnings.shift();
     }
@@ -474,8 +712,8 @@ export class Engine {
   }
 
   /** Land a finished queue item into its colony's buildings (Section 24, Phase 4a). */
-  private completeBuild(sys: System, bodyKey: string, item: QueueItem): void {
-    const bb = getBodyBuildings(sys, bodyKey);
+  private completeBuild(sys: System, item: QueueItem): void {
+    const bb = getBodyBuildings(sys, item.bodyKey);
     switch (item.kind) {
       case "factory": if (item.recipeId) bb.processors[item.recipeId] = (bb.processors[item.recipeId] ?? 0) + 1; break;
       case "reactor": bb.reactors += 1; break;
@@ -484,62 +722,118 @@ export class Engine {
       case "habitat": bb.habitats += 1; break;
       case "power": bb.powerGrid += 1; break;
       case "lab": bb.labs += 1; break;
+      case "extractor": {
+        // A waiting extractor (Section 21) finally paid its bill — work the deposit now.
+        const site = sys.sites.find((s) => s.key === item.siteKey);
+        if (site && site.extractorLevel < EXTRACTOR_CAP) {
+          site.extractorLevel += 1;
+          site.prospected = true; // working a deposit reveals its true richness
+        }
+        break;
+      }
     }
   }
 
   /**
-   * Pour each colony's per-turn construction points into the front of its build queue (Section 24,
-   * Phase 4a). Finished items land in `bodyBuildings`; leftover points roll to the next item, so a
-   * colony with spare capacity chains short builds. Charging happened at queue time — this is timing.
+   * Pour each SYSTEM's per-turn construction points into its single build queue (review
+   * Section 10: one queue per system). Unpaid items first retry their bill (front of the queue
+   * gets first claim on materials); construction points then flow into PAID items in queue
+   * order — an unpaid item waiting on materials never stalls a funded build behind it.
+   * Finished items land on the body recorded at enqueue (`item.bodyKey`); leftover points
+   * roll forward, so a system with spare capacity chains short builds.
    */
   private advanceConstruction(): void {
     const baseRate = this.config.tuning.construction.pointsPerTurn;
     if (baseRate <= 0) return;
     for (const sys of this.galaxy.allSystems()) {
-      // Modular Construction (Section 28) speeds the owning charter's build queues.
+      if (sys.queue.length === 0) continue;
+      // Modular Construction (Section 28) speeds the owning charter's build queue.
       const owner = this.corps.find((c) => c.id === sys.owner);
-      const rate = baseRate * (owner ? this.mods(owner).constructionRateMult : 1);
-      for (const [bodyKey, queue] of Object.entries(sys.buildQueues)) {
-        if (queue.length === 0) continue;
-        let points = rate;
-        while (points > 0 && queue.length > 0) {
-          const item = queue[0]!;
-          const need = item.cpCost - item.cpDone;
-          if (points >= need) {
-            points -= need;
-            queue.shift();
-            this.completeBuild(sys, bodyKey, item);
-            this.events.push({ type: "build", corpId: sys.owner ?? "", what: queueLabel(item), systemId: sys.id });
-          } else {
-            item.cpDone += points;
-            points = 0;
+      if (owner) {
+        for (const item of sys.queue) {
+          if (!item.paid && this.tryPayBuild(sys, owner, item)) {
+            this.log(`  ${owner.name} starts ${queueLabel(item)} at ${sys.name} — materials now on hand`);
           }
         }
-        if (queue.length === 0) delete sys.buildQueues[bodyKey];
+      }
+      // Zero-CP items (waiting extractors) complete the moment they're paid — they consume no
+      // construction points and never compete with the buildings behind them.
+      for (const item of [...sys.queue]) {
+        if (item.paid && item.cpDone >= item.cpCost) {
+          sys.queue.splice(sys.queue.indexOf(item), 1);
+          this.completeBuild(sys, item);
+          this.events.push({ type: "build", corpId: sys.owner ?? "", what: queueLabel(item), systemId: sys.id });
+        }
+      }
+      let points = baseRate * (owner ? this.mods(owner).constructionRateMult : 1);
+      while (points > 0) {
+        const item = sys.queue.find((q) => q.paid);
+        if (!item) break;
+        const need = item.cpCost - item.cpDone;
+        if (points >= need) {
+          points -= need;
+          sys.queue.splice(sys.queue.indexOf(item), 1);
+          this.completeBuild(sys, item);
+          this.events.push({ type: "build", corpId: sys.owner ?? "", what: queueLabel(item), systemId: sys.id });
+        } else {
+          item.cpDone += points;
+          points = 0;
+        }
       }
     }
   }
 
-  /** Append a build to a colony's queue, charging it now (Section 24, Phase 4a). */
-  private enqueueBuild(sys: System, bodyKey: string, kind: QueueBuildingKind, recipeId?: string): void {
-    (sys.buildQueues[bodyKey] ??= []).push({ kind, recipeId, cpCost: this.constructionCost(kind, recipeId), cpDone: 0 });
+  /**
+   * Append a build to the system's queue, paying its bill now if affordable (Section 24,
+   * Phase 4a). An unaffordable build is NOT dropped: it waits in the queue unpaid and the
+   * engine retries each turn (`advanceConstruction`) until the materials arrive or the player
+   * cancels it. Returns null — order rejected — only when the body already has a queued item
+   * (one structure per body).
+   */
+  private enqueueBuild(
+    sys: System,
+    corp: Corporation,
+    bodyKey: string,
+    kind: QueueBuildingKind,
+    creditCost: number,
+    mats: Partial<Record<Resource, number>>,
+    recipeId?: string,
+  ): QueueItem | null {
+    // One queued BUILDING per body; waiting extractors are per-deposit and don't take the slot.
+    if (sys.queue.some((q) => q.kind !== "extractor" && q.bodyKey === bodyKey)) return null;
+    const item: QueueItem = {
+      kind, recipeId, bodyKey,
+      cpCost: this.constructionCost(kind, recipeId), cpDone: 0,
+      paid: false, creditCost, mats,
+    };
+    this.tryPayBuild(sys, corp, item);
+    sys.queue.push(item);
+    return item;
   }
 
-  /** Count of a building kind already built + still queued on a body, for cap checks (Phase 4a). */
-  private builtPlusQueued(sys: System, bodyKey: string, kind: QueueBuildingKind, recipeId?: string): number {
-    const bb = sys.bodyBuildings[bodyKey];
-    let built = 0;
-    if (bb) {
-      built =
-        kind === "factory" ? (recipeId ? bb.processors[recipeId] ?? 0 : 0)
-        : kind === "reactor" ? bb.reactors
-        : kind === "agridome" ? bb.hydroponics
-        : kind === "mining" ? bb.miningRigs
-        : kind === "habitat" ? bb.habitats
-        : kind === "lab" ? bb.labs
-        : bb.powerGrid;
-    }
-    const queued = (sys.buildQueues[bodyKey] ?? []).filter((q) => q.kind === kind && (kind !== "factory" || q.recipeId === recipeId)).length;
+  /** Charge a queued item's bill if the corp can cover it: credits out, materials consumed from
+   *  the corp's stockpiles (Section 27 — no auto-buy). True once the item is paid. */
+  private tryPayBuild(sys: System, corp: Corporation, item: QueueItem): boolean {
+    if (item.paid) return true;
+    if (corp.credits < item.creditCost || !this.hasResources(corp, item.mats)) return false;
+    this.consumeResources(corp, item.mats);
+    this.credit(corp, -item.creditCost, "build", queueLabel(item), sys.id);
+    item.paid = true;
+    return true;
+  }
+
+  /** Count of a building kind already built (system-wide) + still queued, for cap checks. */
+  private builtPlusQueued(sys: System, kind: QueueBuildingKind, recipeId?: string): number {
+    const b = systemBuildings(sys);
+    const built =
+      kind === "factory" ? (recipeId ? b.processors[recipeId] ?? 0 : 0)
+      : kind === "reactor" ? b.reactors
+      : kind === "agridome" ? b.hydroponics
+      : kind === "mining" ? b.miningRigs
+      : kind === "habitat" ? b.habitats
+      : kind === "lab" ? b.labs
+      : b.powerGrid;
+    const queued = sys.queue.filter((q) => q.kind === kind && (kind !== "factory" || q.recipeId === recipeId)).length;
     return built + queued;
   }
 
@@ -553,7 +847,7 @@ export class Engine {
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== null) break;
             if (corp.credits < order.amount) break;
-            corp.credits -= order.amount;
+            this.credit(corp, -order.amount, "claim", `Claimed ${sys.name}`, sys.id);
             sys.owner = corp.id;
             corp.ownedSystemIds.push(sys.id);
             this.grantStarterExtractor(sys);
@@ -574,7 +868,7 @@ export class Engine {
             // Lane Stabilization research (Section 28) discounts charting.
             const surveyCost = Math.round(this.config.tuning.surveyCost * this.mods(corp).surveyCostMult);
             if (corp.credits < surveyCost) break;
-            corp.credits -= surveyCost;
+            this.credit(corp, -surveyCost, "build", "Charted warp lane");
             route.charted = true;
             this.events.push({ type: "build", corpId: corp.id, what: "Charted warp route" });
             this.log(`  ${corp.name} charts route ${route.id}`);
@@ -595,16 +889,16 @@ export class Engine {
             // makes advanced fleets cheaper; everyone else pays market price.
             // Hulls also need manufactured alloys + components (Section 07b), drawn from the
             // corp's stockpiles first with any shortfall bought from the exchange.
-            const isoBill = this.strategicBill(corp, "rareIsotopes", t.shipIsotopeCost[order.rangeTier]);
-            const amBill = this.strategicBill(corp, "antimatter", t.shipAntimatterCost[order.rangeTier]);
-            const alloyBill = this.strategicBill(corp, "alloys", t.shipAlloyCost[order.rangeTier]);
-            const compBill = this.strategicBill(corp, "components", t.shipComponentCost[order.rangeTier]);
-            if (corp.credits < cost + isoBill + amBill + alloyBill + compBill) break;
-            this.consumeStrategic(corp, "rareIsotopes", t.shipIsotopeCost[order.rangeTier]);
-            this.consumeStrategic(corp, "antimatter", t.shipAntimatterCost[order.rangeTier]);
-            this.consumeStrategic(corp, "alloys", t.shipAlloyCost[order.rangeTier]);
-            this.consumeStrategic(corp, "components", t.shipComponentCost[order.rangeTier]);
-            corp.credits -= cost + isoBill + amBill + alloyBill + compBill;
+            const hullMats: Partial<Record<Resource, number>> = {
+              rareIsotopes: t.shipIsotopeCost[order.rangeTier],
+              antimatter: t.shipAntimatterCost[order.rangeTier],
+              alloys: t.shipAlloyCost[order.rangeTier],
+              components: t.shipComponentCost[order.rangeTier],
+            };
+            if (corp.credits < cost || !this.hasResources(corp, hullMats)) break; // materials must be on hand
+            this.consumeResources(corp, hullMats);
+            const hullClass = HULL_CLASS_NAMES[order.rangeTier];
+            this.credit(corp, -cost, "build", `${hullClass} ${order.raider ? "raider" : "escort"} hull`, sys.id);
             corp.ships.push({
               rangeTier: order.rangeTier,
               combat: t.shipCombat[order.rangeTier] + (order.raider ? t.raiderCombatBonus : 0),
@@ -615,17 +909,18 @@ export class Engine {
             this.events.push({
               type: "build",
               corpId: corp.id,
-              what: `Range-${order.rangeTier} ${order.raider ? "raider" : "escort"}`,
+              what: `${hullClass} ${order.raider ? "raider" : "escort"}`,
               systemId: sys.id,
             });
             this.log(
-              `  ${corp.name} builds a Range-${order.rangeTier} ${order.raider ? "raider" : "escort"} at ${sys.name}`,
+              `  ${corp.name} builds a ${hullClass} ${order.raider ? "raider" : "escort"} (Range ${order.rangeTier}) at ${sys.name}`,
             );
             break;
           }
           case "terraform": {
             // Terraforming (Section 28, Phase 2): make a non-habitable owned world habitable so it can
             // grow a population. Requires the Terraforming tech; costs credits + materials.
+            if (!this.config.tuning.features.terraforming) break; // deferred from v1 (review Section 13)
             if (corp.isFreeOperator) break;
             if (!this.mods(corp).canTerraform) break;
             const sys = this.galaxy.systems.get(order.systemId);
@@ -635,10 +930,9 @@ export class Engine {
             if (!planet || planet.habitable) break;
             const t = this.config.tuning;
             const mats = this.scaleMats(corp, t.buildResources.agridome);
-            const bill = this.resourceBill(corp, mats);
-            if (corp.credits < t.terraformCost + bill) break;
+            if (corp.credits < t.terraformCost || !this.hasResources(corp, mats)) break;
             this.consumeResources(corp, mats);
-            corp.credits -= t.terraformCost + bill;
+            this.credit(corp, -t.terraformCost, "build", `Terraformed ${planet.type} world`, sys.id);
             planet.habitable = true;
             // Reflect it on the world's worked sites so the colony reads as habitable.
             for (const site of sys.sites) if (siteBodyKey(site) === order.bodyKey) site.habitable = true;
@@ -648,7 +942,7 @@ export class Engine {
           }
           case "hirePrivateer": {
             if (corp.credits < this.config.tuning.privateerCost) break;
-            corp.credits -= this.config.tuning.privateerCost;
+            this.credit(corp, -this.config.tuning.privateerCost, "build", "Hired privateer", order.basedAt);
             corp.privateers.push({
               basedAt: order.basedAt,
               strength: this.config.tuning.privateerStrength,
@@ -665,32 +959,44 @@ export class Engine {
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id || sys.hasDepot) break;
             // Construction consumes alloys; a depot also needs components (Section 07b).
-            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
-            const compBill = this.strategicBill(corp, "components", t.depotComponentCost);
-            if (corp.credits < t.depotCost + alloyBill + compBill) break;
-            this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
-            this.consumeStrategic(corp, "components", t.depotComponentCost);
-            corp.credits -= t.depotCost + alloyBill + compBill;
+            const depotMats: Partial<Record<Resource, number>> = { alloys: t.buildAlloyCost, components: t.depotComponentCost };
+            if (corp.credits < t.depotCost || !this.hasResources(corp, depotMats)) break;
+            this.consumeResources(corp, depotMats);
+            this.credit(corp, -t.depotCost, "build", "Trade Depot", sys.id);
             sys.hasDepot = true;
             this.metrics.depotsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Trade Depot", systemId: sys.id });
             this.log(`  ${corp.name} builds a Trade Depot at ${sys.name}`);
             break;
           }
+          case "buildDisruptor": {
+            // Warp Disruptors are colonial defense infrastructure (Section 04); not for Free Operators.
+            if (corp.isFreeOperator) break;
+            const t = this.config.tuning;
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id || sys.hasDisruptor) break;
+            const mats: Partial<Record<Resource, number>> = { alloys: t.buildAlloyCost, components: t.disruptorComponentCost };
+            if (corp.credits < t.disruptorCost || !this.hasResources(corp, mats)) break;
+            this.consumeResources(corp, mats);
+            this.credit(corp, -t.disruptorCost, "build", "Warp Disruptor", sys.id);
+            sys.hasDisruptor = true;
+            this.metrics.disruptorsBuilt += 1;
+            this.events.push({ type: "build", corpId: corp.id, what: "Warp Disruptor", systemId: sys.id });
+            this.log(`  ${corp.name} builds a Warp Disruptor at ${sys.name}`);
+            break;
+          }
           case "buildHydroponics": {
             if (corp.isFreeOperator) break;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            const bodyKey = order.bodyKey ?? primaryBodyKey(sys);
+            // Land on the best farmland by affinity unless the order names a body (Section 10).
+            const bodyKey = order.bodyKey ?? bestBodyFor(sys, "agridome");
             // Agri-domes need a livable surface (Section 24) — not a gas giant, lava world, or belt.
-            if (!canBuildOnBody("agridome", bodyTypeOfKey(sys, bodyKey))) break;
+            if (!bodyKey || !canBuildOnBody("agridome", bodyTypeOfKey(sys, bodyKey))) break;
             const domeMats = this.scaleMats(corp, this.config.tuning.buildResources.agridome); // silicates + metals (Section 27)
-            const domeBill = this.resourceBill(corp, domeMats);
-            if (corp.credits < this.config.tuning.hydroponicsCost + domeBill) break;
-            this.consumeResources(corp, domeMats);
-            corp.credits -= this.config.tuning.hydroponicsCost + domeBill;
-            this.enqueueBuild(sys, bodyKey, "agridome"); // completes over the construction queue (Phase 4a)
-            this.log(`  ${corp.name} queues hydroponics at ${sys.name}`);
+            const dome = this.enqueueBuild(sys, corp, bodyKey, "agridome", this.config.tuning.hydroponicsCost, domeMats);
+            if (!dome) break; // body already has a queued build (one structure per body)
+            this.log(`  ${corp.name} queues hydroponics at ${sys.name}${dome.paid ? "" : " (awaiting materials)"}`);
             break;
           }
           case "buildProcessor": {
@@ -701,17 +1007,15 @@ export class Engine {
             if (!sys || sys.owner !== corp.id) break;
             const recipe = t.recipes.find((r) => r.id === order.recipeId);
             if (!recipe) break;
-            const procKey = order.bodyKey ?? primaryBodyKey(sys);
+            const procKey = order.bodyKey ?? bestBodyFor(sys, "factory");
+            if (!procKey) break;
             // Factory build cost depends on the host world's type (Section 24): metal-rich rocky/lava
             // worlds are cheap to tool up, oceans and orbital-over-giants cost a premium.
             const recipeCost = Math.round(recipe.buildCost * factoryCostMult(bodyTypeOfKey(sys, procKey)));
             const facMats = this.scaleMats(corp, t.buildResources.factory); // alloys + metals (Section 27)
-            const facBill = this.resourceBill(corp, facMats);
-            if (corp.credits < recipeCost + facBill) break;
-            this.consumeResources(corp, facMats);
-            corp.credits -= recipeCost + facBill;
-            this.enqueueBuild(sys, procKey, "factory", recipe.id); // Phase 4a: queues, completes later
-            this.log(`  ${corp.name} queues a ${recipe.id} processor at ${sys.name}`);
+            const proc = this.enqueueBuild(sys, corp, procKey, "factory", recipeCost, facMats, recipe.id);
+            if (!proc) break; // body already has a queued build (one structure per body)
+            this.log(`  ${corp.name} queues a ${recipe.id} processor at ${sys.name}${proc.paid ? "" : " (awaiting materials)"}`);
             break;
           }
           case "buildReactor": {
@@ -721,12 +1025,11 @@ export class Engine {
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
             const reactorMats = this.scaleMats(corp, t.buildResources.reactor); // alloys + silicates (Section 27)
-            const reactorBill = this.resourceBill(corp, reactorMats);
-            if (corp.credits < t.reactorCost + reactorBill) break;
-            this.consumeResources(corp, reactorMats);
-            corp.credits -= t.reactorCost + reactorBill;
-            this.enqueueBuild(sys, order.bodyKey ?? primaryBodyKey(sys), "reactor"); // Phase 4a
-            this.log(`  ${corp.name} queues a reactor at ${sys.name}`);
+            const reactorKey = order.bodyKey ?? bestBodyFor(sys, "reactor");
+            if (!reactorKey) break;
+            const reactor = this.enqueueBuild(sys, corp, reactorKey, "reactor", t.reactorCost, reactorMats);
+            if (!reactor) break; // body already has a queued build (one structure per body)
+            this.log(`  ${corp.name} queues a reactor at ${sys.name}${reactor.paid ? "" : " (awaiting materials)"}`);
             break;
           }
           case "upgradeInfrastructure": {
@@ -735,26 +1038,23 @@ export class Engine {
             const inf = this.config.tuning.infrastructure;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            const upKey = order.bodyKey ?? primaryBodyKey(sys);
             // Habitats need a livable surface, mining rigs a solid one (Section 24).
             const upBuildKind = order.track === "mining" ? "mining" : order.track === "habitat" ? "habitat" : "power";
-            if (!canBuildOnBody(upBuildKind, bodyTypeOfKey(sys, upKey))) break;
+            const upKey = order.bodyKey ?? bestBodyFor(sys, upBuildKind);
+            if (!upKey || !canBuildOnBody(upBuildKind, bodyTypeOfKey(sys, upKey))) break;
             const creditBase = order.track === "mining" ? inf.miningCreditCost : order.track === "habitat" ? inf.habitatCreditCost : inf.powerCreditCost;
             const rawRes: Resource = order.track === "mining" ? "metals" : order.track === "habitat" ? "silicates" : "helium3";
             const rawBase = order.track === "mining" ? inf.miningMetalsCost : order.track === "habitat" ? inf.habitatSilicatesCost : inf.powerHelium3Cost;
             // The level this upgrade *reaches* counts what's built AND already queued (Phase 4a), so
             // queuing two upgrades charges L1 then L2 and never overshoots the cap.
-            const level = this.builtPlusQueued(sys, upKey, upBuildKind);
+            const level = this.builtPlusQueued(sys, upBuildKind);
             if (level >= inf.cap) break;
             const factor = level + 1; // cost scales with the level being reached
             const creditCost = creditBase * factor;
             const rawNeed = rawBase * factor;
-            const rawBill = this.strategicBill(corp, rawRes, rawNeed);
-            if (corp.credits < creditCost + rawBill) break;
-            this.consumeStrategic(corp, rawRes, rawNeed);
-            corp.credits -= creditCost + rawBill;
-            this.enqueueBuild(sys, upKey, upBuildKind); // Phase 4a: completes via the construction queue
-            this.log(`  ${corp.name} queues ${order.track} upgrade at ${sys.name} to L${level + 1}`);
+            const up = this.enqueueBuild(sys, corp, upKey, upBuildKind, creditCost, { [rawRes]: rawNeed });
+            if (!up) break; // body already has a queued build (one structure per body)
+            this.log(`  ${corp.name} queues ${order.track} upgrade at ${sys.name} to L${level + 1}${up.paid ? "" : " (awaiting materials)"}`);
             break;
           }
           case "buildPlatform": {
@@ -763,10 +1063,9 @@ export class Engine {
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
             if (sys.platforms >= t.platformCap) break;
-            const alloyBill = this.strategicBill(corp, "alloys", t.buildAlloyCost);
-            if (corp.credits < t.platformCost + alloyBill) break;
+            if (corp.credits < t.platformCost || !this.hasStrategic(corp, "alloys", t.buildAlloyCost)) break;
             this.consumeStrategic(corp, "alloys", t.buildAlloyCost);
-            corp.credits -= t.platformCost + alloyBill;
+            this.credit(corp, -t.platformCost, "build", "Defense platform", sys.id);
             sys.platforms += 1;
             this.metrics.platformsBuilt += 1;
             this.events.push({ type: "build", corpId: corp.id, what: "Defense platform", systemId: sys.id });
@@ -779,15 +1078,48 @@ export class Engine {
             const t = this.config.tuning;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
-            const labKey = order.bodyKey ?? primaryBodyKey(sys);
-            if (!canBuildOnBody("lab", bodyTypeOfKey(sys, labKey))) break;
+            const labKey = order.bodyKey ?? bestBodyFor(sys, "lab");
+            if (!labKey || !canBuildOnBody("lab", bodyTypeOfKey(sys, labKey))) break;
             const labMats = this.scaleMats(corp, t.buildResources.lab);
-            const labBill = this.resourceBill(corp, labMats);
-            if (corp.credits < t.labCost + labBill) break;
-            this.consumeResources(corp, labMats);
-            corp.credits -= t.labCost + labBill;
-            this.enqueueBuild(sys, labKey, "lab"); // Phase 4a queue
-            this.log(`  ${corp.name} queues a research lab at ${sys.name}`);
+            const lab = this.enqueueBuild(sys, corp, labKey, "lab", t.labCost, labMats);
+            if (!lab) break; // body already has a queued build (one structure per body)
+            this.log(`  ${corp.name} queues a research lab at ${sys.name}${lab.paid ? "" : " (awaiting materials)"}`);
+            break;
+          }
+          case "upgradeWarehouse": {
+            // More hub storage for instant trading (ruleset v10) — the anti-hoarding lever:
+            // capacity is scarce until paid for. Cost scales with the level being reached.
+            const w = this.config.tuning.warehouse;
+            if (corp.warehouseLevel >= w.levelCap) break;
+            const lvl = corp.warehouseLevel + 1;
+            const cost = w.upgradeCreditCost * lvl;
+            const mats: Partial<Record<Resource, number>> = { metals: w.upgradeMetalsCost * lvl };
+            if (corp.credits < cost || !this.hasResources(corp, mats)) break;
+            this.consumeResources(corp, mats);
+            this.credit(corp, -cost, "build", `Exchange warehouse L${lvl}`);
+            corp.warehouseLevel = lvl;
+            this.events.push({ type: "build", corpId: corp.id, what: `Exchange warehouse L${lvl}` });
+            this.log(`  ${corp.name} expands its Exchange warehouse to L${lvl}`);
+            break;
+          }
+          case "cancelBuild": {
+            // Pull a queued build: buildings by bodyKey (one per body), waiting extractors by
+            // siteKey (one per deposit). A paid item refunds its full bill — credits to the
+            // corp, materials into THIS system's stockpile (they were drawn corp-wide; landing
+            // them here keeps it simple and they're spendable again next turn). Construction
+            // progress is forfeit.
+            const sys = this.galaxy.systems.get(order.systemId);
+            if (!sys || sys.owner !== corp.id) break;
+            const idx = sys.queue.findIndex((q) =>
+              order.siteKey ? q.kind === "extractor" && q.siteKey === order.siteKey : q.kind !== "extractor" && q.bodyKey === order.bodyKey,
+            );
+            if (idx < 0) break;
+            const [item] = sys.queue.splice(idx, 1);
+            if (item!.paid) {
+              if (item!.creditCost > 0) this.credit(corp, item!.creditCost, "build", `Cancelled ${queueLabel(item!)} — refund`, sys.id);
+              for (const [r, n] of Object.entries(item!.mats)) sys.stockpile[r as Resource] += n ?? 0;
+            }
+            this.log(`  ${corp.name} cancels the queued ${queueLabel(item!)} at ${sys.name}${item!.paid ? " (bill refunded)" : ""}`);
             break;
           }
           case "setResearch": {
@@ -799,7 +1131,9 @@ export class Engine {
             const queue: string[] = [];
             // Validate in order, treating earlier queued techs as "will be completed" for prereq checks.
             const willHave = [...done];
+            const gated = this.gatedTechs();
             for (const id of order.queue) {
+              if (gated.has(id)) continue; // feature-gated tech (review Section 13)
               const tech = techById(id);
               if (!tech || seen.has(id) || done.includes(id)) continue;
               if (!tech.prereqs.every((p) => willHave.includes(p))) continue;
@@ -819,7 +1153,7 @@ export class Engine {
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
             if (corp.credits < t.surveyShipCost) break;
-            corp.credits -= t.surveyShipCost;
+            this.credit(corp, -t.surveyShipCost, "build", "Survey vessel");
             corp.ships.push({ rangeTier: corp.rangeTier, combat: 0, raider: false, surveyor: true, stationedAt: sys.id });
             this.events.push({ type: "build", corpId: corp.id, what: "Survey vessel", systemId: sys.id });
             this.log(`  ${corp.name} builds a survey vessel at ${sys.name}`);
@@ -852,32 +1186,38 @@ export class Engine {
             break;
           }
           case "moveFleet": {
-            // Send every idle combat ship at `fromSystemId` travelling to `toSystemId` along the
-            // cheapest charted path (Section 23 — mobile fleets). Passage is peaceful; arriving at
-            // a non-allied rival's system gives battle.
+            // Send every idle combat ship at `fromSystemId` travelling to `toSystemId` (Section 23
+            // — mobile fleets). Fleets are light, so they can jump off-lane directly to any system
+            // in range; warp lanes are merely the fuel-efficient option. The planner picks the
+            // faster of {cheapest charted lane, direct off-lane jump}. Passage is peaceful; arriving
+            // at a non-allied rival's system gives battle.
             const from = this.galaxy.systems.get(order.fromSystemId);
             const to = this.galaxy.systems.get(order.toSystemId);
             if (!from || !to || from.id === to.id) break;
             const fleet = corp.ships.filter((s) => s.combat > 0 && !s.transit && s.stationedAt === from.id);
             if (fleet.length === 0) break;
-            const minTier = fleet.map((s) => s.rangeTier).reduce((a, b) => (a < b ? a : b));
-            const path = this.galaxy.shortestWarpPath(from.id, to.id, minTier);
-            if (!path || path.routes.length === 0) break; // no charted path within range
+            const minTier = fleet.reduce((a, s) => (s.rangeTier < a ? s.rangeTier : a), fleet[0]!.rangeTier);
+            const speed = fleetSpeed(this.config.tuning, fleet); // a fleet travels at its slowest hull's speed
+            const plan = planFleetMove(this.galaxy, this.config.tuning, from.id, to.id, minTier, speed);
+            if (!plan) break; // no charted lane in range and the direct jump is beyond hull range
             const attack = to.owner !== null && to.owner !== corp.id && !this.areAllied(corp.id, to.owner);
-            const firstRoute = this.galaxy.routes.get(path.routes[0]!);
+            // Provision the jump up-front (Section 07b): mass × distance fuel, discounted on lanes;
+            // drawn from stockpiles with any shortfall auto-bought at the exchange.
+            this.chargeFuel(corp, fleetHullMass(this.config.tuning, fleet) * plan.fuelPerMass, "fuelMove", `fleet ${from.name} → ${to.name}${plan.offLane ? " (off-lane)" : ""}`);
             for (const ship of fleet) {
               ship.stationedAt = ""; // leaves home — no longer defends/escorts
               ship.transit = {
-                path: path.systems,
-                routeIds: path.routes,
+                path: plan.path,
+                routeIds: plan.routeIds,
                 position: 0,
-                segmentTurnsLeft: firstRoute ? firstRoute.transitTime : 1,
+                segmentTurnsLeft: plan.segmentTimes[0] ?? 1,
+                segmentTimes: plan.segmentTimes,
                 launchedTurn: this.turn,
                 attack,
               };
             }
             this.events.push({ type: "build", corpId: corp.id, what: `Fleet to ${to.name}`, systemId: to.id });
-            this.log(`  ${corp.name} sends a fleet from ${from.name} toward ${to.name}${attack ? " (assault)" : ""}`);
+            this.log(`  ${corp.name} sends a fleet from ${from.name} toward ${to.name}${attack ? " (assault)" : ""}${plan.offLane ? " [off-lane]" : ""}`);
             break;
           }
           case "redeployShip": {
@@ -911,37 +1251,43 @@ export class Engine {
             if (stages.indexOf(sys.populationStage) < stages.indexOf(spec.requiresStage)) break;
             // Advanced Metallurgy research (Section 28) discounts megastructure construction.
             const megaMult = this.mods(corp).megastructureCostMult;
-            const metalsBill = this.strategicBill(corp, "metals", spec.metalsCost);
-            const alloyBill = this.strategicBill(corp, "alloys", spec.alloyCost);
-            if (corp.credits < spec.creditCost * megaMult + metalsBill + alloyBill) break;
-            this.consumeStrategic(corp, "metals", spec.metalsCost);
-            this.consumeStrategic(corp, "alloys", spec.alloyCost);
-            corp.credits -= spec.creditCost * megaMult + metalsBill + alloyBill;
+            const megaMats: Partial<Record<Resource, number>> = { metals: spec.metalsCost, alloys: spec.alloyCost };
+            if (corp.credits < spec.creditCost * megaMult || !this.hasResources(corp, megaMats)) break;
+            this.consumeResources(corp, megaMats);
+            this.credit(corp, -spec.creditCost * megaMult, "build", MEGASTRUCTURE_LABEL[order.structure], sys.id);
             sys.megastructures.push(order.structure);
             this.events.push({ type: "build", corpId: corp.id, what: MEGASTRUCTURE_LABEL[order.structure], systemId: sys.id });
             this.log(`  ${corp.name} completes a ${MEGASTRUCTURE_LABEL[order.structure]} at ${sys.name}`);
             break;
           }
           case "buildExtractor": {
-            // Work (or deepen) a deposit on one of the system's bodies (Section 21).
+            // Work (or deepen) a deposit on one of the system's bodies (Section 21). Instant when
+            // the bill is on hand; otherwise it WAITS in the queue as a zero-CP item and comes
+            // online the moment the materials arrive (or the player cancels it).
             if (corp.isFreeOperator) break;
             const t = this.config.tuning;
             const sys = this.galaxy.systems.get(order.systemId);
             if (!sys || sys.owner !== corp.id) break;
             const site = sys.sites.find((s) => s.key === order.siteKey);
             if (!site || site.extractorLevel >= EXTRACTOR_CAP) break;
+            if (sys.queue.some((q) => q.kind === "extractor" && q.siteKey === site.key)) break; // one queued build per deposit
             // Cost climbs with the level reached and with how inaccessible the deposit is.
             const factor =
               (site.extractorLevel + 1) * (1 + (1 - site.accessibility) * t.extractor.accessibilityMult);
             const cost = Math.round(t.extractor.buildCost * factor);
-            const alloyBill = this.strategicBill(corp, "alloys", t.extractor.alloyCost);
-            if (corp.credits < cost + alloyBill) break;
-            this.consumeStrategic(corp, "alloys", t.extractor.alloyCost);
-            corp.credits -= cost + alloyBill;
-            site.extractorLevel += 1;
-            site.prospected = true; // working a deposit reveals its true richness
-            this.events.push({ type: "build", corpId: corp.id, what: `${site.resource} extractor`, systemId: sys.id });
-            this.log(`  ${corp.name} builds a ${site.resource} extractor at ${sys.name} (L${site.extractorLevel})`);
+            const item: QueueItem = {
+              kind: "extractor", siteKey: site.key, resource: site.resource, bodyKey: siteBodyKey(site),
+              cpCost: 0, cpDone: 0, paid: false, creditCost: cost, mats: { alloys: t.extractor.alloyCost },
+            };
+            if (this.tryPayBuild(sys, corp, item)) {
+              site.extractorLevel += 1;
+              site.prospected = true; // working a deposit reveals its true richness
+              this.events.push({ type: "build", corpId: corp.id, what: `${site.resource} extractor`, systemId: sys.id });
+              this.log(`  ${corp.name} builds a ${site.resource} extractor at ${sys.name} (L${site.extractorLevel})`);
+            } else {
+              sys.queue.push(item);
+              this.log(`  ${corp.name} queues a ${site.resource} extractor at ${sys.name} (awaiting materials)`);
+            }
             break;
           }
           case "alliancePledge": {
@@ -966,7 +1312,7 @@ export class Engine {
             const room = Math.max(0, ceiling - corp.debt);
             const amount = Math.min(order.amount, room);
             if (amount <= 0) break;
-            corp.credits += amount;
+            this.credit(corp, amount, "borrow", `Drew ${Math.round(amount)} against valuation`);
             corp.debt += amount;
             break;
           }
@@ -1038,6 +1384,7 @@ export class Engine {
     // Total power the system's processors want this turn.
     let powerNeed = 0;
     for (const recipe of t.recipes) powerNeed += (buildings.processors[recipe.id] ?? 0) * recipe.powerDraw;
+    sys.production = undefined; // refreshed below; stays unset for processor-less systems
     if (powerNeed <= 0) return; // no processors → nothing to power or run
 
     // Baseline power = free baseline + Power Grid upgrades (Section 07c); reactors fill the gap.
@@ -1059,6 +1406,10 @@ export class Engine {
     const owner = this.corps.find((c) => c.id === sys.owner);
     const factoryOutputMult = owner ? this.mods(owner).factoryOutputMult : 1;
 
+    // No silent multipliers (design rule #2): the brown-out factor and each recipe's limiting
+    // input are recorded on the system so the owner's UI/report can show factor, cause, and fix.
+    const limited: { recipeId: string; input: Resource; ratio: number }[] = [];
+
     for (const recipe of t.recipes) {
       const count = buildings.processors[recipe.id] ?? 0;
       if (count <= 0) continue;
@@ -1066,12 +1417,18 @@ export class Engine {
       if (scale <= 0) continue;
       // Pro-rate by the limiting input (same shape as hydroponics' ice ratio).
       let ratio = 1;
+      let limitingInput: Resource | null = null;
       for (const res of Object.keys(recipe.inputs) as Resource[]) {
         const want = (recipe.inputs[res] ?? 0) * scale;
         if (want <= 0) continue;
-        ratio = Math.min(ratio, sys.stockpile[res] / want);
+        const r = sys.stockpile[res] / want;
+        if (r < ratio) {
+          ratio = r;
+          limitingInput = res;
+        }
       }
       ratio = Math.max(0, Math.min(1, ratio));
+      if (limitingInput && ratio < 1) limited.push({ recipeId: recipe.id, input: limitingInput, ratio });
       if (ratio <= 0) continue;
       for (const res of Object.keys(recipe.inputs) as Resource[]) {
         sys.stockpile[res] -= (recipe.inputs[res] ?? 0) * scale * ratio;
@@ -1080,27 +1437,33 @@ export class Engine {
         sys.stockpile[res] += (recipe.outputs[res] ?? 0) * scale * ratio * factoryOutputMult;
       }
     }
+    sys.production = { powerFactor, limited };
   }
 
   private resolveMarketAndLaunch(
     ordersByCorp: Map<string, Order[]>,
-  ): { convoysLaunched: number; cargoValueShipped: number; routeTraffic: Record<string, number> } {
+  ): { convoysLaunched: number; cargoValueShipped: number; routeTraffic: Record<string, number>; escortOrders: number } {
     // Build the escort pool per corp and per-system escort assignments.
     const escortBySystem = new Map<string, number>(); // key `${corpId}:${systemId}`
+    let escortOrders = 0; // defender-elasticity proxy (review Section 11)
     for (const corp of this.corps) {
       for (const order of ordersByCorp.get(corp.id) ?? []) {
         if (order.kind === "escort") {
           escortBySystem.set(`${corp.id}:${order.systemId}`, order.strength);
+          escortOrders += 1;
         }
       }
     }
 
-    // Collect clearable market orders.
+    // Collect clearable market orders. Unlisted goods (commodity staging, review Section 13)
+    // simply don't clear yet — the Exchange's vocabulary grows as range tiers are fielded.
+    const listed = new Set(this.listedResources());
     const clearables: ClearableOrder[] = [];
     const orderMeta = new Map<ClearableOrder, { corp: Corporation }>();
     for (const corp of this.corps) {
       for (const order of ordersByCorp.get(corp.id) ?? []) {
         if (order.kind !== "market") continue;
+        if (!listed.has(order.resource)) continue;
         const co: ClearableOrder = {
           ownerId: corp.id,
           side: order.side,
@@ -1150,7 +1513,7 @@ export class Engine {
           Math.floor(corp.credits / Math.max(0.01, unitCost)),
         );
         if (affordable <= 0) continue;
-        corp.credits -= affordable * unitCost;
+        this.credit(corp, -affordable * unitCost, "marketBuy", `${Math.round(affordable)} ${resource} @ ${price.toFixed(1)} + shipping`, fill.order.systemId);
         const value = affordable * this.config.tuning.basePrices[resource];
         this.events.push({
           type: "fill",
@@ -1213,7 +1576,10 @@ export class Engine {
         if (order.kind !== "transfer") continue;
         const from = this.galaxy.systems.get(order.fromSystemId);
         const to = this.galaxy.systems.get(order.toSystemId);
-        if (!from || !to || from.owner !== corp.id || to.owner !== corp.id) continue;
+        // Destination "hub" = ship to YOUR Exchange warehouse (ruleset v10) — sell it yourself
+        // later, instantly, when the price suits you. Any other destination must be owned.
+        const toHub = order.toSystemId === this.galaxy.hubId;
+        if (!from || !to || from.owner !== corp.id || (!toHub && to.owner !== corp.id)) continue;
         const qty = Math.min(order.quantity, from.stockpile[order.resource]);
         if (qty <= 0) continue;
         const path = this.galaxy.shortestWarpPath(from.id, to.id, corp.rangeTier);
@@ -1231,31 +1597,54 @@ export class Engine {
       }
     }
 
-    return { convoysLaunched, cargoValueShipped, routeTraffic };
+    return { convoysLaunched, cargoValueShipped, routeTraffic, escortOrders };
   }
 
   private resolveRaids(
     ordersByCorp: Map<string, Order[]>,
-  ): { convoysRaided: number; cargoValueLost: number; raidOutcomes: ReturnType<typeof emptyRaidOutcomes> } {
+  ): { convoysRaided: number; cargoValueLost: number; largestSingleRaidLoss: number; raidOutcomes: ReturnType<typeof emptyRaidOutcomes> } {
     const outcomes = emptyRaidOutcomes();
     let convoysRaided = 0;
     let cargoValueLost = 0;
+    let largestSingleRaidLoss = 0;
     const raided = new Set<string>();
 
-    const applyResult = (result: RaidResult, convoy: Convoy, attacker: Corporation, routeId: string) => {
+    const applyResult = (result: RaidResult, convoy: Convoy, attacker: Corporation, routeId: string, attackStrength: number, localDefense: number) => {
       outcomes[result.outcome]++;
       if (result.outcome !== "noContact") {
+        // Attribution as an intel system (review Section 11): a privateer-led strike is deniable —
+        // it leaves a deterministic evidence trail rather than certain attribution. Derived from a
+        // pure hash (seed/turn/convoy), NOT the rng stream, so the intel layer never perturbs
+        // resolution. Open ship raids are always fully attributed.
+        const privateerStrength = attacker.privateers.reduce((s, p) => s + p.strength, 0);
+        const shipStrength = attacker.ships.filter((s) => s.raider).reduce((s, sh) => s + sh.combat, 0);
+        const deniable = privateerStrength > shipStrength;
+        const sponsorEvidence = deniable
+          ? 0.25 + 0.65 * evidenceHash(this.seed, this.turn, convoy.id)
+          : 1;
         this.events.push({
           type: "raid",
           attackerId: attacker.id,
           defenderId: convoy.owner,
           routeId,
+          convoyId: convoy.id,
           outcome: result.outcome,
           resource: convoy.resource,
           cargoLost: result.cargoDestroyed + result.cargoPlundered,
+          cargoDestroyed: result.cargoDestroyed,
+          cargoPlundered: result.cargoPlundered,
+          // Shown math (design rule #8): named forces, not a bare outcome.
+          attackStrength,
+          defenseStrength: convoy.escort + localDefense,
+          escort: convoy.escort,
+          localDefense,
+          sponsorEvidence,
         });
-        // A struck convoy stokes a grievance against the raider (Section 23 retaliation).
-        if (result.cargoDestroyed + result.cargoPlundered > 0) this.addGrudge(convoy.owner, attacker.id, 1);
+        // A struck convoy stokes a grievance against the raider (Section 23 retaliation) — but
+        // only when the victim has real evidence of WHO (review Section 11: deniability works).
+        if (result.cargoDestroyed + result.cargoPlundered > 0 && sponsorEvidence >= 0.5) {
+          this.addGrudge(convoy.owner, attacker.id, 1);
+        }
       }
       if (
         result.outcome === "noContact" ||
@@ -1276,8 +1665,9 @@ export class Engine {
         convoy.payout *= convoy.quantity / Math.max(1, convoy.quantity + result.cargoPlundered);
         cargoValueLost += result.cargoPlundered * unitValue;
         // Fence stolen goods (Section 13): the raider realises a fraction of their value.
-        attacker.credits += result.cargoPlundered * unitValue * this.config.tuning.plunderFenceRate;
+        this.credit(attacker, result.cargoPlundered * unitValue * this.config.tuning.plunderFenceRate, "plunderFence", `Fenced ${Math.round(result.cargoPlundered)} ${convoy.resource}`);
       }
+      largestSingleRaidLoss = Math.max(largestSingleRaidLoss, (result.cargoDestroyed + result.cargoPlundered) * unitValue);
       if (result.raiderLosses > 0) this.applyRaiderLosses(attacker, result.raiderLosses);
     };
 
@@ -1306,15 +1696,16 @@ export class Engine {
         const maxHits = 1 + Math.floor(strength / 4); // e.g. a strength-5 privateer hits 2
         for (const target of targets.slice(0, maxHits)) {
           raided.add(target.id);
+          const localDefense = this.localDefenseFor(target);
           const result = resolveRaid(
             this.rng,
             target,
             route,
             corp.id,
             strength,
-            this.localDefenseFor(target),
+            localDefense,
           );
-          applyResult(result, target, corp, route.id);
+          applyResult(result, target, corp, route.id, strength, localDefense);
           this.log(
             `  raid: ${corp.name} interdicts ${route.id} → ${result.outcome}` +
               (result.cargoPlundered ? ` (+${result.cargoPlundered} ${target.resource})` : ""),
@@ -1334,15 +1725,17 @@ export class Engine {
         const route = this.galaxy.routes.get(this.convoyCurrentRoute(target) ?? "");
         if (!route || !canRaidRoute(this.galaxy, corp, route)) continue;
         raided.add(target.id);
+        const targetedStrength = raidStrength(corp);
+        const targetedDefense = this.localDefenseFor(target);
         const result = resolveRaid(
           this.rng,
           target,
           route,
           corp.id,
-          raidStrength(corp),
-          this.localDefenseFor(target),
+          targetedStrength,
+          targetedDefense,
         );
-        applyResult(result, target, corp, route.id);
+        applyResult(result, target, corp, route.id, targetedStrength, targetedDefense);
       }
     }
 
@@ -1381,7 +1774,7 @@ export class Engine {
 
     // Drop fully destroyed/looted convoys.
     this.convoys = this.convoys.filter((c) => c.quantity > 0);
-    return { convoysRaided, cargoValueLost, raidOutcomes: outcomes };
+    return { convoysRaided, cargoValueLost, largestSingleRaidLoss, raidOutcomes: outcomes };
   }
 
   /** A system's standing raid defense (platforms, mining-rig fortification, depot, stationed ships). */
@@ -1392,6 +1785,7 @@ export class Engine {
     def += buildingTotal(sys, "miningRigs") * t.infrastructure.miningDefenseBonusPerLevel;
     for (const m of sys.megastructures) def += t.megastructures[m].defenseBonus;
     if (sys.hasDepot) def += t.depotDefenseBonus;
+    if (sys.hasDisruptor) def += t.disruptorDefenseBonus;
     if (sys.owner) def += this.stationedDefense(sys.id, sys.owner);
     // Hull Plating / Point-Defense research (Section 28) hardens the owner's systems.
     const owner = this.corps.find((c) => c.id === sys.owner);
@@ -1576,7 +1970,7 @@ export class Engine {
     const frac = captured ? t.captureLossFrac : t.repelLossFrac;
     if (fleet) this.applyFleetLosses(attacker, fleet, attackForce, frac);
     else this.applyInvaderLosses(attacker, attackForce, frac);
-    this.events.push({ type: "invasion", attackerId: attacker.id, defenderId, systemId: sys.id, captured });
+    this.events.push({ type: "invasion", attackerId: attacker.id, defenderId, systemId: sys.id, captured, attackForce: Math.round(attackForce), defenseForce: Math.round(defense) });
     this.log(`  INVASION: ${attacker.name} ${captured ? "captures" : "is repelled at"} ${sys.name}`);
     return captured;
   }
@@ -1616,13 +2010,45 @@ export class Engine {
       for (const ship of corp.ships) {
         const tr = ship.transit;
         if (!tr) continue;
-        if (tr.launchedTurn >= this.turn) continue; // ordered this turn — does not advance yet
+        // Transit counts from the launch resolution, exactly like convoys (Section 20 / ruleset v8):
+        // a fleet ordered on turn T crosses its first segment THIS turn, so a single-segment move
+        // arrives when T resolves and the fleet is usable on T+1. Total travel turns therefore equal
+        // the previewed ETA (Σ segment times) — no hidden +1 launch turn. The surveyor's return leg
+        // is created later in this same pass and so first advances next turn (it can't fly two legs
+        // in one turn), which is correct.
         tr.segmentTurnsLeft -= 1;
         if (tr.segmentTurnsLeft > 0) continue;
+        // A Warp Disruptor (Section 04) holds a rival fleet on its FINAL approach: as the last
+        // segment completes (position not yet stepped onto the destination), if the destination
+        // carries a non-allied rival's disruptor, freeze the fleet for `disruptorDelay` extra turns
+        // — exactly once (`tr.disrupted`). Evaluated here at step 6.6, after all administrative
+        // builds settle, so it is independent of intra-turn build/move order.
+        if (tr.position + 1 === tr.path.length - 1 && !tr.disrupted) {
+          const destId = tr.path[tr.path.length - 1]!;
+          const destSys = this.galaxy.systems.get(destId);
+          if (destSys && destSys.hasDisruptor && destSys.owner !== null
+              && destSys.owner !== corp.id && !this.areAllied(corp.id, destSys.owner)) {
+            tr.disrupted = true;
+            tr.segmentTurnsLeft = this.config.tuning.disruptorDelay;
+            continue;
+          }
+        }
         tr.position += 1;
+        // Record the leg just completed for the map's "Last turn movements" replay.
+        this.movements.push({
+          kind: "fleet",
+          owner: corp.id,
+          fromSystemId: tr.path[tr.position - 1]!,
+          toSystemId: tr.path[tr.position]!,
+          offLane: tr.routeIds[tr.position - 1] === "",
+        });
         if (tr.position < tr.path.length - 1) {
-          const nextRoute = this.galaxy.routes.get(tr.routeIds[tr.position]!);
-          tr.segmentTurnsLeft = nextRoute ? nextRoute.transitTime : 1;
+          // Off-lane legs carry a "" route id (no WarpRoute): prefer the stored speed-baked
+          // per-segment time, falling back to the route's own transit time only for lane-only
+          // transits (e.g. survey vessels) that never recorded segmentTimes.
+          const nextRid = tr.routeIds[tr.position]!;
+          const nextRoute = nextRid ? this.galaxy.routes.get(nextRid) : undefined;
+          tr.segmentTurnsLeft = tr.segmentTimes?.[tr.position] ?? (nextRoute ? nextRoute.transitTime : 1);
           continue;
         }
         // Reached the destination.
@@ -1688,16 +2114,24 @@ export class Engine {
   private resolveArrivals(): void {
     const surviving: Convoy[] = [];
     for (const convoy of this.convoys) {
-      if (convoy.launchedTurn >= this.turn) {
-        surviving.push(convoy); // launched this turn; does not advance yet
-        continue;
-      }
+      // Transit counts from the launch resolution (ruleset v8): a convoy launched at step 4
+      // crosses its first segment THIS turn — through the step-5 interdiction window — so a
+      // 1-hop import ordered on turn T is in the destination stockpile when T resolves and
+      // usable on T+1. Every segment still spends exactly one raid window in flight.
       convoy.segmentTurnsLeft -= 1;
       if (convoy.segmentTurnsLeft > 0) {
         surviving.push(convoy);
         continue;
       }
       convoy.position += 1;
+      // Record the leg just completed for the map's "Last turn movements" replay.
+      this.movements.push({
+        kind: "convoy",
+        owner: convoy.owner,
+        fromSystemId: convoy.path[convoy.position - 1]!,
+        toSystemId: convoy.path[convoy.position]!,
+        offLane: convoy.routeIds[convoy.position - 1] === "",
+      });
       if (convoy.position >= convoy.path.length - 1) {
         this.deliverConvoy(convoy);
       } else {
@@ -1715,6 +2149,7 @@ export class Engine {
     this.events.push({
       type: "arrival",
       corpId: convoy.owner,
+      convoyId: convoy.id,
       kind: convoy.kind,
       resource: convoy.resource,
       quantity: convoy.quantity,
@@ -1722,19 +2157,49 @@ export class Engine {
       destSystemId: convoy.path[convoy.path.length - 1]!,
     });
     if (convoy.kind === "sell") {
-      owner.credits += convoy.payout;
+      this.credit(owner, convoy.payout, "convoyPayout", `${Math.round(convoy.quantity)} ${convoy.resource} delivered to the Exchange`);
       this.log(
         `  arrival: ${owner.name} sell ${convoy.quantity} ${convoy.resource} → +${Math.round(convoy.payout)} cr`,
       );
+    } else if (convoy.kind === "transfer" && convoy.path[convoy.path.length - 1] === this.galaxy.hubId) {
+      // Warehouse delivery (ruleset v10): capacity-clamped. Overflow never vanishes — it's
+      // consigned, sold immediately at the walked-down instant price.
+      const free = Math.max(0, this.warehouseCapacity(owner) - this.warehouseUsed(owner));
+      const stored = Math.min(convoy.quantity, free);
+      owner.hubStockpile[convoy.resource] += stored;
+      const overflow = Math.floor(convoy.quantity - stored);
+      if (overflow > 0) {
+        const quote = quoteInstant(this.config.tuning, this.market.prices[convoy.resource], convoy.resource, "sell", overflow);
+        const proceeds = quote.total * (1 - this.warTariffFor(owner.id));
+        this.market.prices[convoy.resource] = quote.newPrice;
+        this.credit(owner, proceeds, "convoyPayout", `${overflow} ${convoy.resource} warehouse overflow — consigned @ ~${quote.avgPrice.toFixed(1)}`);
+        this.log(`  ${owner.name} warehouse overflow: ${overflow} ${convoy.resource} consigned`);
+      }
+      this.log(`  arrival: ${owner.name} stores ${Math.round(stored)} ${convoy.resource} in the hub warehouse`);
     } else {
       const dest = this.galaxy.systems.get(convoy.path[convoy.path.length - 1]!);
       if (dest) dest.stockpile[convoy.resource] += convoy.quantity;
     }
   }
 
-  /** The live research modifiers a charter currently enjoys (Section 28). */
+  /** The live research modifiers a charter currently enjoys (Section 28), overlaid with its
+   *  charter-type identity (review Section 5) once the pick's effective turn is reached. */
   private mods(corp: Corporation): ResearchMods {
-    return researchMods(corp.research.completed);
+    const m = researchMods(corp.research.completed);
+    if (corp.charter && this.turn >= (corp.charterFrom ?? 0)) CHARTER_SPECS[corp.charter].apply(m);
+    return m;
+  }
+
+  /**
+   * Record a seat's charter-type pick (review Section 5). `fromTurn` is the first turn the
+   * effects apply — the worker passes the turn AFTER the pick was made, so the event-sourced
+   * replay re-derives every earlier turn identically.
+   */
+  setCharter(corpId: string, charter: CharterType, fromTurn: number): void {
+    const corp = this.corps.find((c) => c.id === corpId);
+    if (!corp || corp.charter) return; // a charter identity is picked once
+    corp.charter = charter;
+    corp.charterFrom = fromTurn;
   }
 
   /** Seize 1–3 random techs the conquered charter holds that the conqueror lacks (Section 28). A
@@ -1766,7 +2231,8 @@ export class Engine {
       for (const sysId of corp.ownedSystemIds) {
         const sys = this.galaxy.system(sysId);
         rp += buildingTotal(sys, "labs") * t.labRpOutput;
-        for (const pop of Object.values(sys.colonyPop)) rp += t.researchPopBase[pop.stage];
+        // One population per system (review Section 10): its stage drives the populace RP.
+        if (coloniesOf(sys).some((c) => canHostPopulation(c))) rp += t.researchPopBase[sys.populationStage];
       }
       while (rp > 0 && r.queue.length > 0) {
         const id = r.queue[0]!;
@@ -1825,6 +2291,7 @@ export class Engine {
   private resolveEspionage(): void {
     if (this.turn % this.config.tuning.espionageInterval !== 0) return;
     for (const corp of this.corps) {
+      if (!this.config.tuning.features.espionage) continue; // deferred from v1 (review Section 13)
       if (corp.isFreeOperator || !this.mods(corp).stealsTech) continue;
       const stealable = new Set<string>();
       for (const rival of this.corps) {
@@ -1856,101 +2323,72 @@ export class Engine {
         // Mining Rig fortification lowers a system's upkeep (Section 07c). Upkeep is per-SYSTEM;
         // Charter Reform research trims it further.
         const upkeepFrac = Math.max(0, 1 - buildings.miningRigs * t.infrastructure.miningUpkeepReductionPerLevel);
-        corp.credits -= sys.upkeep * upkeepFrac * rm.upkeepMult;
+        this.credit(corp, -sys.upkeep * upkeepFrac * rm.upkeepMult, "upkeep", `${sys.name} charter upkeep`, sys.id);
 
         // Megastructures (space elevator / ringworld) accelerate growth across the whole system.
         const megaGrowth = sys.megastructures.reduce((s, m) => s + t.megastructures[m].growthBonus, 0);
 
-        // Per-colony population (Section 24, Phase 4b): each habitable / agri-domed body grows its
-        // own population, feeds from the shared system stockpile, and pays its own tax. Pure
-        // industrial worlds (giants, belts, dead rock) host no people and are skipped.
-        let starvedHere = false;
-        for (const colony of coloniesOf(sys)) {
-          if (!canHostPopulation(colony)) {
-            delete sys.colonyPop[colony.key]; // lost its dome / habitability → no population
-            continue;
-          }
-          const pop = (sys.colonyPop[colony.key] ??= emptyColonyPopulation());
-
-          // Life support (food + ice) scales with this colony's stage; drawn from the shared
-          // warehouse (decision 2a). Colonies are served in orbital order, so local food feeds the
-          // first ones and later colonies fall back to emergency imports if the system runs short.
-          const food = this.consumeOrImport(corp, sys, "food", t.foodNeed[pop.stage]);
-          const ice = this.consumeOrImport(corp, sys, "ice", t.iceNeed[pop.stage]);
+        // ONE population per system (review Section 10): one feed, one growth roll, one tax line.
+        // Habitable/domed world count multiplies growth and tax, so a multi-habitable system stays
+        // a genuinely richer prize without per-world feeding orders, unrest, or tax accounting.
+        const habitableWorlds = coloniesOf(sys).filter((c) => canHostPopulation(c)).length;
+        if (habitableWorlds > 0) {
+          // Life support (food + ice) scales with the system's stage, drawn from the shared
+          // warehouse; any shortfall falls back to premium emergency imports (ledgered).
+          const food = this.consumeOrImport(corp, sys, "food", t.foodNeed[sys.populationStage]);
+          const ice = this.consumeOrImport(corp, sys, "ice", t.iceNeed[sys.populationStage]);
           const fed = food.met && ice.met;
-          if (!fed) starvedHere = true;
           // Growth needs LOCAL food (the system's own gardens/domes, not emergency imports).
           const thriving = fed && food.local;
 
-          // This colony's own habitat upgrades raise its tax yield + growth speed (Section 07c).
-          const habs = colony.buildings.habitats;
+          // The Habitats track is THE population-growth investment (review Section 13), now
+          // system-level: levels are summed across bodies and apply to the one population.
+          const habs = buildings.habitats;
+          const worldGrowthMult = 1 + (habitableWorlds - 1) * t.habitableGrowthBonusPerWorld;
+          const worldTaxMult = 1 + (habitableWorlds - 1) * t.habitableTaxBonusPerWorld;
           const habitatTaxMult = 1 + habs * t.infrastructure.habitatTaxBonusPerLevel;
           const habitatGrowthMult = 1 + habs * t.infrastructure.habitatGrowthBonusPerLevel + megaGrowth;
 
           if (fed) {
-            const tax = t.taxPerStage[pop.stage] * (1 - pop.unrest) * habitatTaxMult * rm.taxMult;
-            corp.credits += tax;
+            const tax = t.taxPerStage[sys.populationStage] * (1 - sys.unrest) * habitatTaxMult * worldTaxMult * rm.taxMult;
             taxLevied += tax;
-            pop.unrest = Math.max(0, pop.unrest - t.unrestRecoveryPerFedTurn);
+            this.credit(corp, tax, "tax", `${sys.name} population tax`, sys.id);
+            sys.unrest = Math.max(0, sys.unrest - t.unrestRecoveryPerFedTurn);
           } else {
-            pop.unrest = Math.min(1, pop.unrest + t.unrestPerStarvedTurn);
+            sys.unrest = Math.min(1, sys.unrest + t.unrestPerStarvedTurn);
+            this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
           }
 
           if (thriving) {
-            pop.progress += t.growthRate[pop.stage] * habitatGrowthMult * rm.growthMult;
-            const idx = stages.indexOf(pop.stage);
-            if (pop.progress >= t.growthThreshold && idx < stages.length - 1) {
-              pop.stage = stages[idx + 1]!;
-              pop.progress = 0;
-              this.events.push({ type: "growth", corpId: corp.id, systemId: sys.id, newStage: pop.stage });
-              this.log(`  ${colony.bodyLabel} at ${sys.name} grows to ${pop.stage}`);
+            sys.populationProgress += t.growthRate[sys.populationStage] * habitatGrowthMult * worldGrowthMult * rm.growthMult;
+            const idx = stages.indexOf(sys.populationStage);
+            if (sys.populationProgress >= t.growthThreshold && idx < stages.length - 1) {
+              sys.populationStage = stages[idx + 1]!;
+              sys.populationProgress = 0;
+              this.events.push({ type: "growth", corpId: corp.id, systemId: sys.id, newStage: sys.populationStage });
+              this.log(`  ${sys.name} grows to ${sys.populationStage}`);
             }
           } else if (!fed) {
-            pop.progress = Math.max(0, pop.progress - 20);
+            sys.populationProgress = Math.max(0, sys.populationProgress - 20);
           }
         }
-        if (starvedHere) this.events.push({ type: "starved", corpId: corp.id, systemId: sys.id });
-        this.syncSystemPopulation(sys);
       }
 
       // Fleet operation burns fuel each turn (Section 07b): a recurring sink that keeps the
       // fuel market live. Drawn from the corp's stockpiles first, shortfall bought at market.
-      const fuelNeed = corp.ships.length * t.fuelPerShipPerTurn * rm.shipFuelMult;
-      if (fuelNeed > 0) {
-        const fuelBill = this.strategicBill(corp, "fuel", fuelNeed);
-        this.consumeStrategic(corp, "fuel", fuelNeed);
-        if (corp.credits >= fuelBill) corp.credits -= fuelBill;
-      }
+      this.chargeFuel(corp, corp.ships.length * t.fuelPerShipPerTurn * rm.shipFuelMult, "fuelUpkeep", `${corp.ships.length} ship${corp.ships.length === 1 ? "" : "s"} operating fuel`);
 
-      if (corp.debt > 0) corp.debt *= 1 + t.debtInterest;
+      if (corp.debt > 0) {
+        const interest = corp.debt * t.debtInterest;
+        corp.debt += interest;
+        // Interest accrues to DEBT, not credits — delta 0 keeps the Σledger==Δcredits invariant
+        // honest while still putting the liability growth on the statement (design rule #1).
+        this.ledgerLines.push({ corpId: corp.id, delta: 0, cause: "debtInterest", detail: `debt +${Math.round(interest)} (${Math.round(t.debtInterest * 100)}% interest)` });
+      }
       for (const p of corp.privateers) p.turnsLeft -= 1;
       corp.privateers = corp.privateers.filter((p) => p.turnsLeft > 0);
     }
     return { taxLevied };
-  }
-
-  /**
-   * Roll the per-colony populations (Section 24, Phase 4b) up into the legacy system-level fields
-   * (`populationStage` = highest colony, `populationProgress` = that colony's progress, `unrest` =
-   * peak), so valuation, megastructure gating, the client payload, and the system pop-meter keep
-   * working off a single aggregate while the authoritative state lives per body.
-   */
-  private syncSystemPopulation(sys: System): void {
-    const stages: PopulationStage[] = ["outpost", "settlement", "colony", "city", "metropolis"];
-    let best: PopulationStage = "outpost";
-    let bestProgress = 0;
-    let peakUnrest = 0;
-    for (const pop of Object.values(sys.colonyPop)) {
-      if (stages.indexOf(pop.stage) > stages.indexOf(best) ||
-          (stages.indexOf(pop.stage) === stages.indexOf(best) && pop.progress > bestProgress)) {
-        best = pop.stage;
-        bestProgress = pop.progress;
-      }
-      peakUnrest = Math.max(peakUnrest, pop.unrest);
-    }
-    sys.populationStage = best;
-    sys.populationProgress = bestProgress;
-    sys.unrest = peakUnrest;
   }
 
   /**
@@ -1974,7 +2412,7 @@ export class Engine {
     const unitCost = this.market.prices[resource] * this.config.tuning.emergencyImportPremium;
     const affordable = Math.min(shortfall, Math.floor(corp.credits / Math.max(0.01, unitCost)));
     if (affordable > 0) {
-      corp.credits -= affordable * unitCost;
+      this.credit(corp, -affordable * unitCost, "emergencyImport", `${Math.round(affordable)} ${resource} @ ${unitCost.toFixed(1)} (premium humanity import)`);
       shortfall -= affordable;
     }
     return { met: shortfall <= 0, local: false };
@@ -1985,42 +2423,100 @@ export class Engine {
     for (const corp of this.corps) {
       // equity = system assets + population + infrastructure + ships + stockpiles
       //          + cash + earnings momentum - debt  (Section 17)
-      let value = corp.credits - corp.debt;
-      value += corp.ships.length * v.shipValue;
-      const momentum =
-        corp.recentEarnings.length > 0
-          ? (corp.recentEarnings.reduce((s, e) => s + e, 0) / corp.recentEarnings.length) *
-            v.earningsMomentumWeight
-          : 0;
-      value += momentum;
+      // Built as a per-component breakdown (design rule: the win metric is not a black box) —
+      // the owner's UI decomposes the share price on demand from `valuationParts`.
+      const parts: Record<ValuationComponent, number> = {
+        cash: corp.credits,
+        debt: -corp.debt,
+        fleet: corp.ships.length * v.shipValue,
+        momentum:
+          corp.recentEarnings.length > 0
+            ? (corp.recentEarnings.reduce((s, e) => s + e, 0) / corp.recentEarnings.length) *
+              v.earningsMomentumWeight
+            : 0,
+        yields: 0,
+        extractors: 0,
+        population: 0,
+        infrastructure: 0,
+        megastructures: 0,
+        stockpiles: 0,
+      };
       for (const sysId of corp.ownedSystemIds) {
         const sys = this.galaxy.system(sysId);
         // Value the realised per-turn extraction (Section 21: worked sites, net of depletion +
         // stellar), plus the extractor capital sunk into the system's sites.
         const ey = effectiveYields(sys, this.turn, this.config.turns);
         const yieldTotal = RESOURCES.reduce((s, r) => s + ey[r], 0);
-        value += yieldTotal * v.perSystemYieldValue;
-        value += sys.sites.reduce((s, st) => s + st.extractorLevel, 0) * v.extractorValue;
-        // Each populated colony is valued on its own stage (Section 24, Phase 4b): a system with
-        // several habitable worlds is a richer prize than one with a single capital.
-        for (const pop of Object.values(sys.colonyPop)) {
-          value += v.populationValue[pop.stage] * (1 - pop.unrest);
+        parts.yields += yieldTotal * v.perSystemYieldValue;
+        parts.extractors += sys.sites.reduce((s, st) => s + st.extractorLevel, 0) * v.extractorValue;
+        // One population per system (review Section 10), with habitable-world count as the
+        // richness multiplier — a multi-habitable system is still the better prize.
+        const habitableWorlds = coloniesOf(sys).filter((c) => canHostPopulation(c)).length;
+        if (habitableWorlds > 0) {
+          parts.population +=
+            v.populationValue[sys.populationStage] * (1 - sys.unrest) *
+            (1 + (habitableWorlds - 1) * this.config.tuning.habitableTaxBonusPerWorld);
         }
-        if (sys.hasDepot) value += v.depotValue;
         const buildings = systemBuildings(sys);
-        value += buildings.hydroponics * (v.depotValue * 0.25);
-        value += Object.values(buildings.processors).reduce((s, n) => s + n, 0) * v.processorValue;
-        value += buildings.reactors * v.reactorValue;
-        value += (buildings.miningRigs + buildings.habitats + buildings.powerGrid) * v.infraLevelValue;
-        value += sys.platforms * this.config.tuning.platformCost;
+        parts.infrastructure +=
+          (sys.hasDepot ? v.depotValue : 0) +
+          buildings.hydroponics * (v.depotValue * 0.25) +
+          Object.values(buildings.processors).reduce((s, n) => s + n, 0) * v.processorValue +
+          buildings.reactors * v.reactorValue +
+          (buildings.miningRigs + buildings.habitats + buildings.powerGrid) * v.infraLevelValue +
+          sys.platforms * this.config.tuning.platformCost;
         // Megastructures are prestige capital (Section 22).
-        for (const m of sys.megastructures) value += this.config.tuning.megastructures[m].valuation;
+        for (const m of sys.megastructures) parts.megastructures += this.config.tuning.megastructures[m].valuation;
         for (const r of RESOURCES) {
-          value += sys.stockpile[r] * this.config.tuning.basePrices[r] * v.stockpileFrac;
+          parts.stockpiles += sys.stockpile[r] * this.config.tuning.basePrices[r] * v.stockpileFrac;
         }
       }
-      corp.valuation = Math.round(value);
+      corp.valuationParts = parts;
+      corp.valuation = Math.round(Object.values(parts).reduce((s, n) => s + n, 0));
       corp.sharePrice = Math.max(1, corp.valuation / corp.sharesOutstanding);
+    }
+  }
+
+  /**
+   * Sentiment (Section 17): the market-mood multiplier on share trades. A pure function
+   * of this turn's shown events (raids, lost systems, war, distress, earnings) plus mean
+   * reversion and a small off-stream seeded jitter (evidenceHash — never the resolution
+   * Rng, so replay is not perturbed). Decomposed into parts so the Finance UI can explain
+   * every move (rule #6). Affects trade execution ONLY — valuation/standings read book.
+   */
+  private updateSentiment(): void {
+    const s = this.config.tuning.equity.sentiment;
+    // Tally this turn's shocks per corp from the shown event stream — factors, not dice.
+    const shocks = new Map<string, number>();
+    const add = (corpId: string, x: number) => shocks.set(corpId, (shocks.get(corpId) ?? 0) + x);
+    for (const e of this.events) {
+      if (e.type === "raid") add(e.defenderId, s.raidImpulse);
+      else if (e.type === "invasion" && e.captured) add(e.defenderId, s.systemLostImpulse);
+      else if (e.type === "warDeclared") add(e.defenderId, s.warImpulse);
+    }
+    for (const corp of this.corps) {
+      let shock = shocks.get(corp.id) ?? 0;
+      if (corp.credits < this.config.tuning.distressCreditFloor / 2) shock += s.nearDistressImpulse;
+      // Positive-only: a cash-negative turn usually means reinvestment (builds, claims),
+      // not a bad quarter — genuine trouble already arrives as raid/war/distress shocks.
+      const lastEarnings = corp.recentEarnings[corp.recentEarnings.length - 1] ?? 0;
+      if (lastEarnings > 0) shock += s.earningsImpulse;
+      // A triple-raid turn is a bad day, not a death spiral.
+      shock = Math.max(-s.maxShockPerTurn, Math.min(s.maxShockPerTurn, shock));
+
+      const reverted = corp.sentiment + (1 - corp.sentiment) * s.reversion;
+      const afterEvents = reverted * (1 + shock);
+      const jitter = (evidenceHash(this.seed, this.turn, corp.id) * 2 - 1) * s.jitter;
+      const next = Math.max(s.min, Math.min(s.max, afterEvents + jitter));
+      corp.sentimentParts = {
+        reversion: reverted - corp.sentiment,
+        events: afterEvents - reverted,
+        jitter: next - afterEvents, // includes any clamping
+      };
+      corp.sentiment = next;
+      if (Math.abs(corp.sentimentParts.events) > 0.001) {
+        this.log(`  ${corp.name} sentiment ${corp.sentiment.toFixed(2)} (events ${(shock * 100).toFixed(0)}%)`);
+      }
     }
   }
 
@@ -2031,26 +2527,214 @@ export class Engine {
   private resolveEquity(
     ordersByCorp: Map<string, Order[]>,
   ): { acquisitions: number; distress: number; taxLevied: number } {
-    // Share purchases: shares are bought from the largest existing holder at share price.
+    const eq = this.config.tuning.equity;
+
+    // Share purchases (Section 17): ONE sealed batch per target — seat order never
+    // matters. Blocks sell cheapest-ask-first; demand a block can satisfy trades at
+    // its posted ask, even from several buyers at once. When buyers contend for a
+    // SCARCE block, it auctions: the highest effective limit wins the shares and pays
+    // its own limit (your limit is your bid), exact ties splitting the block evenly.
+    // Buying your own charter is a buyback (defense): you shop every block but your own.
+    type BuyIntent = { buyer: Corporation; remaining: number; limit: number; discount: number };
+    const buysByTarget = new Map<string, BuyIntent[]>();
     for (const corp of this.corps) {
       for (const order of ordersByCorp.get(corp.id) ?? []) {
         if (order.kind !== "buyShares") continue;
-        const target = this.corps.find((c) => c.id === order.targetId);
-        if (!target || target.id === corp.id) continue;
-        const seller = this.largestHolder(target, corp.id);
-        if (!seller) continue;
-        const available = target.shareRegister[seller] ?? 0;
-        // Hostile Takeover research (Section 28) makes share raids cheaper for the buyer.
-        const price = target.sharePrice * this.mods(corp).acquisitionCostMult;
-        const wanted = Math.min(order.shares, available);
-        const affordable = Math.min(wanted, Math.floor(corp.credits / Math.max(0.01, price)));
-        if (affordable <= 0) continue;
-        const cost = affordable * price;
-        corp.credits -= cost;
-        target.shareRegister[seller] = available - affordable;
-        target.shareRegister[corp.id] = (target.shareRegister[corp.id] ?? 0) + affordable;
-        const sellerCorp = this.corps.find((c) => c.id === seller);
-        if (sellerCorp) sellerCorp.credits += cost; // founder/holder is bought out
+        if (!this.corps.some((c) => c.id === order.targetId)) continue;
+        const list = buysByTarget.get(order.targetId) ?? [];
+        list.push({
+          buyer: corp,
+          remaining: Math.max(0, Math.floor(order.shares)),
+          // Legacy event-log orders predate mandatory limits and replay uncapped.
+          limit: order.limitPrice ?? Number.POSITIVE_INFINITY,
+          // Hostile Takeover research (Section 28) makes share raids cheaper: a
+          // discounted buyer outbids at the same cash limit (limit ÷ discount).
+          discount: this.mods(corp).acquisitionCostMult,
+        });
+        buysByTarget.set(order.targetId, list);
+      }
+    }
+    for (const [targetId, intents] of buysByTarget) {
+      const target = this.corps.find((c) => c.id === targetId)!;
+      const tradedBase = target.sharePrice * target.sentiment;
+
+      type Ask = { holder: string; label: string; ask: number; sellerCorp?: Corporation; wholeBlock?: boolean };
+      const asks: Ask[] = [];
+      for (const npc of target.npcHolders) {
+        if ((target.shareRegister[npc.id] ?? 0) > 0) {
+          asks.push({ holder: npc.id, label: npc.name, ask: tradedBase * npc.askPremium });
+        }
+      }
+      for (const holder of Object.keys(target.shareRegister)) {
+        if (isNpcHolderId(holder)) continue;
+        if ((target.shareRegister[holder] ?? 0) <= 0) continue;
+        if (holder === target.founderId) {
+          // The management block: a buyout of the officers — it only ever sells WHOLE,
+          // at the steepest premium, and the proceeds are the corp's own treasury
+          // (it is the corp selling itself).
+          asks.push({ holder, label: "management block", ask: tradedBase * eq.managementHoldoutMult, sellerCorp: target, wholeBlock: true });
+        } else {
+          const sellerCorp = this.corps.find((c) => c.id === holder);
+          asks.push({ holder, label: sellerCorp?.name ?? holder, ask: tradedBase * eq.corpHoldoutMult, sellerCorp });
+        }
+      }
+      asks.sort((a, b) => a.ask - b.ask || a.holder.localeCompare(b.holder));
+
+      // Concentration premium: the marginal share costs more as the buyer's stake
+      // grows (quadratic in position) — creeping to control is priced like the
+      // takeover it is. Buybacks of your own charter are exempt.
+      const posMult = (buyer: Corporation): number => {
+        if (buyer.id === target.id) return 1;
+        const frac = (target.shareRegister[buyer.id] ?? 0) / Math.max(1, target.sharesOutstanding);
+        return 1 + eq.positionImpact * frac * frac;
+      };
+      // Cash price of the buyer's NEXT share from block `a`, right now.
+      const floorPrice = (it: BuyIntent, a: { ask: number }): number => a.ask * posMult(it.buyer) * it.discount;
+
+      // Move shares + money for one fill. NPC sellers pocket proceeds off-map (a
+      // sink); corp sellers — including the target's own treasury — are paid for real.
+      // Ledger lines stay anonymous: you trade against the market, not a named holder
+      // (the public register reveals stakes, but never who traded with whom).
+      const fillShares = (it: BuyIntent, a: Ask, wanted: number, price: number): number => {
+        const available = target.shareRegister[a.holder] ?? 0;
+        const take = Math.min(wanted, available, Math.floor(it.buyer.credits / Math.max(0.01, price)));
+        if (take <= 0) return 0;
+        const cost = take * price;
+        this.credit(it.buyer, -cost, "shareTrade", `Bought ${take} ${target.name} shares @ ${price.toFixed(0)}`);
+        target.shareRegister[a.holder] = available - take;
+        target.shareRegister[it.buyer.id] = (target.shareRegister[it.buyer.id] ?? 0) + take;
+        if (a.sellerCorp) this.credit(a.sellerCorp, cost, "shareTrade", `Sold ${take} ${target.name} shares @ ${price.toFixed(0)}`);
+        it.remaining -= take;
+        return take;
+      };
+
+      for (const a of asks) {
+        if (a.wholeBlock) {
+          // Management sells only as one lot: a negotiated buyout of the officers at a
+          // single per-share price. The concentration premium does NOT apply — it exists
+          // to stop creeping accumulation, and a whole-block buyout is not creeping; the
+          // holdout multiple IS its premium. The order must want the whole block, clear
+          // the price with its limit, and pay cash in full.
+          const blockShares = target.shareRegister[a.holder] ?? 0;
+          if (blockShares <= 0) continue;
+          const claimants = intents
+            .filter((it) => {
+              if (it.remaining < blockShares || it.buyer.id === a.holder) return false;
+              const price = a.ask * it.discount;
+              return it.limit >= price - 1e-9 && it.buyer.credits >= price * blockShares;
+            })
+            .sort((x, y) => y.limit / y.discount - x.limit / x.discount || x.buyer.id.localeCompare(y.buyer.id));
+          const contested = claimants.length > 1;
+          for (const it of claimants) {
+            // Contested buyouts go to the highest limit, which pays it (its bid).
+            const price = contested ? it.limit : a.ask * it.discount;
+            if (it.buyer.credits < price * blockShares) continue;
+            fillShares(it, a, blockShares, price);
+            break;
+          }
+          continue;
+        }
+        // Auction loop for one block: each pass re-checks eligibility as fills consume
+        // shares and cash, and either fills at least one share or exits.
+        for (;;) {
+          const available = target.shareRegister[a.holder] ?? 0;
+          if (available <= 0) break;
+          const eligible = intents.filter(
+            (it) =>
+              it.remaining > 0 &&
+              it.buyer.id !== a.holder && // nobody buys out of their own stake
+              it.limit >= floorPrice(it, a) - 1e-9 &&
+              it.buyer.credits >= floorPrice(it, a),
+          );
+          if (eligible.length === 0) break;
+          const demand = eligible.reduce(
+            (s, it) => s + Math.min(it.remaining, Math.floor(it.buyer.credits / Math.max(0.01, floorPrice(it, a)))),
+            0,
+          );
+          if (eligible.length === 1 || demand <= available) {
+            // No scarcity: everyone trades at the posted ask × their position premium,
+            // share by share — the price creeps up as the stake grows, and the fill
+            // stops at the limit (or the wallet) on its own.
+            for (const it of eligible) {
+              while (it.remaining > 0 && (target.shareRegister[a.holder] ?? 0) > 0) {
+                const p = floorPrice(it, a);
+                if (p > it.limit + 1e-9 || it.buyer.credits < p) break;
+                if (fillShares(it, a, 1, p) <= 0) break;
+              }
+            }
+            break;
+          }
+          // Contested: the price jumps to the highest effective limit, whose owner(s)
+          // take the shares at that price. Lower bidders wait for what is left.
+          const top = Math.max(...eligible.map((it) => it.limit / it.discount));
+          const winners = eligible
+            .filter((it) => it.limit / it.discount >= top - 1e-9)
+            .sort((x, y) => x.buyer.id.localeCompare(y.buyer.id));
+          let progressed = 0;
+          let again = true;
+          // Tied winners alternate single shares so an odd remainder lands fairly.
+          while (again) {
+            again = false;
+            for (const w of winners) {
+              if (w.remaining <= 0 || (target.shareRegister[a.holder] ?? 0) <= 0) continue;
+              // The concentration floor climbs as the stake grows — a winner whose
+              // floor passes their own bid stops winning.
+              if (floorPrice(w, a) > w.limit + 1e-9) continue;
+              const got = fillShares(w, a, 1, Math.max(top * w.discount, floorPrice(w, a)));
+              progressed += got;
+              if (got > 0 && w.remaining > 0) again = true;
+            }
+          }
+          if (progressed === 0) {
+            // Winners bid more than they can pay — void their orders so the next tier
+            // (or the posted ask) can clear instead of looping forever.
+            for (const w of winners) w.remaining = 0;
+          }
+        }
+      }
+    }
+
+    // Share sales (Section 17): the mirror batch — every sell competes for the
+    // institutions' limited per-turn absorption, best bid first, the most willing
+    // seller (lowest limit) filling first; everyone receives the POSTED bid. The
+    // discount + caps keep round trips strictly lossy (no mint to pump). Selling your
+    // OWN charter's shares is equity financing: the management block shrinks (takeover
+    // exposure rises) and the proceeds land in the corp treasury. Sells resolve after
+    // buys so sale proceeds cannot fund a purchase in the same resolution.
+    type SellIntent = { seller: Corporation; remaining: number; limit: number };
+    const sellsByTarget = new Map<string, SellIntent[]>();
+    for (const corp of this.corps) {
+      for (const order of ordersByCorp.get(corp.id) ?? []) {
+        if (order.kind !== "sellShares") continue;
+        if (!this.corps.some((c) => c.id === order.targetId)) continue;
+        const list = sellsByTarget.get(order.targetId) ?? [];
+        // Legacy event-log orders predate mandatory limits and replay uncapped.
+        list.push({ seller: corp, remaining: Math.max(0, Math.floor(order.shares)), limit: order.limitPrice ?? 0 });
+        sellsByTarget.set(order.targetId, list);
+      }
+    }
+    for (const [targetId, intents] of sellsByTarget) {
+      const target = this.corps.find((c) => c.id === targetId)!;
+      const tradedBase = target.sharePrice * target.sentiment;
+      const bids = target.npcHolders
+        .map((npc) => ({ npc, bid: tradedBase * npc.bidDiscount }))
+        .sort((a, b) => b.bid - a.bid || a.npc.id.localeCompare(b.npc.id));
+      for (const { npc, bid } of bids) {
+        let capacity = npc.absorbPerTurn;
+        const eligible = intents
+          .filter((it) => it.remaining > 0 && bid >= it.limit - 1e-9)
+          .sort((x, y) => x.limit - y.limit || x.seller.id.localeCompare(y.seller.id));
+        for (const it of eligible) {
+          if (capacity <= 0) break;
+          const held = target.shareRegister[it.seller.id] ?? 0;
+          const sold = Math.min(it.remaining, held, capacity);
+          if (sold <= 0) continue;
+          target.shareRegister[it.seller.id] = held - sold;
+          target.shareRegister[npc.id] = (target.shareRegister[npc.id] ?? 0) + sold;
+          this.credit(it.seller, sold * bid, "shareTrade", `Sold ${sold} ${target.name} shares @ ${bid.toFixed(0)}`);
+          it.remaining -= sold;
+          capacity -= sold;
+        }
       }
     }
 
@@ -2059,7 +2743,8 @@ export class Engine {
     const threshold = this.config.tuning.acquisitionThreshold * this.config.tuning.sharesOutstanding;
     for (const target of this.corps) {
       if (!target.hasCharter) continue; // nothing to absorb from a charterless shell
-      const holder = this.largestHolder(target, null);
+      // Corps only: the Earthside float can hold shares but never takes control.
+      const holder = this.largestHolder(target, null, true);
       if (!holder || holder === target.founderId) continue;
       if ((target.shareRegister[holder] ?? 0) <= threshold) continue;
       const acquirer = this.corps.find((c) => c.id === holder);
@@ -2088,12 +2773,15 @@ export class Engine {
     return { acquisitions, distress, taxLevied: 0 };
   }
 
-  /** The holder (other than `exclude`) owning the most of a corporation's shares. */
-  private largestHolder(target: Corporation, exclude: string | null): string | undefined {
+  /** The holder (other than `exclude`) owning the most of a corporation's shares.
+   *  `corpsOnly` skips the Earthside float — used for control checks, where off-map
+   *  investors must never mask (or stage) a takeover. */
+  private largestHolder(target: Corporation, exclude: string | null, corpsOnly = false): string | undefined {
     let best: string | undefined;
     let bestShares = -1;
     for (const [holder, shares] of Object.entries(target.shareRegister)) {
       if (holder === exclude) continue;
+      if (corpsOnly && !this.corps.some((c) => c.id === holder)) continue;
       if (shares > bestShares) {
         bestShares = shares;
         best = holder;
@@ -2107,6 +2795,22 @@ export class Engine {
     for (const sysId of target.ownedSystemIds) {
       this.galaxy.system(sysId).owner = acquirer.id;
       acquirer.ownedSystemIds.push(sysId);
+    }
+    // The target's Exchange warehouse empties into the acquirer's (ruleset v10) — what fits
+    // is kept, the rest is consigned at the instant price. Storage levels don't transfer.
+    for (const r of RESOURCES) {
+      const qty = Math.floor(target.hubStockpile[r]);
+      target.hubStockpile[r] = 0;
+      if (qty <= 0) continue;
+      const free = Math.max(0, this.warehouseCapacity(acquirer) - this.warehouseUsed(acquirer));
+      const kept = Math.min(qty, Math.floor(free));
+      acquirer.hubStockpile[r] += kept;
+      const excess = qty - kept;
+      if (excess > 0) {
+        const quote = quoteInstant(this.config.tuning, this.market.prices[r], r, "sell", excess);
+        this.market.prices[r] = quote.newPrice;
+        this.credit(acquirer, quote.total, "convoyPayout", `${excess} ${r} absorbed warehouse overflow — consigned`);
+      }
     }
     acquirer.debt += target.debt;
     target.debt = 0;
@@ -2136,6 +2840,20 @@ export class Engine {
     value: number,
   ): Convoy {
     const firstRoute = this.galaxy.routes.get(routeIds[0] ?? "");
+    // Freighter mass-fuel (Section 04/07b): bulk cargo burns fuel by mass × distance, but warp
+    // lanes channel that mass cheaply (laneFuelFactor) — the headline reason lanes matter for
+    // trade. Charged to the owner at launch, mirroring fleet movement fuel; convoys are lane-only
+    // so every segment has a real route to score.
+    const fuelCorp = this.corps.find((c) => c.id === owner);
+    if (fuelCorp) {
+      let fuel = 0;
+      for (const rid of routeIds) {
+        const route = this.galaxy.routes.get(rid);
+        if (!route) continue;
+        fuel += quantity * segmentDistance(this.galaxy, this.config.tuning, route) * this.config.tuning.fuelPerMassDistance * laneFuelFactor(this.config.tuning, route);
+      }
+      this.chargeFuel(fuelCorp, fuel, "fuelFreight", `${Math.round(quantity)} ${resource} freighter run`);
+    }
     return {
       id: `convoy-${this.convoyCounter++}`,
       owner,
@@ -2185,6 +2903,23 @@ export class Engine {
     return c.routeIds[c.position];
   }
 
+  /**
+   * Draw `amount` of fuel from a corp's stockpiles, auto-buying any shortfall at the exchange,
+   * itemized in the ledger by what the fuel was FOR (upkeep vs fleet move vs freighter cargo).
+   */
+  private chargeFuel(corp: Corporation, amount: number, cause: "fuelUpkeep" | "fuelMove" | "fuelFreight", detail?: string): void {
+    if (amount <= 0) return;
+    let local = 0;
+    for (const id of corp.ownedSystemIds) local += this.galaxy.system(id).stockpile.fuel;
+    const short = Math.max(0, amount - local);
+    this.consumeFromStockpiles(corp, "fuel", Math.min(amount, local));
+    const bill = short * this.market.prices.fuel;
+    // Preserves the original semantics: an unaffordable fuel bill is simply not charged.
+    if (bill > 0 && corp.credits >= bill) {
+      this.credit(corp, -bill, cause, detail ?? `bought ${Math.ceil(short)} fuel @ ${this.market.prices.fuel.toFixed(1)}`);
+    }
+  }
+
   /** Combat of (non-raider) escort ships a corp has stationed at a system. */
   private stationedDefense(systemId: string, corpId: string): number {
     const corp = this.corps.find((c) => c.id === corpId);
@@ -2220,12 +2955,32 @@ export class Engine {
     return def;
   }
 
-  /** Credits a corp must pay to buy any shortfall of a build resource from the exchange. */
-  private strategicBill(corp: Corporation, resource: Resource, need: number): number {
-    if (need <= 0) return 0;
+  /**
+   * Move credits AND write the ledger line in one step (design rule #1: every credit that
+   * moves appears as a ledger line with a cause). All credit mutations must flow through
+   * here — tests/ledger.test.ts enforces Σledger == Δcredits per corp per turn.
+   */
+  private credit(corp: Corporation, delta: number, cause: LedgerCause, detail?: string, systemId?: string): void {
+    if (delta === 0) return;
+    corp.credits += delta;
+    this.ledgerLines.push({ corpId: corp.id, delta, cause, ...(detail ? { detail } : {}), ...(systemId ? { systemId } : {}) });
+  }
+
+  /**
+   * True if the corp holds at least `need` of a resource across its systems' stockpiles.
+   * NO AUTO-PROCUREMENT (playtest decision): a build's materials must be on hand, or the
+   * order does not happen — sourcing materials is the player's own logistics problem.
+   */
+  private hasStrategic(corp: Corporation, resource: Resource, need: number): boolean {
+    if (need <= 0) return true;
     let local = 0;
     for (const id of corp.ownedSystemIds) local += this.galaxy.system(id).stockpile[resource];
-    return Math.max(0, need - local) * this.market.prices[resource];
+    return local >= need;
+  }
+
+  /** Multi-resource availability check for build bills (Section 27). */
+  private hasResources(corp: Corporation, costs: Partial<Record<Resource, number>>): boolean {
+    return RESOURCES.every((r) => this.hasStrategic(corp, r, costs[r] ?? 0));
   }
 
   /** Scale a build's material bill by the charter's Lean-Manufacturing research (Section 28). */
@@ -2235,13 +2990,6 @@ export class Engine {
     const out: Partial<Record<Resource, number>> = {};
     for (const [r, n] of Object.entries(costs)) out[r as Resource] = Math.round((n ?? 0) * mult);
     return out;
-  }
-
-  /** Total exchange cost to cover the shortfall of a multi-resource build bill (Section 27). */
-  private resourceBill(corp: Corporation, costs: Partial<Record<Resource, number>>): number {
-    let total = 0;
-    for (const r of RESOURCES) total += this.strategicBill(corp, r, costs[r] ?? 0);
-    return total;
   }
 
   /** Consume a multi-resource build bill from local stockpiles, buying any shortfall (Section 27). */
@@ -2310,8 +3058,8 @@ export class Engine {
   private recordSnapshot(
     turn: number,
     orderCounts: Record<string, number>,
-    launch?: { convoysLaunched: number; cargoValueShipped: number; routeTraffic: Record<string, number> },
-    raid?: { convoysRaided: number; cargoValueLost: number; raidOutcomes: ReturnType<typeof emptyRaidOutcomes> },
+    launch?: { convoysLaunched: number; cargoValueShipped: number; routeTraffic: Record<string, number>; escortOrders?: number },
+    raid?: { convoysRaided: number; cargoValueLost: number; largestSingleRaidLoss?: number; raidOutcomes: ReturnType<typeof emptyRaidOutcomes> },
     equity?: { acquisitions: number; distress: number; taxLevied: number },
   ): void {
     const credits: Record<string, number> = {};
@@ -2330,6 +3078,8 @@ export class Engine {
       convoysRaided: raid?.convoysRaided ?? 0,
       cargoValueShipped: launch?.cargoValueShipped ?? 0,
       cargoValueLost: raid?.cargoValueLost ?? 0,
+      largestSingleRaidLoss: raid?.largestSingleRaidLoss ?? 0,
+      escortOrders: launch?.escortOrders ?? 0,
       raidOutcomes: raid?.raidOutcomes ?? emptyRaidOutcomes(),
       routeTraffic: launch?.routeTraffic ?? {},
       taxLevied: Math.round(equity?.taxLevied ?? 0),

@@ -46,7 +46,8 @@ describe("megastructures (Section 22)", () => {
     scen.tuning = { startingCredits: 50000 };
     const eng = new Engine(loadScenario(scen), 1, reg("orbitalStation"));
     const spec = DEFAULT_TUNING.megastructures.orbitalStation;
-    eng.stepTurn(); // production fills metals; station may build once stock + credits suffice
+    eng.galaxy.system("s0").stockpile.metals = 500; // materials must be ON HAND (no auto-buy)
+    eng.stepTurn(); // station may build once stock + credits suffice
     // Run enough turns for metals to accumulate past the build threshold and the order to fire.
     for (let i = 0; i < 6; i++) eng.stepTurn();
     const sys = eng.galaxy.system("s0");

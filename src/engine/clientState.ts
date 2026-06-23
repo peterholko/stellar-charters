@@ -12,11 +12,14 @@ import {
   RESOURCES,
   type BodyBuildings,
   type BodyKind,
+  type ClientMovement,
   type ColonyPopulation,
   type CorpResearch,
   type QueueItem,
   type MegastructureKind,
+  type NpcHolder,
   type PlanetType,
+  type SentimentParts,
   type War,
   type PopulationStage,
   type Privateer,
@@ -24,10 +27,14 @@ import {
   type Resource,
   type Ship,
   type StarType,
+  type CharterType,
   type Stockpile,
   type SystemPosition,
+  type SystemProduction,
+  type ValuationComponent,
 } from "./types.js";
-import { systemBuildings } from "./bodies.js";
+import { RULESET_VERSION } from "./config.js";
+import { canHostPopulation, coloniesOf, systemBuildings } from "./bodies.js";
 import { SECRET_TECH_IDS } from "./research.js";
 import type { GameOutcome } from "./standings.js";
 
@@ -42,12 +49,6 @@ function cloneBodyBuildings(bb: Record<string, BodyBuildings>): Record<string, B
   return out;
 }
 
-/** Deep-copy a per-body construction queue so the client snapshot never aliases live engine state. */
-function cloneBuildQueues(q: Record<string, QueueItem[]>): Record<string, QueueItem[]> {
-  const out: Record<string, QueueItem[]> = {};
-  for (const [key, items] of Object.entries(q)) out[key] = items.map((it) => ({ ...it }));
-  return out;
-}
 
 /** A human seat in a (possibly shared) game. */
 export interface ClientPlayer {
@@ -103,16 +104,17 @@ export interface ClientSystem {
   populationStage: PopulationStage;
   /** Per-body building map (Section 24): bodyKey → counts. The colony screen renders from this. */
   bodyBuildings: Record<string, BodyBuildings>;
-  /** Per-body construction queues (Section 24, Phase 4a): bodyKey → pending builds with progress. */
-  buildQueues: Record<string, QueueItem[]>;
-  /** Per-body population (Section 24, Phase 4b): bodyKey → stage/progress/unrest for populated worlds. */
-  colonyPop: Record<string, ColonyPopulation>;
+  /** THE system's construction queue (review Section 10) — items record their landing body. */
+  queue: QueueItem[];
   /** System-wide aggregate of hydroponics across all bodies — convenience for compact UI badges. */
   hydroponics: number;
   platforms: number;
   /** Megastructures built here (Section 22). */
   megastructures: MegastructureKind[];
   hasDepot: boolean;
+  /** True if a Warp Disruptor stands here (Section 04) — holds rival fleet arrivals. Public, like
+   *  platforms/depot: defensive structures are visible. */
+  hasDisruptor: boolean;
   routeIds: string[];
   /** Atlas coordinates / region for map rendering (procedural scenarios). */
   position?: SystemPosition;
@@ -120,6 +122,8 @@ export interface ClientSystem {
   populationProgress: number | null;
   unrest: number | null;
   stockpile: Stockpile | null;
+  /** Owner-only: last turn's brown-out factor + limiting inputs (design rule #2). */
+  production: SystemProduction | null;
 }
 
 export interface ClientRoute {
@@ -139,12 +143,21 @@ export interface ClientRoute {
 export interface ClientCorp {
   id: string;
   name: string;
+  /** Charter type (review Section 5) — public identity, undefined for bots/unpicked seats. */
+  charter?: CharterType;
   valuation: number;
   sharePrice: number;
   sharesOutstanding: number;
   rangeTier: RangeTier;
   ownedSystemIds: string[];
   shareRegister: Record<string, number>;
+  /** The seeded institutional blocks on this charter's cap table (Section 17) — public,
+   *  like the register: who holds what, and at what ask/bid they'll trade. */
+  npcHolders: NpcHolder[];
+  /** Market mood on share trades (Section 17): tradedBase = sharePrice × sentiment. Public. */
+  sentiment: number;
+  /** This turn's sentiment move, decomposed (reversion/events/jitter) — no mystery numbers. */
+  sentimentParts?: SentimentParts;
   isFreeOperator: boolean;
   hasCharter: boolean;
   founderId: string;
@@ -153,6 +166,13 @@ export interface ClientCorp {
   /** Self-only fields (undefined for rivals). */
   credits?: number;
   debt?: number;
+  /** Goods in your Exchange warehouse (ruleset v10) — private; rivals never see your hoard. */
+  hubStockpile?: Stockpile;
+  warehouseLevel?: number;
+  /** Total warehouse capacity at the current level (units across all resources). */
+  warehouseCapacity?: number;
+  /** Per-component valuation breakdown (Section 17) — decomposes the share price; self-only. */
+  valuationParts?: Record<ValuationComponent, number>;
   ships?: Ship[];
   privateers?: Privateer[];
   recentEarnings?: number[];
@@ -168,7 +188,8 @@ export interface ClientConvoy {
   id: string;
   owner: string;
   kind: "buy" | "sell" | "transfer";
-  resource: Resource;
+  /** Cargo type — owner-only. `null` for rivals: a convoy's contents are known only to its exporter. */
+  resource: Resource | null;
   path: string[];
   routeIds: string[];
   position: number;
@@ -181,20 +202,50 @@ export interface ClientConvoy {
   payout: number;
 }
 
+/**
+ * A detected rival fleet in transit (Section 04 — ship-mounted sensors). Surfaced only when the
+ * contact sits inside one of the viewer's ships' sensor bubbles. Fog of war: only its current
+ * segment, final heading, and a ROUGH force band leak — never the exact ship list, cargo, or path
+ * interior, and stationed rival garrisons never blip.
+ */
+export interface ClientContact {
+  owner: string;
+  /** The leg the contact is crossing right now. */
+  fromSystemId: string;
+  toSystemId: string;
+  /** True if the contact is on a direct off-lane hop (no lane to interdict). */
+  offLane: boolean;
+  /** Where the contact is ultimately headed (last system in its path). */
+  headingSystemId: string;
+  /** Rough strength estimate, never an exact count. */
+  forceEstimate: "light" | "medium" | "heavy";
+}
+
 export interface ClientState {
   gameId: string;
   /** Id of the scenario this game was built from (e.g. "procedural-atlas-v1"). */
   scenarioId: string;
+  /** Movement/fuel ruleset epoch the game runs under (Section 04) — see RULESET_VERSION. */
+  rulesetVersion: number;
   turn: number;
   phase: GamePhase;
   totalTurns: number;
   /** The corporation this client controls (its perspective for fog of war). */
   humanCorpId: string;
   prices: Record<Resource, number>;
+  /** Goods currently tradable on the Exchange (commodity staging, review Section 13). */
+  listedResources: Resource[];
   systems: ClientSystem[];
   routes: ClientRoute[];
   corps: ClientCorp[];
   convoys: ClientConvoy[];
+  /**
+   * Convoy/fleet legs traversed last turn, for the map's "Last turn movements" replay (Section 04).
+   * Fog-of-war: convoy legs are public (convoy positions already are); fleet legs only for your own.
+   */
+  movementLog: ClientMovement[];
+  /** Rival fleets currently detected by your ships' sensors (Section 04 — ship-mounted sensors). */
+  contacts: ClientContact[];
   /** Active wars between charters (Section 23). */
   wars: War[];
   /** Galaxy-unique secret projects already claimed (Section 28, Phase 3): techId → corp name. */
@@ -273,17 +324,20 @@ export function buildClientState(
       owner: s.owner,
       populationStage: s.populationStage,
       bodyBuildings: cloneBodyBuildings(s.bodyBuildings),
-      buildQueues: cloneBuildQueues(s.buildQueues),
-      colonyPop: Object.fromEntries(Object.entries(s.colonyPop).map(([k, p]) => [k, { ...p }])),
+      queue: s.queue.map((it) => ({ ...it, mats: { ...it.mats } })),
       hydroponics: systemBuildings(s).hydroponics,
       platforms: s.platforms,
       megastructures: [...s.megastructures],
       hasDepot: s.hasDepot,
+      hasDisruptor: s.hasDisruptor,
       routeIds: [...s.routeIds],
       position: s.position,
       populationProgress: mine ? s.populationProgress : null,
       unrest: mine ? s.unrest : null,
       stockpile: mine ? { ...s.stockpile } : null,
+      production: mine && s.production
+        ? { powerFactor: s.production.powerFactor, limited: s.production.limited.map((l) => ({ ...l })) }
+        : null,
     };
   });
 
@@ -306,12 +360,16 @@ export function buildClientState(
     const base: ClientCorp = {
       id: c.id,
       name: c.name,
+      charter: c.charter,
       valuation: c.valuation,
       sharePrice: c.sharePrice,
       sharesOutstanding: c.sharesOutstanding,
       rangeTier: c.rangeTier,
       ownedSystemIds: [...c.ownedSystemIds],
       shareRegister: { ...c.shareRegister },
+      npcHolders: c.npcHolders.map((h) => ({ ...h })),
+      sentiment: c.sentiment,
+      sentimentParts: c.sentimentParts ? { ...c.sentimentParts } : undefined,
       isFreeOperator: c.isFreeOperator,
       hasCharter: c.hasCharter,
       founderId: c.founderId,
@@ -320,6 +378,10 @@ export function buildClientState(
     if (mine) {
       base.credits = c.credits;
       base.debt = c.debt;
+      base.hubStockpile = { ...c.hubStockpile };
+      base.warehouseLevel = c.warehouseLevel;
+      base.warehouseCapacity = engine.warehouseCapacity(c);
+      if (c.valuationParts) base.valuationParts = { ...c.valuationParts };
       base.ships = c.ships.map((s) => ({ ...s }));
       base.privateers = c.privateers.map((p) => ({ ...p }));
       base.recentEarnings = [...c.recentEarnings];
@@ -334,7 +396,8 @@ export function buildClientState(
         const s = g.systems.get(sid);
         if (!s) continue;
         rp += systemBuildings(s).labs * tune.labRpOutput;
-        for (const pop of Object.values(s.colonyPop)) rp += tune.researchPopBase[pop.stage];
+        // One population per system (review Section 10) — matches resolveResearch exactly.
+        if (coloniesOf(s).some((col) => canHostPopulation(col))) rp += tune.researchPopBase[s.populationStage];
       }
       base.rpPerTurn = rp;
     }
@@ -347,7 +410,7 @@ export function buildClientState(
       id: c.id,
       owner: c.owner,
       kind: c.kind,
-      resource: c.resource,
+      resource: mine ? c.resource : null,
       path: [...c.path],
       routeIds: [...c.routeIds],
       position: c.position,
@@ -360,6 +423,64 @@ export function buildClientState(
     };
   });
 
+  // ----- Ship-mounted sensors → rival fleet contacts (Section 04) -----
+  // Each of the viewer's ships projects a sensor bubble around its current atlas position; a rival
+  // fleet IN TRANSIT inside any bubble surfaces as a contact. Pure + deterministic: no Rng, and the
+  // banding/grouping is integer-and-threshold math over the existing array iteration order.
+  const tuning = engine.config.tuning;
+  const shipPos = (ship: Ship): { x: number; y: number } | null => {
+    const tr = ship.transit;
+    if (!tr) {
+      const p = g.systems.get(ship.stationedAt)?.position;
+      return p ? { x: p.x, y: p.y } : null;
+    }
+    const a = g.systems.get(tr.path[tr.position]!)?.position;
+    const b = g.systems.get(tr.path[tr.position + 1]!)?.position;
+    if (!a || !b) return null; // position-less map → sensors disabled (mirrors off-lane gating)
+    const rid = tr.routeIds[tr.position];
+    const segTime = tr.segmentTimes?.[tr.position] ?? (rid ? g.routes.get(rid)?.transitTime : undefined) ?? 1;
+    const frac = Math.max(0, Math.min(1, 1 - tr.segmentTurnsLeft / Math.max(1, segTime)));
+    return { x: a.x + (b.x - a.x) * frac, y: a.y + (b.y - a.y) * frac };
+  };
+  const isAllied = (otherId: string): boolean => {
+    if (!me || otherId === me.id) return false;
+    const other = engine.corps.find((c) => c.id === otherId);
+    return !!other && me.alliancePledges.includes(otherId) && other.alliancePledges.includes(me.id);
+  };
+  const bubbles = (me?.ships ?? [])
+    .map((s) => ({ pos: shipPos(s), r: tuning.shipSensorRange[s.rangeTier] }))
+    .filter((b): b is { pos: { x: number; y: number }; r: number } => b.pos !== null);
+  const contactGroups = new Map<string, { owner: string; from: string; to: string; offLane: boolean; heading: string; combat: number }>();
+  if (me && bubbles.length > 0) {
+    for (const c of engine.corps) {
+      if (c.id === me.id || isAllied(c.id)) continue;
+      for (const ship of c.ships) {
+        const tr = ship.transit;
+        if (!tr) continue; // only moving rivals blip; stationed garrisons stay fogged
+        const pos = shipPos(ship);
+        if (!pos) continue;
+        if (!bubbles.some((b) => Math.hypot(pos.x - b.pos.x, pos.y - b.pos.y) <= b.r)) continue;
+        const from = tr.path[tr.position]!;
+        const to = tr.path[tr.position + 1]!;
+        const key = `${c.id}|${from}>${to}|${tr.launchedTurn}`;
+        const grp = contactGroups.get(key) ?? {
+          owner: c.id, from, to, offLane: tr.routeIds[tr.position] === "",
+          heading: tr.path[tr.path.length - 1]!, combat: 0,
+        };
+        grp.combat += ship.combat;
+        contactGroups.set(key, grp);
+      }
+    }
+  }
+  const contacts: ClientContact[] = [...contactGroups.values()].map((grp) => ({
+    owner: grp.owner,
+    fromSystemId: grp.from,
+    toSystemId: grp.to,
+    offLane: grp.offLane,
+    headingSystemId: grp.heading,
+    forceEstimate: grp.combat < 8 ? "light" : grp.combat < 20 ? "medium" : "heavy",
+  }));
+
   const prices = {} as Record<Resource, number>;
   for (const r of RESOURCES) prices[r] = engine.market.prices[r];
 
@@ -370,6 +491,8 @@ export function buildClientState(
   return {
     gameId,
     scenarioId: engine.config.scenario.id ?? "legacy",
+    rulesetVersion: RULESET_VERSION,
+    listedResources: engine.listedResources(),
     turn: engine.currentTurn,
     phase: gamePhase(engine),
     totalTurns: engine.config.turns,
@@ -379,11 +502,17 @@ export function buildClientState(
     routes,
     corps,
     convoys,
+    // Convoy legs are already-visible public info; fleet legs are redacted to the viewer's own
+    // ships (rivals' fleets are fogged) so the replay never reveals hidden military movement.
+    movementLog: engine.lastMovements.filter((m) => m.kind === "convoy" || m.owner === humanCorpId),
+    contacts,
     wars: engine.activeWars.map((w) => ({ ...w })),
     claimedSecrets,
     warTariff: engine.warTariffFor(humanCorpId),
     outcome: engine.outcome,
-    reports,
+    // Fog-of-war on money (Section 11): each seat sees only its OWN ledger lines; the shared
+    // event stream stays as-is (the client digest already scope-filters it per viewer).
+    reports: reports.map((r) => ({ ...r, ledger: (r.ledger ?? []).filter((l) => l.corpId === humanCorpId) })),
     // Multiplayer fields default here; the server overrides them with DB membership.
     mySeat: humanCorpId,
     isHost: false,

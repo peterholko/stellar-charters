@@ -73,17 +73,17 @@ export const RESEARCH_TREE: ResearchTech[] = [
 
   // — Navigation — (the Warp-Drive range ladder now lives here, Section 28 Phase 2)
   { id: "nav-warp2", division: "navigation", tier: 1, name: "Warp Drive II", rpCost: 150, prereqs: [], grantsRangeTier: 2,
-    desc: "Range 2 warp drives — reach the second ring of warp lanes." },
+    desc: "Extends warp range to reach the second ring of warp lanes." },
   { id: "nav-lanes", division: "navigation", tier: 1, name: "Lane Stabilization", rpCost: 180, prereqs: [],
     desc: "Charting frontier warp lanes costs half as much." },
   { id: "nav-warp3", division: "navigation", tier: 2, name: "Warp Drive III", rpCost: 260, prereqs: ["nav-warp2"], grantsRangeTier: 3,
-    desc: "Range 3 warp drives — push into the rare-isotope frontier." },
+    desc: "Extends warp range to push into the rare-isotope frontier." },
   { id: "nav-logistics", division: "navigation", tier: 2, name: "Convoy Logistics", rpCost: 300, prereqs: ["nav-lanes"],
     desc: "Leaner fleet operations cut per-turn ship fuel burn by 40%." },
   { id: "nav-warp4", division: "navigation", tier: 3, name: "Warp Drive IV", rpCost: 380, prereqs: ["nav-warp3"], grantsRangeTier: 4,
-    desc: "Range 4 warp drives — the deep abyssal lanes open up." },
+    desc: "Extends warp range — the deep abyssal lanes open up." },
   { id: "nav-warp5", division: "navigation", tier: 4, name: "Warp Drive V", rpCost: 520, prereqs: ["nav-warp4"], grantsRangeTier: 5,
-    desc: "Range 5 warp drives — capital-class jump range across the galaxy." },
+    desc: "Capital-class warp range — long jumps across the galaxy." },
 
   // — Colonial —
   { id: "col-habitat", division: "colonial", tier: 1, name: "Habitat Engineering", rpCost: 200, prereqs: [],
@@ -101,7 +101,7 @@ export const RESEARCH_TREE: ResearchTech[] = [
   { id: "sec-pointdef", division: "security", tier: 2, name: "Point-Defense", rpCost: 320, prereqs: ["sec-plating"], choiceGroup: "sec-2",
     desc: "Interceptor screens add a further +25% system defense (defense)." },
   { id: "sec-capital", division: "security", tier: 3, name: "Capital Shipyards", rpCost: 460, prereqs: ["sec-plating"],
-    desc: "Dedicated yards build capital hulls (Range 5+) for 30% less." },
+    desc: "Dedicated yards build capital-class hulls for 30% less." },
 
   // — Acquisitions —
   { id: "acq-algorithms", division: "acquisitions", tier: 1, name: "Market Algorithms", rpCost: 200, prereqs: [],

@@ -2,7 +2,9 @@ import { useApp, store } from "../match/store";
 import {
   RESEARCH_TREE,
   RESEARCH_DIVISIONS,
+  canHostPopulation,
   canResearch,
+  coloniesOf,
   lockedChoices,
   techById,
   systemBuildings,
@@ -73,6 +75,9 @@ export function Research() {
             </div>
             <div className="division__techs">
               {RESEARCH_TREE.filter((tk) => tk.division === div.id)
+                // Feature-gated techs (review Section 13) are deferred from v1 — hidden, not teased.
+                .filter((tk) => !(tk.id === "col-terraform" && !view.config.tuning.features.terraforming))
+                .filter((tk) => !(tk.id === "acq-espionage" && !view.config.tuning.features.espionage))
                 .sort((a, b) => a.tier - b.tier)
                 .map((tk) => {
                   const qi = queue.indexOf(tk.id);
@@ -140,7 +145,8 @@ function researchPerTurn(view: PlayerView): number {
   for (const id of view.me.ownedSystemIds) {
     const s = view.galaxy.system(id);
     rp += systemBuildings(s).labs * t.labRpOutput;
-    for (const pop of Object.values(s.colonyPop)) rp += t.researchPopBase[pop.stage];
+    // One population per system (review Section 10): its stage drives the populace RP.
+    if (coloniesOf(s).some((c) => canHostPopulation(c))) rp += t.researchPopBase[s.populationStage];
   }
   return rp;
 }

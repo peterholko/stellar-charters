@@ -42,6 +42,7 @@ describe("replay determinism — body-driven site state (Section 21)", () => {
       const eng = new Engine(loadScenario(scen), seed, defaultRegistry());
       eng.makeHybrid("corp-0");
       const sysId = eng.corps[0]!.ownedSystemIds[0]!;
+      eng.galaxy.system(sysId).stockpile.alloys = 10; // build materials must be ON HAND (no auto-buy)
       const target = eng.galaxy.system(sysId).sites.find((s) => s.extractorLevel === 0);
       // Turn 1: the human works a previously-unworked deposit.
       eng.setHumanOrders("corp-0", target ? [{ kind: "buildExtractor", systemId: sysId, siteKey: target.key }] : []);

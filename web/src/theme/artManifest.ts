@@ -16,14 +16,33 @@ export const artManifest: Record<string, ArtMeta> = {
   "hero-wormhole-hub": { label: "Wormhole Hub", ratio: 16 / 9 },
   "bg-starfield": { label: "Starfield", ratio: 16 / 9 },
 
-  // ships (Fleet shipyard / convoys)
-  "ship-survey": { label: "Survey skiff", ratio: 1 },
-  "ship-cargo": { label: "Cargo freighter", ratio: 3 / 2 },
-  "ship-escort": { label: "Escort cutter", ratio: 3 / 2 },
-  "ship-raider": { label: "Raider corsair", ratio: 3 / 2 },
-  "ship-clipper": { label: "Deep-range clipper", ratio: 3 / 2 },
-  "ship-fleet": { label: "Corporate fleet ship", ratio: 16 / 9 },
+  // warship hulls (Fleet shipyard) — one slot per named hull class (Section 04), keyed by
+  // lower-cased hull name so the lookup in hullArtSlot() is a direct `ship-${hullName}`.
+  "ship-cutter": { label: "Cutter · Skiff", ratio: 3 / 2 },
+  "ship-corvette": { label: "Corvette · Picket", ratio: 3 / 2 },
+  "ship-frigate": { label: "Frigate · Clipper", ratio: 3 / 2 },
+  "ship-destroyer": { label: "Destroyer · Linebreaker", ratio: 3 / 2 },
+  "ship-cruiser": { label: "Cruiser · Capital line", ratio: 3 / 2 },
+  "ship-battlecruiser": { label: "Battlecruiser · Raider-of-the-line", ratio: 3 / 2 },
+  "ship-battleship": { label: "Battleship · Broadside", ratio: 3 / 2 },
+  "ship-dreadnought": { label: "Dreadnought · Charter-killer", ratio: 3 / 2 },
+
+  // utility ships (shared silhouettes by design) + convoy splash
+  "ship-survey": { label: "Surveyor · Assay skiff", ratio: 3 / 2 },
+  "ship-raider": { label: "Corsair · Privateer", ratio: 3 / 2 },
+  "ship-cargo": { label: "Freighter · Hauler", ratio: 16 / 9 },
   "ship-convoy": { label: "Convoy group", ratio: 16 / 9 },
+
+  // galaxy-map fleet icons (tiny tintable side-profile sprites, Section 04) — drawn on the Pixi
+  // map per fleet kind + flagship size; not panel art.
+  "fleeticon-trader": { label: "Trade ship", ratio: 1 },
+  "fleeticon-freighter": { label: "Bulk freighter", ratio: 1 },
+  "fleeticon-escort": { label: "Light escort", ratio: 1 },
+  "fleeticon-frigate": { label: "Frigate", ratio: 1 },
+  "fleeticon-cruiser": { label: "Cruiser", ratio: 1 },
+  "fleeticon-capital": { label: "Capital ship", ratio: 1 },
+  "fleeticon-raider": { label: "Raider", ratio: 1 },
+  "fleeticon-survey": { label: "Survey skiff", ratio: 1 },
 
   // infrastructure
   "infra-depot": { label: "Trade Depot", ratio: 16 / 9 },

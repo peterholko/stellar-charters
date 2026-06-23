@@ -2,6 +2,7 @@ import { EXTRACTOR_CAP, MEGASTRUCTURE_KINDS, buildingTotal, canRaidRoute, raidSt
 import { store, type Selection } from "../match/store";
 import {
   archetypeLabel,
+  convoyName,
   corpColor,
   formatCr,
   megastructureLabel,
@@ -14,15 +15,13 @@ import {
   starTypeColor,
   starTypeLabel,
   stellarNote,
-  stockpileValue,
   sumPotential,
   systemArchetype,
 } from "../match/format";
-import { RESOURCES } from "@engine";
 import { Badge, Bar, Panel, PanelTitle, ActionButton } from "../ui/primitives";
 import { PlanetArt, ArtSlot, StarArt } from "../theme/ArtSlot";
-import { ResourceIcon } from "../theme/art";
 import { ColonyPanel } from "./ColonyPanel";
+import { ProductionReadout } from "./ProductionReadout";
 
 export function Inspector({
   view,
@@ -53,7 +52,7 @@ export function Inspector({
         </div>
         <PanelTitle
           icon="radar"
-          eyebrow="Warp Route"
+          eyebrow="Warp Lane"
           title={`${a.name} ↔ ${b.name}`}
           right={!route.charted ? <ArtSlot slot="action-survey" className="cue-art" /> : (risk.level === "severe" || risk.level === "high") ? <ArtSlot slot="status-raid-risk" className="cue-art" /> : undefined}
         />
@@ -63,7 +62,7 @@ export function Inspector({
           <div><dt>Exposure</dt><dd><Badge tone={risk.level === "severe" ? "negative" : risk.level === "high" ? "warn" : "neutral"}>{risk.label}</Badge></dd></div>
           <div><dt>Authority</dt><dd>{Math.round(route.authorityPresence * 100)}%</dd></div>
           <div><dt>Traffic (5t)</dt><dd>{traffic} convoy{traffic === 1 ? "" : "s"}</dd></div>
-          <div><dt>Min range</dt><dd>Tier {route.requiredRange}</dd></div>
+          <div><dt>Reach</dt><dd><Badge tone={reachable ? "neutral" : "warn"}>{reachable ? "In range" : "Beyond range"}</Badge></dd></div>
         </dl>
         <div className="action-row">
           {!route.charted && (
@@ -71,7 +70,7 @@ export function Inspector({
               icon="radar"
               variant="primary"
               disabled={!reachable}
-              title={reachable ? "Draft a survey order" : `Needs Range ${route.requiredRange}`}
+              title={reachable ? "Draft a survey order" : "Beyond your fleet's warp range"}
               onClick={() => store.stage({ kind: "survey", routeId: route.id })}
             >
               Survey
@@ -88,7 +87,7 @@ export function Inspector({
           </ActionButton>
         </div>
         {!eligible && (
-          <p className="hint">Need a raider ship or privateer based at an endpoint to interdict this lane.</p>
+          <p className="hint">Need raid access: a raider warship stationed at (or one hop from) the lane's non-hub mouth, a system you own nearby, or a privateer based there.</p>
         )}
       </Panel>
     );
@@ -108,12 +107,15 @@ export function Inspector({
         <PanelTitle
           icon="convoys"
           eyebrow={mine ? "Your Convoy" : "Rival Convoy"}
-          title={`${resourceLabels[c.resource]} ${c.kind === "buy" ? "import" : c.kind === "transfer" ? "transfer" : "export"}`}
+          title={convoyName(c.id)}
           right={!mine ? <ArtSlot slot="action-interdict" className="cue-art" /> : undefined}
         />
         <dl className="kv">
           {mine ? (
-            <div><dt>Cargo</dt><dd>{Math.round(c.quantity)} units</dd></div>
+            <>
+              <div><dt>Cargo</dt><dd>{Math.round(c.quantity)} {resourceLabels[c.resource]}</dd></div>
+              <div><dt>Type</dt><dd>{c.kind === "buy" ? "Import" : c.kind === "transfer" ? "Transfer" : "Export"}</dd></div>
+            </>
           ) : (
             <div><dt>Size</dt><dd>{sizeBucket(c.value)}</dd></div>
           )}
@@ -142,6 +144,47 @@ export function Inspector({
             {!targetable && <p className="hint">One-turn hub runs can only be hit by a pre-placed route interdiction.</p>}
           </>
         )}
+      </Panel>
+    );
+  }
+
+  if (selection.kind === "fleet") {
+    const sysId = selection.id;
+    const fsys = galaxy.systems.get(sysId);
+    const ships = view.me.ships.filter((s) => s.combat > 0 && !s.transit && s.stationedAt === sysId);
+    if (!fsys || ships.length === 0) return null;
+    const combat = ships.reduce((a, s) => a + s.combat, 0);
+    const raiders = ships.filter((s) => s.raider).length;
+    const jumpRange = ships.reduce((a, s) => Math.min(a, view.config.tuning.maxOffLaneJumpDist[s.rangeTier]), Infinity);
+    return (
+      <Panel className="inspector">
+        <PanelTitle icon="fleet" eyebrow="Your Fleet" title={`Fleet at ${fsys.name}`} right={<Badge tone="accent">cbt {combat}</Badge>} />
+        <dl className="kv">
+          <div><dt>Ships</dt><dd>{ships.length}</dd></div>
+          <div><dt>Combat</dt><dd>{combat}</dd></div>
+          <div><dt>Raiders</dt><dd>{raiders}</dd></div>
+          <div><dt>Jump range</dt><dd>{jumpRange}</dd></div>
+        </dl>
+        <p className="hint">Tap a destination system on the map to move this fleet. It marches on-lane within range; entering a rival system assaults it (declares war).</p>
+        <div className="action-row">
+          <ActionButton icon="systems" onClick={() => store.select({ kind: "system", id: sysId })}>View system</ActionButton>
+        </div>
+      </Panel>
+    );
+  }
+
+  if (selection.kind === "survey") {
+    const sysId = selection.id;
+    const ssys = galaxy.systems.get(sysId);
+    const scouts = view.me.ships.filter((s) => s.surveyor && !s.transit && s.stationedAt === sysId);
+    if (!ssys || scouts.length === 0) return null;
+    return (
+      <Panel className="inspector">
+        <PanelTitle icon="radar" eyebrow="Survey vessel" title={`Survey skiff at ${ssys.name}`} right={<Badge tone="accent">{scouts.length}</Badge>} />
+        <p className="hint">Tap a system on the map to send a survey vessel there — it flies the cheapest charted lanes within range, reveals that system's deposits (richness + reserves), then returns home. Intel stays private to your charter.</p>
+        <div className="action-row">
+          <ActionButton icon="systems" onClick={() => store.select({ kind: "system", id: sysId })}>View system</ActionButton>
+        </div>
       </Panel>
     );
   }
@@ -191,11 +234,15 @@ export function Inspector({
             <div><dt>Potential</dt><dd>{sumPotential(sys).toFixed(0)}/t</dd></div>
             <div><dt>Upkeep</dt><dd>{formatCr(sys.upkeep)}/t</dd></div>
             {!open && <div><dt>Population</dt><dd>{populationLabel[sys.populationStage]}</dd></div>}
-            <div><dt>Defense</dt><dd>{(sys.defense + sys.platforms * t.platformDefense + (sys.hasDepot ? t.depotDefenseBonus : 0)).toFixed(0)}</dd></div>
+            <div><dt>Defense</dt><dd>{(sys.defense + sys.platforms * t.platformDefense + (sys.hasDepot ? t.depotDefenseBonus : 0) + (sys.hasDisruptor ? t.disruptorDefenseBonus : 0)).toFixed(0)}</dd></div>
             {open && <div><dt>Claim cost</dt><dd>{formatCr(sys.claimCost)}</dd></div>}
           </dl>
 
+          {/* What this system actually produces, per resource (playtest feedback). */}
+          <ProductionReadout sys={sys} view={view} mine={mine} />
+
           <ColonyPanel sys={sys} view={view} canBuild={mine && !view.me.isFreeOperator} />
+          {mine && !isHub && <FleetControls view={view} sys={sys} />}
           {!mine && !isHub && <SurveyControls view={view} sys={sys} />}
           {!mine && sys.owner && (
             <>
@@ -217,15 +264,6 @@ export function Inspector({
                 </div>
                 <Bar value={sys.populationProgress} max={t.growthThreshold} tone={sys.unrest > 0.01 ? "warn" : "positive"} />
               </div>
-              <div className="stock-grid">
-                {RESOURCES.map((r) => (
-                  <div key={r} className="stock-cell">
-                    <ResourceIcon resource={r} size={18} />
-                    <span>{resourceLabels[r]}</span>
-                    <strong>{Math.round(sys.stockpile[r])}</strong>
-                  </div>
-                ))}
-              </div>
               {(sys.hasDepot || hydroponics > 0 || sys.platforms > 0) && (
                 <div className="infra-art">
                   {sys.hasDepot && <ArtSlot slot="infra-depot" className="infra-thumb" />}
@@ -237,6 +275,7 @@ export function Inspector({
                 <Badge tone={sys.hasDepot ? "accent" : "neutral"}>Depot {sys.hasDepot ? "✓" : "—"}</Badge>
                 <Badge tone={hydroponics ? "accent" : "neutral"}>Hydro ×{hydroponics}</Badge>
                 <Badge tone={sys.platforms ? "accent" : "neutral"}>Platform ×{sys.platforms}/{t.platformCap}</Badge>
+                <Badge tone={sys.hasDisruptor ? "accent" : "neutral"}>Disruptor {sys.hasDisruptor ? "✓" : "—"}</Badge>
                 {sys.megastructures.map((m) => (
                   <Badge key={m} tone="accent">{megastructureShort[m]}</Badge>
                 ))}
@@ -246,7 +285,7 @@ export function Inspector({
                 {!sys.hasDepot && <ActionButton icon="systems" onClick={() => store.stage({ kind: "buildDepot", systemId: sys.id })}>Depot</ActionButton>}
                 <ActionButton icon="flask" onClick={() => store.stage({ kind: "buildHydroponics", systemId: sys.id })}>Hydro</ActionButton>
                 {sys.platforms < t.platformCap && <ActionButton icon="shield" onClick={() => store.stage({ kind: "buildPlatform", systemId: sys.id })}>Platform</ActionButton>}
-                <ActionButton icon="radar" title={`Build a survey vessel here · ${formatCr(t.surveyShipCost)} — an unarmed scout for surveying other systems`} onClick={() => store.stage({ kind: "buildSurveyShip", systemId: sys.id })}>Survey ship</ActionButton>
+                {!sys.hasDisruptor && <ActionButton icon="bolt" title={`Build a Warp Disruptor · ${formatCr(t.disruptorCost)} — holds any rival fleet arriving here for +${t.disruptorDelay} turns`} onClick={() => store.stage({ kind: "buildDisruptor", systemId: sys.id })}>Disruptor</ActionButton>}
                 <ReinforceButton view={view} sys={sys} />
               </div>
               <MegastructureBuilds sys={sys} view={view} />
@@ -269,6 +308,27 @@ export function Inspector({
         </>
       )}
     </Panel>
+  );
+}
+
+/** Initiate a map move for an idle combat fleet stationed at your own system (Section 04/23).
+ *  Selecting the fleet switches the inspector to its panel; you then click a destination on the
+ *  map to stage the move. This is the discoverable entry point alongside tapping the map chevron. */
+function FleetControls({ view, sys }: { view: PlayerView; sys: System }) {
+  const fleet = view.me.ships.filter((s) => s.combat > 0 && !s.transit && s.stationedAt === sys.id);
+  if (fleet.length === 0) return null;
+  const combat = fleet.reduce((a, s) => a + s.combat, 0);
+  return (
+    <div className="action-row">
+      <ActionButton
+        icon="fleet"
+        variant="primary"
+        title="Select this fleet, then click a destination system on the map to move it (off-lane if needed)"
+        onClick={() => store.select({ kind: "fleet", id: sys.id })}
+      >
+        Move fleet · {fleet.length} ship{fleet.length > 1 ? "s" : ""} · cbt {combat}
+      </ActionButton>
+    </div>
   );
 }
 

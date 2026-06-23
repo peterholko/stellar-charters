@@ -35,12 +35,12 @@ export class Galaxy {
         populationStage: s.populationStage ?? "outpost",
         populationProgress: 0,
         unrest: 0,
-        colonyPop: {},
         bodyBuildings: {},
-        buildQueues: {},
+        queue: [],
         platforms: 0,
         megastructures: [],
         hasDepot: false,
+        hasDisruptor: false,
         defense: s.defense ?? 1,
         routeIds: [],
         owner: null,
@@ -85,6 +85,18 @@ export class Galaxy {
     const r = this.routes.get(id);
     if (!r) throw new Error(`Unknown route ${id}`);
     return r;
+  }
+
+  /**
+   * Straight-line atlas distance between two systems (Section 04), or null if either lacks a
+   * position. Off-lane fleet movement and mass×distance fuel read this; legacy flat scenarios
+   * carry no coordinates, so callers must fall back (and disable off-lane) when it returns null.
+   */
+  distanceBetween(a: string, b: string): number | null {
+    const pa = this.systems.get(a)?.position;
+    const pb = this.systems.get(b)?.position;
+    if (!pa || !pb) return null;
+    return Math.hypot(pa.x - pb.x, pa.y - pb.y);
   }
 
   /** The route directly connecting two systems, if any. */

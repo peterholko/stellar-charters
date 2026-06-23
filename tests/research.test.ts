@@ -73,6 +73,7 @@ describe("research (Section 28)", () => {
       ],
       routes: [{ a: "hub", b: "s0", transitTime: 1, stability: 0.9, capacity: 50, exposure: 0.3, authorityPresence: 0.8, requiredRange: 1, charted: true }],
     });
+    cfg.tuning.features = { ...cfg.tuning.features, terraforming: true }; // gated off in v1; this test exercises the mechanic
     const eng = new Engine(cfg, 0, reg());
     const corp = eng.corps[0]!;
     eng.galaxy.system("s0").owner = corp.id; corp.ownedSystemIds = ["s0"]; corp.hasCharter = true; corp.isFreeOperator = false;
@@ -108,7 +109,9 @@ describe("research (Section 28)", () => {
   });
 
   it("Industrial Espionage steals a rival tech the spy lacks", () => {
-    const eng = new Engine(loadScenario(scenario(2, 1)), 0, reg());
+    const espCfg = loadScenario(scenario(2, 1));
+    espCfg.tuning.features = { ...espCfg.tuning.features, espionage: true }; // gated off in v1; this test exercises the mechanic
+    const eng = new Engine(espCfg, 0, reg());
     const [a, b] = eng.corps;
     const sys = eng.galaxy.system("s0");
     sys.owner = a!.id; a!.ownedSystemIds = ["s0"]; a!.hasCharter = true; a!.isFreeOperator = false;

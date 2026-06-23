@@ -39,7 +39,7 @@ export interface RaidResult {
  *
  * A raid strikes the route's *vulnerable* (non-hub) endpoints. The attacker is
  * eligible if it can stage a raider force at, or one hop from, such an endpoint —
- * via owned systems with raider ships, or via a privateer's base.
+ * via owned systems with raider ships, a raider fleet's station, or a privateer's base.
  */
 export function canRaidRoute(
   galaxy: Galaxy,
@@ -52,6 +52,12 @@ export function canRaidRoute(
   // Systems from which this corp can launch a raid.
   const bases: string[] = [];
   if (corp.ships.some((s) => s.raider)) bases.push(...corp.ownedSystemIds);
+  // Section 13: "a fleet stationed at an endpoint" grants access — wherever a raider
+  // warship is parked is a staging point, the hub included (its harbor is untouchable,
+  // but the heavy Authority presence on hub lanes is already priced into the raid odds).
+  for (const s of corp.ships) {
+    if (s.raider && !s.transit && s.stationedAt) bases.push(s.stationedAt);
+  }
   for (const p of corp.privateers) {
     if (p.turnsLeft > 0) bases.push(p.basedAt);
   }

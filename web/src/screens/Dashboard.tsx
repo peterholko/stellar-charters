@@ -1,6 +1,7 @@
-import type { PlayerView } from "@engine";
+import type { PlayerView, ValuationComponent } from "@engine";
 import { store, useApp } from "../match/store";
 import { buildDigest } from "../match/digest";
+import { buildWarnings } from "../match/warnings";
 import { formatCr } from "../match/format";
 import { Panel, PanelTitle, Sparkline, Badge, Stat, EmptyState } from "../ui/primitives";
 import { Icon } from "../ui/icons";
@@ -18,10 +19,16 @@ function coachTip(view: PlayerView, turn: number): string | null {
   const me = view.me;
   if (me.ownedSystemIds.length === 0) return "You hold no systems. Claim an open system from the Map or Systems screen to start producing.";
   if (turn <= 3) return "Sell surplus from your system on the Exchange — exports pay on arrival, so cash lags a turn.";
-  if (me.rangeTier < 2 && turn >= 6) return "Research Range 2 in Fleet & Security to chart frontier lanes and reach rare isotopes.";
+  if (me.rangeTier < 2 && turn >= 6) return "Research Warp Drive in Fleet & Security to chart frontier lanes and reach rare isotopes.";
   if (turn >= 10 && me.ownedSystemIds.length < 2) return "Consider a second claim or a Trade Depot to grow valuation before the consolidation phase.";
   return null;
 }
+
+const partLabels: Record<ValuationComponent, string> = {
+  cash: "Cash", debt: "Debt", fleet: "Fleet", momentum: "Earnings momentum", yields: "System yields",
+  extractors: "Extractors", population: "Population", infrastructure: "Infrastructure",
+  megastructures: "Megastructures", stockpiles: "Stockpiles",
+};
 
 export function Dashboard() {
   const { view, lastReport, valuationHistory, turn, totalTurns, humanCorpId } = useApp();
@@ -30,6 +37,13 @@ export function Dashboard() {
   const phase = phaseOf(Math.max(1, turn), totalTurns);
   const digest = lastReport ? buildDigest(lastReport, view, humanCorpId).filter((l) => l.scope === "me") : [];
   const tip = coachTip(view, turn);
+  const warnings = buildWarnings(view);
+  // Valuation decomposition (Section 17): the win metric is not a black box.
+  const parts = me.valuationParts
+    ? (Object.entries(me.valuationParts) as [ValuationComponent, number][])
+        .filter(([, v]) => Math.abs(v) >= 1)
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    : [];
 
   const standings = [...view.corporations]
     .sort((a, b) => b.valuation - a.valuation)
@@ -41,12 +55,36 @@ export function Dashboard() {
         <Stat label="Credits" value={`${formatCr(me.credits)}`} icon="wallet" tone={me.credits < 500 ? "warn" : undefined} />
         <Stat label="Debt" value={`${formatCr(me.debt)}`} icon="finance" tone={me.debt > 0 ? "warn" : undefined} />
         <Stat label="Valuation" value={formatCr(me.valuation)} icon="trending" sub={<Sparkline data={valuationHistory.length ? valuationHistory : [me.valuation, me.valuation]} color="auto" width={92} height={26} />} />
-        <Stat label="Range" value={`Tier ${me.rangeTier}`} icon="radar" />
         <Stat label="Systems" value={me.ownedSystemIds.length} icon="systems" />
         <Stat label="Charter" value={me.isFreeOperator ? "Free Operator" : "Chartered"} icon="gavel" tone={me.isFreeOperator ? "negative" : undefined} />
       </div>
 
+      {parts.length > 0 && (
+        <details className="dashboard__valparts">
+          <summary className="hint">Where the valuation comes from ▾</summary>
+          <div className="ledger">
+            {parts.map(([k, v]) => (
+              <div key={k} className="preview__row"><span>{partLabels[k]}</span><strong>{v > 0 ? "+" : ""}{formatCr(Math.round(v))}</strong></div>
+            ))}
+          </div>
+        </details>
+      )}
+
       <div className="dashboard__grid">
+        {warnings.length > 0 && (
+          <Panel className="dashboard__warnings">
+            <PanelTitle icon="alert" eyebrow="Needs Attention" title="Warnings" right={<Badge tone={warnings.some((w) => w.tone === "bad") ? "negative" : "warn"}>{warnings.length}</Badge>} />
+            <div className="digest">
+              {warnings.slice(0, 6).map((w, i) => (
+                <div key={i} className={`digest__row digest__row--${w.tone}`}>
+                  <Icon name="alert" size={15} />
+                  <div><strong>{w.title}</strong><span>{w.body}</span></div>
+                  {w.fix && <button type="button" className="mini-btn" onClick={w.fix.run}>{w.fix.label}</button>}
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
         <Panel className="dashboard__phase">
           <PanelTitle icon="bolt" eyebrow={`Turn ${Math.min(turn + 1, totalTurns)} of ${totalTurns}`} title={phase.label} />
           <p className="dashboard__phase-note">{phase.note}</p>

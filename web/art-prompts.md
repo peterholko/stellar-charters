@@ -33,16 +33,56 @@ subject once per suffix to compare the three art directions the UI themes match.
 | Slot id (`/assets/<id>.png`) | Aspect | Subject prompt |
 |---|---|---|
 | `hero-wormhole-hub` | 16:9 | *A vast neutral wormhole gate station: a luminous spiral wormhole ringed by a circular trade-authority habitat with docking spokes, freighters queued at the mouth, a sense of regulated commerce and scale.* |
-| `ship-survey` | 16:9 | *A small nimble survey skiff with sensor booms and a single drive, Range-1 explorer.* |
-| `ship-cargo` | 16:9 | *A blocky modular cargo freighter hauling stacked containers between systems.* |
-| `ship-escort` | 16:9 | *An armed escort cutter/corvette with defensive turrets in charter livery.* |
-| `ship-raider` | 16:9 | *A lean predatory raider corsair, dark hull, deniable privateer silhouette.* |
+| `ship-*` (fleet) | — | The whole fleet has its own block below — see **[Fleet — ship hulls](#fleet--ship-hulls)**. |
 | `infra-depot` | 1:1 | *A trade-depot logistics ring with docking arms orbiting a system.* |
 | `infra-hydroponics` | 1:1 | *A hydroponics module: glowing green grow-racks under a transparent dome.* |
 | `infra-platform` | 1:1 | *A stationary orbital defense platform bristling with point-defense guns.* |
 | `event-raid` | 16:9 | *A privateer raid on a cargo convoy inside a glowing warp tunnel, escort ships returning fire, cinematic motion, no gore.* |
 | `event-acquisition` | 16:9 | *A corporate acquisition depicted as charter-hologram fleets converging over a star map, ominous boardroom-in-space mood.* |
 | `bg-starfield` | 16:9 tileable | *A deep-space starfield with a faint nebula gradient and sparse stars, very low detail, suitable as a dim UI backdrop.* |
+
+## Fleet — ship hulls
+
+The fleet is generated as one cohesive **Used Future** lineup: every named hull class (Cutter →
+Dreadnought) gets its own asset, plus the shared utility ships. **Paste the STYLE BLOCK once, then
+generate each numbered subject as its own image, reusing the style block verbatim every time.** Save
+each as `web/public/assets/<slot-id>.png`. 3:2 unless a subject says otherwise.
+
+> **STYLE BLOCK —** UI art for **Stellar Charters**, a gritty corporate-frontier 4X set on a wormhole
+> frontier where chartered corporations fight over star systems through trade, convoys and deniable
+> violence. Art direction: **USED FUTURE** — lived-in industrial sci-fi. Worn painted metal with primer
+> patches, rust streaks and scuffed stencil markings (registry numbers, hazard chevrons); practical
+> greebled hardware — radiators, fuel lines, docking clamps, sensor masts; muted gunmetal-grey +
+> burnt-orange (#E07A3A) + olive palette with a single charter-livery accent stripe; soft directional key
+> light, slight grime. Reference Alien / The Expanse / Firefly — never sleek-glassy, never
+> Star-Wars-clean.
+>
+> Rules for EVERY image: a single vessel in 3/4 broadside hero profile, nose pointing right, centered, on
+> a plain transparent / dark-neutral background; NO text, labels, logos, UI frames, planets or starfield;
+> identical camera distance and lighting so the ships form one coherent escalating lineup. **KEY
+> PROGRESSION CUE** — each warship carries a stern warp-drive coil assembly whose SIZE scales with its
+> range tier: tier 1 = one small coil; each tier up adds larger / more coil rings; the tier-8 hull has a
+> towering multi-ring warp array. Higher tier = visibly more mass, more drives, heavier armor. Aspect
+> ratio 3:2 (use 16:9 for the freighter and convoy). Render each numbered subject below as its own image,
+> reusing this entire style block verbatim.
+
+| # | Slot id | Subject |
+|---|---|---|
+| 1 | `ship-cutter` | CUTTER (Range-1 "Skiff"): cheapest charter warship, half civilian runabout. A small fast wedge/dart hull, one stubby fusion drive with a single small warp coil, a folding sensor boom, an exposed cockpit blister, light stencil livery. Nimble, disposable. |
+| 2 | `ship-corvette` | CORVETTE (Range-2 "Picket"): light frontier escort and route scout. A lean arrowhead hull with a dorsal spine, twin drives behind a slightly larger twin-coil warp ring, one dorsal gun turret, a reinforced prow for ramming privateers. |
+| 3 | `ship-frigate` | FRIGATE (Range-3 "Clipper"): the dependable frontier workhorse and first true deep-range hull. A boxy modular mid-section with swappable pods, a prominent triple-ring warp coil, a couple of gun mounts and a comms mast. A freighter's honest bones given teeth. |
+| 4 | `ship-destroyer` | DESTROYER (Range-4 "Linebreaker"): heavy combat and logistics, the gateway to capital hulls. An armored slab prow, a broadside of gun batteries, quad drives behind a heavy stacked warp-coil array. Brutal, blunt — the biggest hull a mid-tier charter can field. |
+| 5 | `ship-cruiser` | CRUISER (Range-5 capital): the first true capital warship and an enormous alloy investment. A long slab-armored hull with belt armor, hangar bays, multiple gun batteries and TWIN large warp arrays at the stern. A mobile corporate fortress. |
+| 6 | `ship-battlecruiser` | BATTLECRUISER (Range-6 "Raider-of-the-line"): a fast capital — cruiser firepower on a longer, leaner hull with oversized drives and a long twin-array warp section, built to run down convoys across whole clusters and shatter blockades. |
+| 7 | `ship-battleship` | BATTLESHIP (Range-7 "Broadside"): an apex line warship. A massive armored hull with tiered gun decks, a forest of turrets, sponsons and sensor towers, and a huge multi-ring warp array. Slow, ruinous, unmistakable. |
+| 8 | `ship-dreadnought` | DREADNOUGHT (Range-8 "Charter-killer"): the apex war-monster only the richest charters field. A continent of layered armor, gun batteries at every angle, command towers, and several towering warp arrays. The single largest, heaviest hull in the lineup. |
+| 9 | `ship-raider` | RAIDER / CORSAIR (deniable privateer): a blacked-out, scrubbed-registry attack ship with NO charter livery and NO stencil numbers — deliberately anonymous so no one can prove who sent it. A jury-rigged predatory frame with asymmetric bolted-on weapons and a darkened matte hull. Menacing, disreputable. |
+| 10 | `ship-survey` | SURVEYOR / ASSAY SKIFF (unarmed scout): a fragile civilian white-and-orange survey vessel that is all sensors — folding dish arrays, antenna booms, a deployable scanning rig, a tiny pressurized hab, a modest single drive. No weapons whatsoever. The charter's eyes on the frontier. |
+| 11 | `ship-cargo` | FREIGHTER / HAULER (**16:9**, lane-bound bulk carrier): a long structural spine strung with stacked modular cargo containers in mismatched livery, oversized fuel tanks and radiators, a small crew block up front. Big, slow, soft — the prize raiders hunt. |
+| 12 | `ship-convoy` | CONVOY GROUP (**16:9**, fleet in transit): a laden Hauler flanked by a single escort warship, running together down a glowing warp tunnel, a sense of motion, cargo and vulnerability; the faint warp-tunnel glow is the only permitted background element. |
+
+> Retired by this rehaul: the old bucketed `ship-escort` / `ship-clipper` / `ship-fleet` assets — delete
+> those PNGs once the per-hull art above is in place.
 
 ## Optional slots (currently procedural — commission if desired)
 

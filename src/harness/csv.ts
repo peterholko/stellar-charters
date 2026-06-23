@@ -25,6 +25,8 @@ export function writePerTurnCsv(path: string, games: GameMetrics[]): void {
     "convoysRaided",
     "cargoValueShipped",
     "cargoValueLost",
+    "largestSingleRaidLoss",
+    "escortOrders",
     "ordersTotal",
     "taxLevied",
     "acquisitions",
@@ -43,6 +45,8 @@ export function writePerTurnCsv(path: string, games: GameMetrics[]): void {
         s.convoysRaided,
         Math.round(s.cargoValueShipped),
         Math.round(s.cargoValueLost),
+        Math.round(s.largestSingleRaidLoss),
+        s.escortOrders,
         ordersTotal,
         s.taxLevied,
         s.acquisitions,
@@ -71,6 +75,7 @@ export function writePerGameCsv(path: string, games: GameMetrics[]): void {
     "distressLiquidations",
     "finalFreeOperators",
     "depotsBuilt",
+    "disruptorsBuilt",
   ];
   const rows: (string | number)[][] = [header];
   for (const g of games) {
@@ -91,6 +96,7 @@ export function writePerGameCsv(path: string, games: GameMetrics[]): void {
       g.distressLiquidations,
       g.finalFreeOperators,
       g.depotsBuilt,
+      g.disruptorsBuilt,
     ]);
   }
   writeFileSync(path, toCsv(rows));

@@ -12,6 +12,7 @@ import {
   Galaxy,
   Market,
   RESOURCES,
+  emptyStockpile,
   Rng,
   loadScenario,
   type ClientState,
@@ -74,18 +75,16 @@ export function reconstructView(state: ClientState): PlayerView {
     for (const [key, b] of Object.entries(cs.bodyBuildings)) {
       sys.bodyBuildings[key] = { ...b, processors: { ...b.processors } };
     }
-    sys.buildQueues = {};
-    for (const [key, items] of Object.entries(cs.buildQueues)) {
-      sys.buildQueues[key] = items.map((it) => ({ ...it }));
-    }
-    sys.colonyPop = {};
-    for (const [key, p] of Object.entries(cs.colonyPop)) sys.colonyPop[key] = { ...p };
+    sys.queue = cs.queue.map((it) => ({ ...it }));
     sys.platforms = cs.platforms;
     sys.megastructures = [...cs.megastructures];
     sys.hasDepot = cs.hasDepot;
+    sys.hasDisruptor = cs.hasDisruptor;
     sys.populationProgress = cs.populationProgress ?? 0;
     sys.unrest = cs.unrest ?? 0;
     if (cs.stockpile) sys.stockpile = cs.stockpile;
+    // Owner-only production visibility (design rule #2): brown-out factor + limiting inputs.
+    if (cs.production) sys.production = cs.production;
     // Overlay the server's (fogged) extraction sites + star (Section 21). The rebuilt galaxy
     // has no deposits of its own (bodies aren't shipped), so these are the source of truth.
     if (cs.starType || cs.planets.length) {
@@ -125,8 +124,12 @@ export function reconstructView(state: ClientState): PlayerView {
   const corporations: Corporation[] = state.corps.map((c) => ({
     id: c.id,
     name: c.name,
+    charter: c.charter,
     credits: c.credits ?? 0,
     debt: c.debt ?? 0,
+    // Self-only under fog of war (rivals' hoards are hidden) — zeros for rivals.
+    hubStockpile: c.hubStockpile ?? emptyStockpile(),
+    warehouseLevel: c.warehouseLevel ?? 0,
     ownedSystemIds: c.ownedSystemIds,
     ships: c.ships ?? [],
     privateers: c.privateers ?? [],
@@ -134,9 +137,13 @@ export function reconstructView(state: ClientState): PlayerView {
     research: c.research ?? { completed: [], queue: [], invested: {}, banked: 0 },
     rangeTier: c.rangeTier,
     valuation: c.valuation,
+    valuationParts: c.valuationParts,
     sharePrice: c.sharePrice,
     sharesOutstanding: c.sharesOutstanding,
     shareRegister: c.shareRegister,
+    npcHolders: c.npcHolders,
+    sentiment: c.sentiment,
+    sentimentParts: c.sentimentParts,
     founderId: c.founderId,
     recentEarnings: c.recentEarnings ?? [],
     isFreeOperator: c.isFreeOperator,
@@ -151,7 +158,9 @@ export function reconstructView(state: ClientState): PlayerView {
     id: c.id,
     owner: c.owner,
     kind: c.kind,
-    resource: c.resource,
+    // Rivals' cargo is redacted to null upstream (fog of war). The UI labels convoys by ship
+    // name and only reads `resource` for convoys you own, so this placeholder is never shown.
+    resource: c.resource ?? "ice",
     quantity: c.quantity,
     path: c.path,
     routeIds: c.routeIds,

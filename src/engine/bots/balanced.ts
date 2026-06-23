@@ -28,6 +28,7 @@ import {
   maybeSurvey,
   maybeUpgradeInfrastructure,
   planRaid,
+  maintainMaterialReserves,
   sellSurplus,
   valueSystem,
   type BotState,
@@ -45,6 +46,7 @@ export class BalancedBot implements Bot {
     if (view.me.isFreeOperator) return freeOperatorOrders(view, this.state);
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
+    orders.push(...maintainMaterialReserves(view)); // no auto-buy: stock build materials up front
     orders.push(...maybeBuildExtractor(view));
     orders.push(...maybeResearch(view, RESEARCH_PLANS.balanced));
     orders.push(...maybeExpand(view));

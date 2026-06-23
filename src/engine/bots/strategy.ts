@@ -5,7 +5,7 @@
  * exercise trade, expansion, and raiding so the economy can be measured. No ML.
  */
 import { MAX_RANGE_TIER, MEGASTRUCTURE_KINDS, RESOURCES, type MegastructureKind, type MarketOrder, type Order, type RangeTier, type Resource, type System } from "../types.js";
-import { EXTRACTOR_CAP, effectiveYields, potentialYields, systemBuildings, buildingTotal, coloniesOf, canBuildOnBody, agriFoodMult, factoryCostMult, type BuildingKind } from "../bodies.js";
+import { EXTRACTOR_CAP, bestBodyFor, effectiveYields, potentialYields, systemBuildings, buildingTotal, type BuildingKind } from "../bodies.js";
 import { computeOutcome, type VictoryPath } from "../standings.js";
 import { SECRET_TECH_IDS, canResearch, techById, RESEARCH_TREE } from "../research.js";
 import type { PlayerView } from "./bot.js";
@@ -31,24 +31,14 @@ const RAW_RESOURCES: ReadonlySet<Resource> = new Set<Resource>([
 /** Cap on Processor modules of a given recipe per system (bot self-restraint). */
 const PROCESSOR_CAP_PER_RECIPE = 3;
 
-/** Pick the best body in a system to host a building of `kind` (Section 24 type affinities):
- *  agri-domes go to the richest farmland (ocean), factories to the cheapest industrial world
- *  (rocky/lava/belt). Returns null when no body can host it (e.g. agri on a giant-only system). */
-function pickBuildBody(sys: System, kind: BuildingKind): string | null {
-  const cands = coloniesOf(sys).filter((c) => canBuildOnBody(kind, c.bodyType));
-  if (cands.length === 0) return null;
-  if (kind === "agridome") cands.sort((a, b) => agriFoodMult(b.bodyType) - agriFoodMult(a.bodyType));
-  else if (kind === "factory") cands.sort((a, b) => factoryCostMult(a.bodyType) - factoryCostMult(b.bodyType));
-  return cands[0]!.key;
-}
+/** Pick the best body to host a building of `kind` — shared with the engine's own affinity
+ *  default (`bestBodyFor`), so the bot and the player's auto-placement agree (Section 10). */
+const pickBuildBody = bestBodyFor;
 
-/** True if a build of `kind` is already in any of the system's queues (Section 24, Phase 4a) — used
- *  so bots don't re-pay for a building that's still under construction. */
+/** True if a build of `kind` is already in the system's queue (review Section 10: one queue per
+ *  system) — used so bots don't re-pay for a building that's still under construction. */
 function alreadyQueued(sys: System, kinds: BuildingKind[]): boolean {
-  for (const q of Object.values(sys.buildQueues ?? {})) {
-    for (const item of q) if (kinds.includes(item.kind)) return true;
-  }
-  return false;
+  return (sys.queue ?? []).some((item) => item.kind !== "extractor" && kinds.includes(item.kind));
 }
 
 /** Rough commercial value of a system: full-development yield priced at base, minus claim cost.
@@ -160,6 +150,30 @@ export function sellSurplus(view: PlayerView, buffer = 0): MarketOrder[] {
       });
     }
   }
+  return orders;
+}
+
+/**
+ * With auto-procurement removed (playtest decision), construction materials must be ON HAND
+ * before a build resolves. Keep a working float of the manufactured inputs the corp can't yet
+ * make itself — imported deliberately, on the books, like any other shipment. sellSurplus's
+ * reserves (alloys ×4 bills, components 6) sit above these floats, so buy/sell never churns.
+ */
+export function maintainMaterialReserves(view: PlayerView): MarketOrder[] {
+  const me = view.me;
+  if (me.ownedSystemIds.length === 0) return [];
+  const t = view.config.tuning;
+  const homeId = me.ownedSystemIds[0]!;
+  const stock = (r: Resource) => me.ownedSystemIds.reduce((s, id) => s + view.galaxy.system(id).stockpile[r], 0);
+  const orders: MarketOrder[] = [];
+  const buy = (r: Resource, want: number) => {
+    const short = Math.ceil(want - stock(r));
+    if (short <= 0) return;
+    if (me.credits < short * view.market.prices[r] * 1.2 + 400) return; // keep an operating cushion
+    orders.push({ kind: "market", side: "buy", resource: r, quantity: short, limitPrice: 1e9, systemId: homeId, strict: false });
+  };
+  buy("alloys", t.buildAlloyCost * 3); // a few builds' worth — extractors, platforms, a depot
+  if (view.turn >= 6) buy("components", t.depotComponentCost);
   return orders;
 }
 
@@ -783,11 +797,16 @@ export function financierOrders(
   if (remaining <= 0) return [];
 
   const orders: Order[] = [];
-  const cost = remaining * price;
+  // Control requires buying out the management block WHOLE (Section 17), so order the
+  // entire register — fills clamp to what's available and affordable. A full takeover
+  // runs ~2.2× the target's market cap (quad-priced float + the 2.5× buyout).
+  const cost = Math.max(remaining * price, target.valuation * 2.2);
   if (cost > view.me.credits && view.me.valuation > 0) {
     orders.push({ kind: "borrow", amount: Math.ceil(cost - view.me.credits) });
   }
-  orders.push({ kind: "buyShares", targetId: target.id, shares: remaining });
+  // Limit at 8× book clears the 2.5× buyout and the quad-priced float even at high
+  // sentiment — cheapest when the target is depressed, which is when financiers strike.
+  orders.push({ kind: "buyShares", targetId: target.id, shares: target.sharesOutstanding, limitPrice: price * 8 });
   return orders;
 }
 
@@ -817,7 +836,7 @@ export function freeOperatorOrders(view: PlayerView, state: BotState): Order[] {
       goal - held,
       Math.floor((view.me.credits * 0.6) / Math.max(0.01, target.sharePrice)),
     );
-    if (want > 0) orders.push({ kind: "buyShares", targetId: target.id, shares: want });
+    if (want > 0) orders.push({ kind: "buyShares", targetId: target.id, shares: want, limitPrice: target.sharePrice * 8 });
   }
   return orders;
 }
@@ -871,7 +890,7 @@ export function maybeResearch(view: PlayerView, plan: string[] | undefined): Ord
   // Keep up to one lab per owned system; build when cash allows and none is already in flight.
   const owned = me.ownedSystemIds.map((id) => view.galaxy.system(id));
   const labs = owned.reduce((n, s) => n + buildingTotal(s, "labs"), 0);
-  const labQueued = owned.some((s) => Object.values(s.buildQueues ?? {}).some((q) => q.some((it) => it.kind === "lab")));
+  const labQueued = owned.some((s) => (s.queue ?? []).some((it) => it.kind === "lab"));
   if (labs < me.ownedSystemIds.length && !labQueued && me.credits > view.config.tuning.labCost * 4) {
     const sys = owned[0]!;
     const body = pickBuildBody(sys, "lab");

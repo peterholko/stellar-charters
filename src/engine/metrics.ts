@@ -20,6 +20,11 @@ export interface TurnSnapshot {
   convoysRaided: number;
   cargoValueShipped: number;
   cargoValueLost: number;
+  /** Value of the single biggest raid hit this turn (review Section 11: tune for tales — the
+   *  fat tail of memorable catastrophes matters, not just the mean). */
+  largestSingleRaidLoss: number;
+  /** Escort orders placed this turn — a defender-behaviour-elasticity proxy vs raid pressure. */
+  escortOrders: number;
   raidOutcomes: Record<RaidOutcome, number>;
   /** Convoys per route this turn, keyed by route id (chokepoint metric). */
   routeTraffic: Record<string, number>;
@@ -51,6 +56,7 @@ export interface GameMetrics {
   depotsBuilt: number;
   shipsBuilt: number;
   platformsBuilt: number;
+  disruptorsBuilt: number;
   finalStageCounts: Record<PopulationStage, number>;
 }
 

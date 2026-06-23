@@ -25,6 +25,7 @@ import {
   RESEARCH_PLANS,
   maybeSurvey,
   maybeUpgradeInfrastructure,
+  maintainMaterialReserves,
   sellSurplus,
   valueSystem,
   type BotState,
@@ -42,6 +43,7 @@ export class MinerBot implements Bot {
     if (view.me.isFreeOperator) return freeOperatorOrders(view, this.state);
     const orders: Order[] = [];
     orders.push(...sellSurplus(view));
+    orders.push(...maintainMaterialReserves(view)); // no auto-buy: stock build materials up front
     // Develop deposits first (Section 21): an undeveloped claim produces nothing.
     orders.push(...maybeBuildExtractor(view));
     orders.push(...maybeResearch(view, RESEARCH_PLANS.miner));
