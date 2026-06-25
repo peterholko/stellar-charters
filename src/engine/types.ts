@@ -448,6 +448,12 @@ export interface Convoy {
   escort: number;
   /** Estimated cargo value, used by raiders to prioritise targets. */
   value: number;
+  /** Folklore name (Turn-1 opening): set for the maiden voyage and standing-route convoys. */
+  name?: string;
+  /** True for a charter's named first export (Section 05 opening). */
+  firstExportForPlayer?: boolean;
+  /** Stable id of the named diplomatic incident if this convoy was destroyed in a raid. */
+  incidentId?: string;
 }
 
 /**
@@ -455,12 +461,17 @@ export interface Convoy {
  * "Last turn movements" replay. `from`→`to` are the segment endpoints it crossed; `offLane` marks
  * a direct laneless hop so the client can draw it as a straight dashed line rather than along a lane.
  */
+/** Semantic ship-icon category for the map (the web maps each to a `fleeticon-*` asset). */
+export type FleetIcon = "trader" | "freighter" | "escort" | "frigate" | "cruiser" | "capital" | "raider" | "survey";
+
 export interface ClientMovement {
   kind: "convoy" | "fleet";
   owner: string;
   fromSystemId: string;
   toSystemId: string;
   offLane: boolean;
+  /** Exact ship-icon for the "Show moves" replay (trader/freighter by value; warship-by-tier/raider/survey). */
+  icon?: FleetIcon;
 }
 
 /**
@@ -648,6 +659,9 @@ export interface Corporation {
   /** Accumulated grievance per rival (Section 23) from being raided/sabotaged/invaded — biases
    *  this corp toward retaliating against those who wronged it. Decays over time. */
   grudges: Record<string, number>;
+  /** Player-owned standing trade routes (export automation). Engine state, rebuilt from the order
+   *  log each replay; never serialized. Empty for AI seats. */
+  standingRoutes: StandingTradeRoute[];
 }
 
 // ----- Orders (discriminated union) -----
@@ -923,6 +937,76 @@ export interface BorrowOrder {
   amount: number;
 }
 
+/** Opening-turn (Section 05) instant Authority probe: full private intel on a nearby unowned
+ *  system, no vessel travel. Two free per charter, only in the opening_commands window. */
+export interface OpeningSurveyOrder {
+  kind: "openingSurvey";
+  targetSystemId: string;
+}
+
+/** Opening-turn optional maiden voyage: a named sell convoy from the home's startup stockpile to
+ *  the Wormhole Hub. Origin = the corp's home; destination = the hub. */
+export interface FirstExportOrder {
+  kind: "firstExport";
+  resource: Resource;
+  quantity: number;
+}
+
+/** Player-owned export automation (the "keep convoys flowing without chores" engine). While
+ *  `enabled`, the engine auto-launches at most one sell convoy per route per turn (origin → hub)
+ *  when the origin stockpile of `resource` is at least `reserve + batch`. Rebuilt from the order
+ *  log each replay; never serialized. */
+export interface StandingTradeRoute {
+  id: string;
+  originSystemId: string;
+  resource: Resource;
+  batch: number;
+  reserve: number;
+  enabled: boolean;
+}
+export interface CreateStandingRouteOrder {
+  kind: "createStandingRoute";
+  originSystemId: string;
+  resource: Resource;
+  batch: number;
+  reserve: number;
+  enabled?: boolean;
+}
+export interface SetStandingRouteEnabledOrder {
+  kind: "setStandingRouteEnabled";
+  routeId: string;
+  enabled: boolean;
+}
+export interface RemoveStandingRouteOrder {
+  kind: "removeStandingRoute";
+  routeId: string;
+}
+
+/** A public map marker (Section 04). `survey_ping`: a charter ran an Authority probe here (attributed,
+ *  intel stays private). `auction_interest`: this system drew N bids in the opening auction (aggregate). */
+export interface PublicMarker {
+  kind: "survey_ping" | "auction_interest";
+  systemId: string;
+  turn: number;
+  corpId?: string;
+  count?: number;
+}
+
+/** The three exclusive logistics-focus modes (Phase D). */
+export type LogisticsFocus = "escortNext" | "expediteBuild" | "surveyPush";
+
+/**
+ * A single standing "logistics focus" decision per turn (Phase D). It draws on one renewable
+ * per-turn token — exactly one focus applies, it never stacks, and it cannot be queued ahead: a
+ * focus chosen this turn is spent this turn or lost. The chosen mode applies as a pure one-turn
+ * modifier at its resolution step (escort strength on this turn's outbound convoys, one extra turn
+ * of construction, or one accelerated survey leg).
+ */
+export interface LogisticsFocusOrder {
+  kind: "logisticsFocus";
+  focus: LogisticsFocus;
+}
+
 export type Order =
   | BidOrder
   | MarketOrder
@@ -958,4 +1042,10 @@ export type Order =
   | AllianceBreakOrder
   | BuySharesOrder
   | SellSharesOrder
+  | LogisticsFocusOrder
+  | OpeningSurveyOrder
+  | FirstExportOrder
+  | CreateStandingRouteOrder
+  | SetStandingRouteEnabledOrder
+  | RemoveStandingRouteOrder
   | BorrowOrder;

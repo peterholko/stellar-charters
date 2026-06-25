@@ -301,3 +301,35 @@ export function convoyName(id: string): string {
   const name = SHIP_NAMES[(h >>> 8) % SHIP_NAMES.length]!;
   return `${prefix} ${name}`;
 }
+
+/**
+ * Folklore names for the other map actors (Section 04 "name things, folklore is a feature").
+ * Like convoyName these are UI-only, deterministic derivations from a stable id — the engine
+ * never stores them — so the same lane / privateer band always reads the same name. Returned
+ * without a leading article so callers can write "the {name}" in prose or use it bare as a title.
+ */
+const LANE_WORDS = [
+  "Tin Crown", "Marrowind", "Blackreef", "Pale Harbor", "Glass Orchard", "Ashfall",
+  "Cinderwake", "Sable", "Iron Vow", "Saltspire", "Gloaming", "Duskward",
+  "Lowmoor", "Thorngate", "Wraithmoor", "Coldwater", "Starveling", "Far Tortuga",
+  "Nightjar", "Sorrowmile", "Hollow Verge", "Ember Drift", "Greywater", "Lanternfall",
+];
+const LANE_SUFFIX = ["Lane", "Reach", "Run", "Passage", "Corridor", "Crossing", "Span", "Channel", "Gate", "Approach"];
+const BAND_NOUNS = ["Corsairs", "Freebooters", "Reavers", "Wolves", "Jackals", "Wraiths", "Marauders", "Buccaneers", "Rooks", "Kestrels", "Vultures", "Cutthroats"];
+
+/** A stable folklore name for a warp lane ("Tin Crown Lane"), derived from its route id. */
+export function laneName(routeId: string): string {
+  const h = hashId(routeId);
+  const word = LANE_WORDS[h % LANE_WORDS.length]!;
+  const suffix = LANE_SUFFIX[(h >>> 8) % LANE_SUFFIX.length]!;
+  return `${word} ${suffix}`;
+}
+
+/** A stable folklore name for a privateer band ("Ashfall Reavers"), derived from a stable key
+ *  (e.g. the system it operates out of) so a band keeps its name across turns. */
+export function privateerBandName(seedKey: string): string {
+  const h = hashId(seedKey);
+  const word = LANE_WORDS[(h >>> 4) % LANE_WORDS.length]!;
+  const noun = BAND_NOUNS[(h >>> 12) % BAND_NOUNS.length]!;
+  return `${word} ${noun}`;
+}

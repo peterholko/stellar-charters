@@ -14,11 +14,13 @@ export class HybridBot implements Bot {
   readonly id = "hybrid";
   /** Human orders for the current turn, or null to defer to the fallback AI. */
   pendingOrders: Order[] | null = null;
+  /** Human's sealed opening-auction bid (Section 05), or null to defer to the fallback AI bid. */
+  pendingBid: BidOrder | null = null;
 
   constructor(private readonly fallback: Bot) {}
 
   bid(view: PlayerView): BidOrder {
-    return this.fallback.bid(view);
+    return this.pendingBid ?? this.fallback.bid(view);
   }
 
   decide(view: PlayerView): Order[] {

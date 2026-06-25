@@ -30,6 +30,44 @@ const PROFILES: Profile[] = [
   { tag: "Mixed", yields: { ice: 4, metals: 3, silicates: 3, helium3: 2 }, claimCost: 1400, upkeep: 45 },
 ];
 
+/**
+ * Phase A — contested opening (resource overlap). Instead of an even round-robin over PROFILES,
+ * the inner ring is seeded from a WEIGHTED distribution that over-represents Metals and Silicates,
+ * so roughly 60% of inner systems share one of those two raws. That deliberately gluts those
+ * markets when corps sell naively, and makes the scarcer raws (ice/helium/food) the firmer-priced
+ * contrarian play — two viable openings rather than one strictly-correct system.
+ *
+ * Weights are relative; tune here to re-balance the concentration. Metal+Silica = 6 of 10 ≈ 60%.
+ */
+const clusterWeights: Record<Profile["tag"], number> = {
+  Metal: 3,
+  Silica: 3,
+  Ice: 1,
+  Helium: 1,
+  Garden: 1,
+  Mixed: 1,
+};
+
+/**
+ * Deterministically lay out `length` inner systems from PROFILES, weighted by `clusterWeights` and
+ * INTERLEAVED (a Bresenham-style accumulator) so heavy raws spread evenly around the ring rather
+ * than forming one solid block — keeping ring adjacency varied and avoiding a degenerate cluster.
+ */
+function clusterSequence(length: number): Profile[] {
+  const entries = PROFILES.map((p) => ({ p, w: clusterWeights[p.tag] ?? 1, acc: 0 }));
+  const totalW = entries.reduce((s, e) => s + e.w, 0);
+  const seq: Profile[] = [];
+  for (let i = 0; i < length; i++) {
+    for (const e of entries) e.acc += e.w;
+    // Tie-break by PROFILES order (entries[0] wins) — deterministic, committed-output stable.
+    let best = entries[0]!;
+    for (const e of entries) if (e.acc > best.acc) best = e;
+    best.acc -= totalW;
+    seq.push(best.p);
+  }
+  return seq;
+}
+
 const NAMES = [
   "Frosthaven", "Vesta Minor", "Pale Harbor", "Caldera", "Greywake", "Deepwell",
   "Tycho Reach", "Cinder", "Halcyon", "Brightfall", "Karst", "Meridian",
@@ -58,9 +96,10 @@ function buildScenario(
     innerRing: false,
   });
 
-  // Inner ring.
+  // Inner ring — weighted toward Metals/Silicates so the opening is contested (Phase A).
+  const innerProfiles = clusterSequence(innerCount);
   for (let i = 0; i < innerCount; i++) {
-    const profile = PROFILES[i % PROFILES.length]!;
+    const profile = innerProfiles[i]!;
     const id = `s${i}`;
     systems.push({
       id,

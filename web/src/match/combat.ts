@@ -30,6 +30,7 @@ export const raidOutcomeLabel: Record<RaidOutcome, string> = {
   harassed: "harassed — delayed a turn",
   damaged: "damaged",
   plundered: "plundered",
+  destroyed: "DESTROYED",
   repelled: "repelled",
   ambushed: "ambushed",
 };

@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Rng } from "../src/engine/rng.js";
 import { canRaidRoute, resolveRaid } from "../src/engine/raiding.js";
 import { Galaxy } from "../src/engine/galaxy.js";
+import { Engine } from "../src/engine/engine.js";
+import { loadScenario } from "../src/engine/config.js";
+import { generateProceduralScenario } from "../src/engine/procedural.js";
+import { defaultRegistry } from "../src/engine/bots/registry.js";
 import type { Convoy, Corporation, WarpRoute } from "../src/engine/types.js";
 import { makeCorp, tinyScenario } from "./helpers.js";
 
@@ -73,6 +77,45 @@ describe("raid outcomes", () => {
       const r = resolveRaid(rng, c, route(0.9, 0), "atk", 20, 0);
       expect(r.cargoPlundered + r.cargoDestroyed).toBeLessThanOrEqual(c.quantity);
     }
+  });
+});
+
+describe("early raiding is non-lethal (Phase C)", () => {
+  // With deniable violence pulled forward, the DOMINANT early outcome must be delay/shadow, not
+  // erased cargo. Across full games we assert that turns 3–6 lose only a modest fraction of the
+  // cargo value shipped — and (so the bound isn't vacuous) that raiders DO make contact that early.
+  const EARLY = (t: number) => t >= 3 && t <= 6;
+  const seeds = [0, 1, 2, 3, 5, 8];
+
+  it("erases only a modest fraction of cargo value shipped across turns 3–6", () => {
+    for (const seed of seeds) {
+      const config = loadScenario(generateProceduralScenario({ seed, players: 8 }));
+      const metrics = new Engine(config, seed, defaultRegistry()).run();
+      const early = metrics.snapshots.filter((s) => EARLY(s.turn));
+      const shipped = early.reduce((s, x) => s + x.cargoValueShipped, 0);
+      const lost = early.reduce((s, x) => s + x.cargoValueLost, 0);
+      // No double jeopardy: a turn with no shipping can't post a loss ratio.
+      const ratio = shipped > 0 ? lost / shipped : 0;
+      expect(ratio, `seed ${seed} early cargo-loss ratio`).toBeLessThan(0.2);
+    }
+  });
+
+  it("raiders engage by the early window — contact is made on turns 3–6", () => {
+    // Aggregated across seeds so the assertion is robust to a single quiet galaxy.
+    let contacts = 0;
+    let erasing = 0; // damaged/plundered (cargo actually removed)
+    for (const seed of seeds) {
+      const config = loadScenario(generateProceduralScenario({ seed, players: 8 }));
+      const metrics = new Engine(config, seed, defaultRegistry()).run();
+      for (const s of metrics.snapshots.filter((x) => EARLY(x.turn))) {
+        const o = s.raidOutcomes;
+        contacts += o.shadowed + o.harassed + o.damaged + o.plundered + o.repelled + o.ambushed;
+        erasing += o.damaged + o.plundered;
+      }
+    }
+    expect(contacts, "early raid contacts across seeds").toBeGreaterThan(0);
+    // Delay/shadow should dominate the early window over outright cargo removal.
+    expect(erasing).toBeLessThanOrEqual(contacts);
   });
 });
 

@@ -10,10 +10,11 @@ import { store, useApp } from "../match/store";
 import type { AppState } from "../match/store";
 import {
   Engine, RESOURCES, loadScenario, generateProceduralScenario, buildClientState, defaultRegistry, canHostPopulation, coloniesOf,
-  type PlayerView, type ColonyInfo, type System, type GameOutcome, type TurnReport,
+  type PlayerView, type ColonyInfo, type System, type GameOutcome, type TurnReport, type Order, type Resource,
 } from "@engine";
 import { reconstructView } from "../match/clientView";
 import { Combat } from "../screens/Combat";
+import { Dashboard } from "../screens/Dashboard";
 import { Exchange } from "../screens/Exchange";
 import { GalaxyMap } from "../screens/GalaxyMap";
 import { Finance } from "../screens/Finance";
@@ -26,7 +27,7 @@ import { Inspector } from "../components/Inspector";
 import { SystemSummaryCard } from "../components/SystemSummaryCard";
 
 /** Boot a deterministic game and advance it so there are labs, research, and developed colonies. */
-function boot(): { view: PlayerView; claimedSecrets: Record<string, string>; outcome: GameOutcome; reports: TurnReport[] } | null {
+function boot(): { view: PlayerView; claimedSecrets: Record<string, string>; outcome: GameOutcome; reports: TurnReport[]; marketPressure: AppState["marketPressure"] } | null {
   try {
     const eng = new Engine(loadScenario(generateProceduralScenario({ seed: 3, players: 8 })), 3, defaultRegistry());
     // Collect per-turn reports exactly like the worker does — the Report/Combat screens read them.
@@ -34,9 +35,19 @@ function boot(): { view: PlayerView; claimedSecrets: Record<string, string>; out
     for (let i = 0; i < 26; i++) turnReports.push(eng.stepTurn());
     // Show the seat that has developed the most (richest Research + colony screens).
     const seat = [...eng.corps].sort((a, b) => b.ownedSystemIds.length - a.ownedSystemIds.length)[0]!;
-    const cs = buildClientState(eng, seat.id, "preview", turnReports);
+    // Phase B preview: synthesize a few seats' locked orders so the Exchange ticker shows varied
+    // pressure (a contested metals/silicates glut + some buying) instead of a flat "balanced".
+    const ref = eng.config.tuning.priceReferenceVolume;
+    const mk = (side: "buy" | "sell", resource: Resource, qty: number): Order =>
+      ({ kind: "market", side, resource, quantity: qty, limitPrice: side === "buy" ? 99999 : 0, systemId: "s0", strict: false });
+    const lockedOrders: Order[][] = [
+      [mk("sell", "silicates", ref * 3), mk("sell", "metals", ref * 2)],
+      [mk("sell", "metals", ref), mk("buy", "food", Math.ceil(ref * 0.5))],
+      [mk("buy", "fuel", Math.ceil(ref * 1.2))],
+    ];
+    const cs = buildClientState(eng, seat.id, "preview", turnReports, { lockedOrders });
     const wire = JSON.parse(JSON.stringify(cs)); // mimic the network round-trip
-    return { view: reconstructView(wire), claimedSecrets: wire.claimedSecrets ?? {}, outcome: wire.outcome, reports: wire.reports ?? [] };
+    return { view: reconstructView(wire), claimedSecrets: wire.claimedSecrets ?? {}, outcome: wire.outcome, reports: wire.reports ?? [], marketPressure: wire.marketPressure };
   } catch (e) {
     console.error("[preview] engine boot failed", e);
     return null;
@@ -79,6 +90,7 @@ export function PreviewGallery() {
       status: "ready", phase: "play", turn: BOOT.view.turn, totalTurns: BOOT.view.config.turns,
       humanCorpId: BOOT.view.me.id, view: BOOT.view, outcome: BOOT.outcome,
       claimedSecrets: BOOT.claimedSecrets, staged: [], reports: BOOT.reports,
+      marketPressure: BOOT.marketPressure,
     } as AppState;
   }
 
@@ -139,6 +151,9 @@ export function PreviewGallery() {
           <div style={{ maxWidth: 360 }}>
             <SystemSummaryCard view={BOOT.view} humanCorpId={BOOT.view.me.id} systemId={BOOT.view.me.ownedSystemIds[0]!} />
           </div>
+          <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
+          <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Dashboard screen (real game)</h1>
+          <Dashboard />
           <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "1.4rem 0" }} />
           <h1 style={{ fontSize: "1.2rem", color: "var(--accent)" }}>Exchange screen (real game)</h1>
           <Exchange />

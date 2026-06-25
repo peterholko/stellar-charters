@@ -5,6 +5,7 @@ import {
   convoyName,
   corpColor,
   formatCr,
+  laneName,
   megastructureLabel,
   megastructureShort,
   planetTypeLabel,
@@ -53,9 +54,10 @@ export function Inspector({
         <PanelTitle
           icon="radar"
           eyebrow="Warp Lane"
-          title={`${a.name} ↔ ${b.name}`}
+          title={laneName(route.id)}
           right={!route.charted ? <ArtSlot slot="action-survey" className="cue-art" /> : (risk.level === "severe" || risk.level === "high") ? <ArtSlot slot="status-raid-risk" className="cue-art" /> : undefined}
         />
+        <p className="inspector__arch">{a.name} ↔ {b.name}</p>
         <dl className="kv">
           <div><dt>Transit</dt><dd>{route.transitTime} turn{route.transitTime > 1 ? "s" : ""}</dd></div>
           <div><dt>Stability</dt><dd>{Math.round(route.stability * 100)}%</dd></div>

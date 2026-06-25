@@ -76,7 +76,7 @@ export {
   type ResearchDivision,
   type ResearchMods,
 } from "./research.js";
-export { Market, quoteInstant, type ClearableOrder, type InstantQuote, type MarketFill } from "./market.js";
+export { Market, quoteInstant, projectClearingPrices, type ClearableOrder, type InstantQuote, type MarketFill } from "./market.js";
 export { resolveAuction, type AuctionResult } from "./auction.js";
 export {
   canRaidRoute,
@@ -91,6 +91,7 @@ export { computeOutcome, type GameOutcome, type Standing, type VictoryPath } fro
 export { HumanBot } from "./bots/human.js";
 export {
   buildClientState,
+  marketPressureFrom,
   gamePhase,
   type ClientState,
   type ClientSystem,
@@ -101,6 +102,12 @@ export {
   type ClientContact,
   type ClientPlayer,
   type GamePhase,
+  type MarketPressureDirection,
+  type MarketPressureCell,
+  type BuildClientStateOptions,
+  type OpeningCommandState,
+  type ClientStandingRoute,
+  type StandingRouteSuggestion,
 } from "./clientState.js";
 export {
   gini,

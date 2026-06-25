@@ -33,6 +33,7 @@ export function makeCorp(over: Partial<Corporation> = {}): Corporation {
     hasCharter: false,
     alliancePledges: [],
     grudges: {},
+    standingRoutes: [],
     ...over,
   };
 }

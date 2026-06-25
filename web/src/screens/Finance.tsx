@@ -106,6 +106,47 @@ function TradeTicket({ view, corpId, side, onClose }: { view: PlayerView; corpId
   );
 }
 
+/**
+ * Sentiment decomposition (Section 17): the engine already computes why market mood moved this
+ * turn — `sentimentParts` {events, reversion, jitter} — but it was never surfaced. Rendering it
+ * here ties takeover exposure back to its visible causes: sentiment discounts the *traded* share
+ * price (never book valuation), so a low read is what makes a charter cheap to accumulate.
+ */
+function SentimentReadout({ sentiment, parts }: {
+  sentiment: number;
+  parts?: { events: number; reversion: number; jitter: number };
+}) {
+  const tone = sentiment > 1.02 ? "positive" : sentiment < 0.98 ? "negative" : "neutral";
+  const signed = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}`;
+  const partTone = (n: number) => (n > 0.001 ? "positive" : n < -0.001 ? "negative" : "neutral");
+  const rows = parts
+    ? [
+        { label: "Shown events", value: parts.events, hint: "Raids on your convoys, wars declared on you, lost invasions and near-distress drive this down; strong earnings nudge it up — every move traces to an event in the Report." },
+        { label: "Reversion", value: parts.reversion, hint: "Market mood drifts back toward neutral (×1.00) each turn." },
+        { label: "Drift", value: parts.jitter, hint: "Routine market noise." },
+      ]
+    : [];
+  return (
+    <div className="sentiment-readout" style={{ marginTop: "0.75rem" }}>
+      <div className="borrow__head">
+        <span>Market sentiment</span>
+        <Badge tone={tone}>×{sentiment.toFixed(2)}</Badge>
+      </div>
+      <p className="hint">Discounts your traded share price (not book valuation) — a low read widens takeover exposure.</p>
+      {rows.length > 0 && (
+        <dl className="kv">
+          {rows.map((r) => (
+            <div key={r.label} title={r.hint}>
+              <dt>{r.label}</dt>
+              <dd><Badge tone={partTone(r.value)}>{signed(r.value)}</Badge></dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 export function Finance() {
   const { view } = useApp();
   if (!view) return null;
@@ -214,6 +255,7 @@ export function Finance() {
               <span>management block {ownBlock}/{me.sharesOutstanding}</span>
               <Bar value={ownBlock} max={me.sharesOutstanding} tone={ownBlock > threshold ? "positive" : "warn"} />
             </div>
+            <SentimentReadout sentiment={me.sentiment} parts={me.sentimentParts} />
           </div>
           <div className="stock-row__buy">
             <button type="button" className="mini-btn" onClick={() => toggleTicket(me.id, "buy")}>

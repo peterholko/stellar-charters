@@ -32,13 +32,16 @@ import {
   type SystemPosition,
   type SystemProduction,
   type ValuationComponent,
+  type Order,
+  type PublicMarker,
 } from "./types.js";
-import { RULESET_VERSION } from "./config.js";
+import { RULESET_VERSION, type Tuning } from "./config.js";
+import { projectClearingPrices, type ClearableOrder } from "./market.js";
 import { canHostPopulation, coloniesOf, systemBuildings } from "./bodies.js";
 import { SECRET_TECH_IDS } from "./research.js";
 import type { GameOutcome } from "./standings.js";
 
-export type GamePhase = "play" | "over";
+export type GamePhase = "auction" | "play" | "over";
 
 /** Deep-copy a per-body building map so the client snapshot never aliases live engine state. */
 function cloneBodyBuildings(bb: Record<string, BodyBuildings>): Record<string, BodyBuildings> {
@@ -124,6 +127,8 @@ export interface ClientSystem {
   stockpile: Stockpile | null;
   /** Owner-only: last turn's brown-out factor + limiting inputs (design rule #2). */
   production: SystemProduction | null;
+  /** Public map markers anchored here (survey pings, auction interest), else undefined. */
+  markers?: PublicMarker[];
 }
 
 export interface ClientRoute {
@@ -200,6 +205,38 @@ export interface ClientConvoy {
   quantity: number;
   escort: number;
   payout: number;
+  /** Folklore name (maiden voyages / standing-route convoys), else undefined. Public flavor. */
+  name?: string;
+  /** True for a charter's named first export (Section 05 opening). Public badge. */
+  firstExportForPlayer?: boolean;
+}
+
+/** Turn-1 opening window (Section 05): the free Authority probes + maiden-voyage affordances. Self-only. */
+export interface OpeningCommandState {
+  homeSystemId: string;
+  surveysRemaining: number;
+  /** Unowned systems within warp range your home may run a free probe against. */
+  eligibleSurveyTargets: string[];
+}
+
+/** A player-owned standing trade route (export automation), self-only. */
+export interface ClientStandingRoute {
+  id: string;
+  originSystemId: string;
+  resource: Resource;
+  batch: number;
+  reserve: number;
+  enabled: boolean;
+  /** True if the origin stockpile currently covers reserve + batch (it will launch next resolution). */
+  readyToLaunch: boolean;
+}
+
+/** A suggested standing route the UI offers for one-click approval. */
+export interface StandingRouteSuggestion {
+  originSystemId: string;
+  resource: Resource;
+  batch: number;
+  reserve: number;
 }
 
 /**
@@ -221,6 +258,63 @@ export interface ClientContact {
   forceEstimate: "light" | "medium" | "heavy";
 }
 
+/**
+ * Fogged market-pressure signal (Phase B — between-turns visibility). For each listed resource we
+ * surface the DIRECTION of the net imbalance across all seats' locked market orders — never raw
+ * quantities, never per-rival data. It lets a player read the glut forming this turn (e.g. "heavy
+ * sell pressure on Silicates") instead of committing blind and waiting for the resolution.
+ */
+export type MarketPressureDirection = "heavySell" | "sell" | "balanced" | "buy" | "heavyBuy";
+
+export interface MarketPressureCell {
+  direction: MarketPressureDirection;
+}
+
+/**
+ * Pure aggregation (no mutation, no RNG): bucket each listed resource's net (demand − supply) across
+ * every seat's locked market orders into one of five bands, normalized by `priceReferenceVolume`.
+ * Unlisted resources can't trade, so they read `balanced`. Identities and quantities are discarded —
+ * only the global direction survives, so this leaks nothing a rival's individual orders would.
+ */
+export function marketPressureFrom(
+  tuning: Tuning,
+  listed: Resource[],
+  lockedOrders: Iterable<Order[]>,
+): Record<Resource, MarketPressureCell> {
+  const listedSet = new Set(listed);
+  const net = {} as Record<Resource, number>;
+  for (const r of RESOURCES) net[r] = 0;
+  for (const orders of lockedOrders) {
+    for (const o of orders) {
+      if (o.kind !== "market" || o.quantity <= 0 || !listedSet.has(o.resource)) continue;
+      net[o.resource] += o.side === "buy" ? o.quantity : -o.quantity;
+    }
+  }
+  const out = {} as Record<Resource, MarketPressureCell>;
+  for (const r of RESOURCES) {
+    out[r] = { direction: bandFor(listedSet.has(r) ? net[r] / tuning.priceReferenceVolume : 0) };
+  }
+  return out;
+}
+
+/** Bucket a normalized net imbalance (net / priceReferenceVolume) into the 5 pressure bands. */
+function bandFor(normalized: number): MarketPressureDirection {
+  if (normalized <= -1) return "heavySell";
+  if (normalized <= -0.25) return "sell";
+  if (normalized < 0.25) return "balanced";
+  if (normalized < 1) return "buy";
+  return "heavyBuy";
+}
+
+/** Options for shaping a client view that depend on data the engine alone doesn't hold (the live
+ *  game's locked orders live in the worker, not the engine). */
+export interface BuildClientStateOptions {
+  /** All seats' locked orders for the upcoming turn — drives the fogged market-pressure signal. */
+  lockedOrders?: Iterable<Order[]>;
+  /** Opt-in (default OFF): include a pure projected clearing price per resource from locked orders. */
+  projectPrices?: boolean;
+}
+
 export interface ClientState {
   gameId: string;
   /** Id of the scenario this game was built from (e.g. "procedural-atlas-v1"). */
@@ -233,6 +327,11 @@ export interface ClientState {
   /** The corporation this client controls (its perspective for fog of war). */
   humanCorpId: string;
   prices: Record<Resource, number>;
+  /** Fogged net market-pressure direction per resource (Phase B) — see `marketPressureFrom`. */
+  marketPressure: Record<Resource, MarketPressureCell>;
+  /** Opt-in pure projected clearing price per resource (Phase B, default OFF) — undefined unless
+   *  the caller requested the preview. Read-only: never perturbs the authoritative prices. */
+  projectedPrices?: Record<Resource, number>;
   /** Goods currently tradable on the Exchange (commodity staging, review Section 13). */
   listedResources: Resource[];
   systems: ClientSystem[];
@@ -266,11 +365,20 @@ export interface ClientState {
   totalSeats: number;
   /** How many human seats have submitted for the upcoming turn. */
   submittedCount: number;
+  /** Turn-1 opening window (Section 05): present only during the opening; drives the opening panel. Self-only. */
+  openingState?: OpeningCommandState;
+  /** Your standing trade routes (export automation). Self-only. */
+  standingRoutes?: ClientStandingRoute[];
+  /** A suggested standing route the UI offers for one-click approval. Self-only. */
+  standingRouteSuggestion?: StandingRouteSuggestion;
 }
 
 export function gamePhase(engine: Engine): GamePhase {
   // "over" at the turn limit *or* on a decisive monopoly (Section 29).
-  return engine.outcome.over ? "over" : "play";
+  if (engine.outcome.over) return "over";
+  // "auction" while the opening Inner Ring claim auction (Section 05) is open and unresolved.
+  if (engine.auctionPending) return "auction";
+  return "play";
 }
 
 export function buildClientState(
@@ -278,11 +386,20 @@ export function buildClientState(
   humanCorpId: string,
   gameId: string,
   reports: TurnReport[],
+  opts: BuildClientStateOptions = {},
 ): ClientState {
   const g = engine.galaxy;
   const me = engine.corps.find((c) => c.id === humanCorpId);
   const owned = new Set(me?.ownedSystemIds ?? []);
   const surveyed = new Set(me?.surveyedSystemIds ?? []);
+
+  // Public map markers (survey pings, auction interest) grouped by the system they anchor to.
+  const markersBySystem = new Map<string, PublicMarker[]>();
+  for (const m of engine.markersFor()) {
+    const arr = markersBySystem.get(m.systemId) ?? [];
+    arr.push({ ...m });
+    markersBySystem.set(m.systemId, arr);
+  }
 
   const systems: ClientSystem[] = g.allSystems().map((s) => {
     const mine = s.owner === humanCorpId || owned.has(s.id);
@@ -338,6 +455,7 @@ export function buildClientState(
       production: mine && s.production
         ? { powerFactor: s.production.powerFactor, limited: s.production.limited.map((l) => ({ ...l })) }
         : null,
+      markers: markersBySystem.get(s.id),
     };
   });
 
@@ -420,8 +538,27 @@ export function buildClientState(
       quantity: mine ? c.quantity : 0,
       escort: mine ? c.escort : 0,
       payout: mine ? c.payout : 0,
+      ...(c.name ? { name: c.name } : {}),
+      ...(c.firstExportForPlayer ? { firstExportForPlayer: true } : {}),
     };
   });
+
+  // Turn-1 opening window + standing-route automation (self-only surfaces).
+  const opening: OpeningCommandState | undefined =
+    me && me.ownedSystemIds[0] && engine.currentTurn === 0 && !engine.auctionPending
+      ? {
+          homeSystemId: me.ownedSystemIds[0],
+          surveysRemaining: engine.openingSurveysRemaining(me.id),
+          eligibleSurveyTargets: engine.openingSurveyTargets(me),
+        }
+      : undefined;
+  const standingRoutes: ClientStandingRoute[] | undefined = me
+    ? me.standingRoutes.map((r) => ({
+        id: r.id, originSystemId: r.originSystemId, resource: r.resource, batch: r.batch, reserve: r.reserve,
+        enabled: r.enabled,
+        readyToLaunch: (g.systems.get(r.originSystemId)?.stockpile[r.resource] ?? 0) >= r.reserve + r.batch,
+      }))
+    : undefined;
 
   // ----- Ship-mounted sensors → rival fleet contacts (Section 04) -----
   // Each of the viewer's ships projects a sensor bubble around its current atlas position; a rival
@@ -484,9 +621,55 @@ export function buildClientState(
   const prices = {} as Record<Resource, number>;
   for (const r of RESOURCES) prices[r] = engine.market.prices[r];
 
+  // Phase B — between-turns market visibility. Aggregate every seat's locked orders into a fogged
+  // pressure direction per resource (no quantities, no identities). The projected-price preview is
+  // opt-in and pure: it runs the clearing math without committing, so the authoritative price is
+  // never perturbed. Headless/tests pass no locked orders → everything reads `balanced`.
+  const listed = engine.listedResources();
+  const lockedOrders = opts.lockedOrders ?? [];
+  const marketPressure = marketPressureFrom(tuning, listed, lockedOrders);
+  let projectedPrices: Record<Resource, number> | undefined;
+  if (opts.projectPrices) {
+    const listedSet = new Set(listed);
+    const clearable: ClearableOrder[] = [];
+    for (const orders of lockedOrders) {
+      for (const o of orders) {
+        if (o.kind !== "market" || o.quantity <= 0 || !listedSet.has(o.resource)) continue;
+        clearable.push({
+          ownerId: "", side: o.side, resource: o.resource, quantity: o.quantity,
+          limitPrice: o.limitPrice, strict: o.strict, systemId: o.systemId,
+        });
+      }
+    }
+    projectedPrices = projectClearingPrices(tuning, engine.market.prices, clearable);
+  }
+
   // Which galaxy-unique secret projects are already claimed, and by whom (Section 28, Phase 3).
   const claimedSecrets: Record<string, string> = {};
   for (const c of engine.corps) for (const id of c.research.completed) if (SECRET_TECH_IDS.includes(id)) claimedSecrets[id] = c.name;
+
+  // Suggest one standing route → the hub: prefer a PRODUCED tradable raw (a worked, listed, non-food
+  // deposit) so the route actually restocks; else the richest listed stock. Skip if already routed.
+  let standingRouteSuggestion: StandingRouteSuggestion | undefined;
+  if (me) {
+    const listedSet = new Set(listed);
+    for (const sid of me.ownedSystemIds) {
+      const s = g.systems.get(sid);
+      if (!s) continue;
+      let best: Resource | null =
+        s.sites.find((site) => site.extractorLevel > 0 && site.resource !== "food" && listedSet.has(site.resource))?.resource ?? null;
+      if (!best) {
+        let bestQty = 0;
+        for (const r of listed) { const q = s.stockpile[r] ?? 0; if (q > bestQty) { best = r; bestQty = q; } }
+        if (!best || bestQty <= 0) continue;
+      }
+      if (!me.standingRoutes.some((x) => x.originSystemId === sid && x.resource === best)) {
+        const have = s.stockpile[best] ?? 0;
+        standingRouteSuggestion = { originSystemId: sid, resource: best, batch: Math.max(2, Math.floor(have / 2)), reserve: Math.floor(have / 4) };
+        break;
+      }
+    }
+  }
 
   return {
     gameId,
@@ -498,6 +681,8 @@ export function buildClientState(
     totalTurns: engine.config.turns,
     humanCorpId,
     prices,
+    marketPressure,
+    projectedPrices,
     systems,
     routes,
     corps,
@@ -519,5 +704,8 @@ export function buildClientState(
     players: [],
     totalSeats: engine.corps.length,
     submittedCount: 0,
+    openingState: opening,
+    standingRoutes,
+    standingRouteSuggestion,
   };
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { MAX_RANGE_TIER, canRaidRoute, raidStrength, type PlayerView, type RangeTier, type Ship } from "@engine";
 import { store, useApp } from "../match/store";
-import { convoyName, corpColor, formatCr, HULL_FLAVOR, hullArtSlot, hullEpithet, hullName, resourceLabels, sizeBucket } from "../match/format";
+import { convoyName, corpColor, formatCr, HULL_FLAVOR, hullArtSlot, hullEpithet, hullName, privateerBandName, resourceLabels, sizeBucket } from "../match/format";
 import { shipBuildPreview } from "../match/orderCost";
 import { Panel, PanelTitle, Badge, Segmented, EmptyState } from "../ui/primitives";
 import { ArtSlot } from "../theme/ArtSlot";
@@ -209,8 +209,8 @@ export function Ships() {
                   {me.privateers.map((p, i) => (
                     <div key={`p${i}`} className="roster__row">
                       <Icon name="skull" size={15} />
-                      <span>Privateer</span>
-                      <span className="roster__sub">{systemName(p.basedAt) ?? "unknown"}</span>
+                      <span>{privateerBandName(p.basedAt)}</span>
+                      <span className="roster__sub">out of {systemName(p.basedAt) ?? "unknown"}</span>
                       <Badge tone="warn">{p.turnsLeft}t left</Badge>
                     </div>
                   ))}

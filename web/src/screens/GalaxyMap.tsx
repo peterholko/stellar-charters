@@ -3,6 +3,7 @@ import { store, useApp } from "../match/store";
 import { PixiGalaxyMap, type OverlayMode } from "../components/PixiGalaxyMap";
 import { SystemSummaryCard } from "../components/SystemSummaryCard";
 import { Inspector } from "../components/Inspector";
+import { Advisor } from "../components/Advisor";
 import { Icon } from "../ui/icons";
 
 const OVERLAYS: { id: OverlayMode; label: string }[] = [
@@ -22,6 +23,7 @@ export function GalaxyMap() {
   const { view, selection, humanCorpId, movementLog, contacts, replayNonce, staged } = useApp();
   const [raidOverlay, setRaidOverlay] = useState(false);
   const [overlay, setOverlay] = useState<OverlayMode>("none");
+  const [advisorOpen, setAdvisorOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [focusTarget, setFocusTarget] = useState<{ ids: string[]; nonce: number } | null>(null);
   // One-time "rotate for the full map" nudge (portrait phones only; CSS gates visibility).
@@ -134,13 +136,12 @@ export function GalaxyMap() {
         </div>
         <button
           type="button"
-          className="iconbtn"
+          className="mapscreen__showmoves"
           disabled={!canReplay}
-          title={canReplay ? "Replay last turn's freighter and fleet movements" : "Nothing moved last turn yet"}
+          title={canReplay ? "Replay last turn's ship and convoy movements" : "Nothing moved last turn yet"}
           onClick={() => store.requestReplay()}
         >
-          <span aria-hidden>▶</span>
-          {canReplay && <span className="iconbtn__count">{movementLog.length}</span>}
+          <span aria-hidden>▶</span> Show moves{canReplay ? ` (${movementLog.length})` : ""}
         </button>
         <button
           type="button"
@@ -164,6 +165,21 @@ export function GalaxyMap() {
           </span>
           <button type="button" className="mini-btn" onClick={() => store.select(null)}>Cancel</button>
         </div>
+      )}
+
+      {/* Map advisor — "what to do now", floating bottom-left, collapsible. Hidden in move-mode so
+          it never blocks a destination tap. */}
+      {!moveMode && (
+        advisorOpen ? (
+          <div className="mapadvisor">
+            <button type="button" className="mapadvisor__close" aria-label="Hide advisor" onClick={() => setAdvisorOpen(false)}>×</button>
+            <Advisor compact />
+          </div>
+        ) : (
+          <button type="button" className="mapadvisor__open" onClick={() => setAdvisorOpen(true)} title="What to do now">
+            <Icon name="info" size={14} /> Advisor
+          </button>
+        )
       )}
 
       {/* Legend chip */}

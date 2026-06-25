@@ -10,6 +10,7 @@
  * advance on their launch turn, and systems claimed this turn produce starting next turn.
  */
 import { NPC_HOLDER_NAMES, constructionCpCost, type GameConfig } from "./config.js";
+import { resolveAuction } from "./auction.js";
 import { RESEARCH_TREE, SECRET_TECH_IDS, canResearch, researchMods, techById, type ResearchMods } from "./research.js";
 import {
   EXTRACTOR_CAP,
@@ -57,7 +58,10 @@ import {
   type Convoy,
   type Corporation,
   type MegastructureKind,
+  type BidOrder,
   type Order,
+  type PublicMarker,
+  type LogisticsFocus,
   type PopulationStage,
   type CharterType,
   type ClientMovement,
@@ -77,6 +81,10 @@ import { computeOutcome, type GameOutcome } from "./standings.js";
 export interface EngineOptions {
   /** Optional per-turn text logger for `--verbose` single-game runs. */
   log?: (line: string) => void;
+  /** Opt-in: resolve an opening Inner Ring claim auction (Section 05) to assign homes from sealed
+   *  bids before turn 1, instead of the deterministic nearest-hub assignment. Headless for now —
+   *  the always-on multiplayer worker integration (the bid submission round) is a separate step. */
+  openingAuction?: boolean;
 }
 
 /** Human-readable name for a queued build (Section 24, Phase 4a). */
@@ -91,6 +99,51 @@ function queueLabel(item: QueueItem): string {
     case "lab": return "Research lab";
     case "extractor": return `${item.resource ?? "deposit"} extractor`;
   }
+}
+
+/**
+ * Phase 0 early-game instrumentation. A "no-op" is an order with zero effective magnitude
+ * (empty market/transfer/claim/share order) — it inflates the raw order count without being a
+ * real decision. Consequential = everything else.
+ */
+function isNoOpOrder(o: Order): boolean {
+  switch (o.kind) {
+    case "market": return o.quantity <= 0;
+    case "transfer": return o.quantity <= 0;
+    case "claim": return o.amount <= 0;
+    case "bid": return o.priorities.length === 0;
+    case "buyShares":
+    case "sellShares": return o.shares <= 0;
+    case "borrow": return o.amount <= 0;
+    case "setResearch": return o.queue.length === 0;
+    case "escort": return o.strength <= 0;
+    case "firstExport": return o.quantity <= 0;
+    case "createStandingRoute": return o.batch <= 0;
+    default: return false;
+  }
+}
+
+/** Order kinds that read as "idle filler" — a single export (sell) or a single build/claim is the
+ *  hallmark of a seat with nothing interesting to do this turn (the gap Phases A/C/D close). */
+const IDLE_BUILD_KINDS = new Set<Order["kind"]>([
+  "claim", "survey", "buildShip", "buildDepot", "buildDisruptor", "buildHydroponics",
+  "buildProcessor", "buildReactor", "upgradeInfrastructure", "buildPlatform", "buildLab",
+  "buildMegastructure", "buildExtractor", "buildSurveyShip", "upgradeWarehouse", "terraform",
+]);
+
+function isIdleOrder(o: Order): boolean {
+  if (o.kind === "market" && o.side === "sell") return true; // a lone export
+  return IDLE_BUILD_KINDS.has(o.kind);
+}
+
+/**
+ * Resolve a seat's logistics focus for the turn (Phase D): exactly the FIRST `logisticsFocus`
+ * order wins, so the choice is exclusive and never stacks even if the UI submits several. Returns
+ * null when no focus was staged.
+ */
+export function resolveLogisticsFocus(orders: Order[]): LogisticsFocus | null {
+  for (const o of orders) if (o.kind === "logisticsFocus") return o.focus;
+  return null;
 }
 
 /** Display names for megastructures (Section 22). */
@@ -112,6 +165,21 @@ function evidenceHash(seed: number, turn: number, convoyId: string): number {
   return (h >>> 8) / 0x1000000;
 }
 
+const INCIDENT_PLACE = ["Pale Harbor", "Tin Crown", "Blackreef", "Marrowind", "Ashfall", "Glass Orchard", "Sable", "Coldwater", "Gloaming", "Lowmoor", "Thorngate", "Nightjar"];
+const INCIDENT_NOUN = ["Reprisal", "Incident", "Affair", "Ambush", "Reckoning", "Outrage", "Betrayal", "Massacre", "Vendetta", "Shadow Strike"];
+
+/** A stable folklore name for a destroyed-convoy diplomatic incident, derived deterministically
+ *  from (seed, turn, convoyId) — pure, off the Rng stream, so replays reproduce it. */
+function incidentName(seed: number, turn: number, convoyId: string): string {
+  const h = Math.floor(evidenceHash(seed, turn, convoyId) * 0xffffff);
+  return `The ${INCIDENT_PLACE[h % INCIDENT_PLACE.length]} ${INCIDENT_NOUN[(h >> 8) % INCIDENT_NOUN.length]}`;
+}
+
+/** Stable incident id from the same hash. */
+function incidentIdFor(seed: number, turn: number, convoyId: string): string {
+  return `inc-${Math.floor(evidenceHash(seed, turn, convoyId) * 0xffffff).toString(36)}`;
+}
+
 export class Engine {
   readonly config: GameConfig;
   readonly seed: number;
@@ -125,8 +193,22 @@ export class Engine {
   /** Active wars (Section 23). */
   private wars: War[] = [];
   private readonly claimedTurn = new Map<string, number>();
+  /** This turn's logistics focus per corp (Phase D). Rebuilt every turn at step 1.3 — never carries
+   *  over, so a focus is spent the turn it's chosen or lost. */
+  private turnFocus = new Map<string, LogisticsFocus>();
   private turn = 0;
   private readonly log: (line: string) => void;
+  /** Opt-in opening Inner Ring auction (Section 05): when set, homes are assigned by `runOpeningAuction`
+   *  before turn 1 rather than deterministically at construction. */
+  private readonly openingAuction: boolean;
+  /** Guards the opening auction against double resolution (run() and stepAuction() both invoke it). */
+  private auctionResolved = false;
+  /** Deterministic counter for standing-route ids (advanced only in order resolution). */
+  private standingRouteCounter = 0;
+  /** Public map markers (survey pings, auction interest). Rebuilt from the order log each replay. */
+  private publicMarkers: PublicMarker[] = [];
+  /** Opening surveys used per corp this game (caps the 2 free probes). Rebuilt each replay. */
+  private openingSurveysUsed = new Map<string, number>();
 
   /** Observations collected during the current turn for the interactive TurnReport. */
   private events: TurnEvent[] = [];
@@ -154,6 +236,7 @@ export class Engine {
     this.galaxy = new Galaxy(config);
     this.market = new Market(config.tuning);
     this.log = options.log ?? (() => {});
+    this.openingAuction = options.openingAuction ?? false;
 
     const botIds = config.scenario.bots ?? ["balanced"];
     for (let i = 0; i < config.players; i++) {
@@ -206,6 +289,7 @@ export class Engine {
         hasCharter: false,
         alliancePledges: [],
         grudges: {},
+        standingRoutes: [],
       };
       this.corps.push(corp);
       this.bots.set(corp.id, factory());
@@ -236,29 +320,27 @@ export class Engine {
       finalStageCounts: { outpost: 0, settlement: 0, colony: 0, city: 0, metropolis: 0 },
     };
 
-    // No opening auction: each corporation is randomly seeded onto a distinct inner-ring
-    // system at match start (deterministic via the seeded Rng).
-    this.assignStartingSystems();
+    // Homes: when the opening auction is enabled, `runOpeningAuction()` assigns them from sealed
+    // bids before turn 1 (Section 05). Otherwise each corporation is deterministically seeded onto
+    // the nearest-hub inner-ring system at construction (via the seeded Rng).
+    if (!this.openingAuction) this.assignStartingSystems();
   }
 
   /**
-   * Randomly assign each corporation a distinct inner-ring starting system. Replaces the
-   * opening auction — systems are owned from turn 1 and produce immediately.
+   * The unclaimed inner-ring systems available as homes, ordered for deterministic assignment: a
+   * seeded Fisher–Yates shuffle, then a stable sort biasing toward the Wormhole Hub (nearest charted
+   * Range-1 distance first). The hub is a sparse junction now, so not everyone can be hub-adjacent —
+   * but everyone starts as close as the map allows, with a short, defensible supply line to the
+   * Exchange. (A rival never severs that line: warp paths ignore ownership, so convoys still transit
+   * rival systems — a rival can only pressure the lane via interdiction/raids, not block it.) The
+   * shuffle keeps which near-hub systems are used varying per seed.
    */
-  private assignStartingSystems(): void {
+  private orderedHomePool(): System[] {
     const pool = this.galaxy.innerRingSystems().filter((s) => s.owner === null);
-    // Fisher–Yates shuffle using the seeded Rng (deterministic for replay).
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(this.rng.next() * (i + 1));
       [pool[i], pool[j]] = [pool[j]!, pool[i]!];
     }
-    // Then bias starts toward the Wormhole Hub: rank by charted Range-1 distance (hops, then
-    // transit time) and seat charters on the nearest systems. The hub is a sparse junction now,
-    // so not everyone can be hub-adjacent — but everyone starts as close as the map allows, with a
-    // short, defensible supply line to the Exchange. (A rival never severs that line: warp paths
-    // ignore ownership, so convoys still transit rival systems — a rival can only pressure the lane
-    // via interdiction/raids, not block it.) A stable sort keeps the shuffle's order within each
-    // equidistant band, so which near-hub systems are used still varies per seed.
     const hubId = this.galaxy.hubId;
     const hopsToHub = (id: string): number => {
       const path = this.galaxy.shortestWarpPath(hubId, id, 1);
@@ -266,20 +348,144 @@ export class Engine {
     };
     const rank = new Map(pool.map((s) => [s.id, hopsToHub(s.id)]));
     pool.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+    return pool;
+  }
+
+  /** Seat a corp on its home system: take ownership, station its idle ships there (so the starting
+   *  survey skiff can be dispatched from turn 1 — Section 25), guarantee it can host a population
+   *  (Section 21), and grant a free level-1 extractor so it produces from turn 1. */
+  private finalizeHome(corp: Corporation, sys: System): void {
+    sys.owner = corp.id;
+    corp.ownedSystemIds.push(sys.id);
+    corp.hasCharter = true;
+    for (const ship of corp.ships) {
+      if (!ship.stationedAt && !ship.transit) ship.stationedAt = sys.id;
+    }
+    this.ensureStartHabitable(sys);
+    this.grantStarterExtractor(sys);
+    this.seedStartupInventory(sys);
+  }
+
+  /**
+   * Seed a fresh home with startup INVENTORY (Turn-1 opening): a few turns of its worked deposits'
+   * tradable output, written into the local stockpile so Turn 1 already has goods to ship — its own
+   * production only ARRIVES next turn (no same-turn chaining). Restricted to listed (tradable) goods.
+   * Pure arithmetic over the committed map + seed; consumes no Rng; reserves are NOT drained (it is a
+   * charter grant, not extraction).
+   */
+  private seedStartupInventory(sys: System): void {
+    const turns = this.config.tuning.startupInventoryTurns;
+    if (turns <= 0) return;
+    const listed = new Set(this.listedResources());
+    const starType = sys.bodies?.starType;
+    const seed = systemSeed(sys);
+    let seeded = false;
+    for (const site of sys.sites) {
+      if (site.extractorLevel <= 0 || !listed.has(site.resource)) continue;
+      const units = siteOutput(site, starType, seed, 1, this.config.turns);
+      if (units > 0) {
+        sys.stockpile[site.resource] += Math.floor(turns * units);
+        seeded = true;
+      }
+    }
+    if (seeded) return;
+    // The home's worked deposit isn't tradable yet (unlisted, e.g. silicates) or produces nothing.
+    // Grant a baseline of the best LISTED deposit it has (at a level-1 extractor) so Turn 1 still
+    // has something to ship; if it has no listed deposit at all, grant a little food (always listed).
+    let best: { resource: Resource; units: number } | null = null;
+    for (const site of sys.sites) {
+      if (!listed.has(site.resource)) continue;
+      const units = siteOutput({ ...site, extractorLevel: Math.max(1, site.extractorLevel) }, starType, seed, 1, this.config.turns);
+      if (units > 0 && (!best || units > best.units)) best = { resource: site.resource, units };
+    }
+    sys.stockpile[best?.resource ?? "food"] += Math.floor(turns * (best?.units ?? 3));
+  }
+
+  /**
+   * Deterministically seat each corporation onto a distinct nearest-hub inner-ring system. Used
+   * when the opening auction is disabled, and as the auction's fallback for charters that win nothing.
+   */
+  private assignStartingSystems(): void {
+    const pool = this.orderedHomePool();
     this.corps.forEach((corp, idx) => {
       const sys = pool[idx];
-      if (!sys) return;
-      sys.owner = corp.id;
-      corp.ownedSystemIds.push(sys.id);
-      corp.hasCharter = true;
-      // Base the corp's starting survey skiff at its home system so it can be dispatched on a
-      // sensor mission from turn 1 (an unstationed ship has nowhere to launch from — Section 25).
-      for (const ship of corp.ships) {
-        if (!ship.stationedAt && !ship.transit) ship.stationedAt = sys.id;
-      }
-      this.ensureStartHabitable(sys);
-      this.grantStarterExtractor(sys);
+      if (sys) this.finalizeHome(corp, sys);
     });
+  }
+
+  /**
+   * Opening Inner Ring Claim Auction (Section 05). Each charter submits a sealed, priority-ordered
+   * bid list; the highest valid bid wins each contested system (one home per charter). Winners pay
+   * their winning bid; a charter that wins nothing forfeits only the non-refunded slice of its top
+   * deposit (most of the bid is returned) and is GUARANTEED a home via deterministic fallback — so
+   * no one is ever left without a charter. Runs once, before turn 1 (does NOT consume a turn).
+   * Deterministic: bids + fallback ordering derive from the seeded Rng and a stable resolution.
+   */
+  private runOpeningAuction(): void {
+    if (this.auctionResolved) return;
+    this.auctionResolved = true;
+    const pool = this.orderedHomePool();
+    const taken = new Set<string>();
+
+    const bids = new Map<string, ReturnType<Bot["bid"]>>();
+    for (const corp of this.corps) {
+      bids.set(corp.id, this.bots.get(corp.id)!.bid(this.viewFor(corp)));
+    }
+    // Public auction-interest markers (aggregate only): how many charters bid on each system.
+    const interest = new Map<string, number>();
+    for (const order of bids.values()) for (const p of order.priorities) interest.set(p.systemId, (interest.get(p.systemId) ?? 0) + 1);
+    for (const [systemId, count] of interest) this.publicMarkers.push({ kind: "auction_interest", systemId, turn: this.turn, count });
+
+    const result = resolveAuction(this.config, this.corps, bids);
+    const refundFrac = this.config.tuning.bidRefundFrac;
+    let totalDeposits = 0;
+    let totalRefunded = 0;
+    let fallbackUsers = 0;
+
+    // 1) Award won systems and settle the winning bid.
+    for (const corp of this.corps) {
+      const wonSystem = result.awarded.get(corp.id);
+      if (!wonSystem) continue;
+      const spent = result.spent.get(corp.id) ?? 0;
+      const sys = this.galaxy.system(wonSystem);
+      this.credit(corp, -spent, "claim", `Auction: ${sys.name}`, sys.id);
+      this.finalizeHome(corp, sys);
+      this.claimedTurn.set(sys.id, 0);
+      taken.add(sys.id);
+      this.events.push({ type: "auctionAward", corpId: corp.id, systemId: sys.id, amount: spent });
+      const topBid = bids.get(corp.id)!.priorities[0]?.amount ?? spent;
+      totalDeposits += topBid;
+      totalRefunded += topBid; // a winner's deposit is fully accounted by its winning bid
+      this.log(`  ${corp.name} wins ${sys.name} for ${spent} cr`);
+    }
+
+    // 2) Charters that won nothing forfeit the non-refunded slice of their top bid, then receive a
+    //    GUARANTEED fallback home from the nearest remaining inner-ring systems.
+    let fallbackIdx = 0;
+    for (const corp of this.corps) {
+      if (result.awarded.has(corp.id)) continue;
+      const topBid = bids.get(corp.id)!.priorities[0]?.amount ?? 0;
+      if (topBid > 0) {
+        const forfeit = Math.round(topBid * (1 - refundFrac));
+        if (forfeit > 0) this.credit(corp, -forfeit, "auctionRefund", "Auction: lost bid forfeit");
+        totalDeposits += topBid;
+        totalRefunded += topBid - forfeit;
+      }
+      while (fallbackIdx < pool.length && taken.has(pool[fallbackIdx]!.id)) fallbackIdx++;
+      const sys = pool[fallbackIdx];
+      if (sys) {
+        this.finalizeHome(corp, sys);
+        this.claimedTurn.set(sys.id, 0);
+        taken.add(sys.id);
+        fallbackUsers++;
+        this.log(`  ${corp.name} won nothing — assigned ${sys.name} (fallback)`);
+      }
+    }
+
+    this.metrics.auctionRefundFrac = totalDeposits > 0 ? totalRefunded / totalDeposits : 1;
+    this.metrics.auctionFallbackUsage = fallbackUsers / this.corps.length;
+    // Re-value now that homes (and their yields) are owned — share prices must be real from turn 0.
+    this.updateValuations();
   }
 
   /**
@@ -321,11 +527,15 @@ export class Engine {
    * owner has built an extractor. No-op on legacy `yields` systems (already fully developed).
    */
   private grantStarterExtractor(sys: System): void {
-    if (sys.sites.some((s) => s.extractorLevel > 0)) return;
+    const listed = new Set(this.listedResources());
+    // Home repair (Section 21): guarantee the home works a TRADABLE (listed, non-food) deposit so it
+    // produces something to ship — the habitat's food extractor alone would leave it with nothing to
+    // sell. If it already works a tradable raw, nothing to do.
+    if (sys.sites.some((s) => s.extractorLevel > 0 && s.resource !== "food" && listed.has(s.resource))) return;
     const candidates = sys.sites
-      .filter((s) => s.extractorLevel === 0)
-      // Prefer an accessible, rich, basic raw to bootstrap the economy.
-      .map((s) => ({ s, score: s.richness * s.accessibility * (s.resource === "antimatter" ? 0.3 : 1) }))
+      .filter((s) => s.extractorLevel === 0 && s.resource !== "food")
+      // Prefer an accessible, rich, LISTED basic raw to bootstrap a tradable economy.
+      .map((s) => ({ s, score: s.richness * s.accessibility * (listed.has(s.resource) ? 1 : 0.05) * (s.resource === "antimatter" ? 0.3 : 1) }))
       .sort((a, b) => b.score - a.score);
     const pick = candidates[0]?.s;
     if (pick) {
@@ -336,6 +546,14 @@ export class Engine {
 
   /** Run the whole game and return collected metrics. */
   run(): GameMetrics {
+    if (this.openingAuction) {
+      // Resolve the opening auction before turn 1 (it does not consume a turn). Isolate its
+      // events/ledger from turn 1 and reset the earnings baseline to post-auction credits.
+      this.runOpeningAuction();
+      this.events = [];
+      this.ledgerLines = [];
+      this.planningCreditsBase = new Map(this.corps.map((c) => [c.id, c.credits]));
+    }
     for (this.turn = 1; this.turn <= this.config.turns; this.turn++) {
       this.runNormalTurn();
       // Same per-turn buffer lifecycle as stepTurn (which resets AFTER building each report so
@@ -461,6 +679,37 @@ export class Engine {
     if (bot && "pendingOrders" in bot) {
       (bot as { pendingOrders: Order[] | null }).pendingOrders = orders;
     }
+  }
+
+  /** Stage a human seat's sealed bid for `stepAuction` (Section 05). Pass `null` to defer that
+   *  seat to its fallback AI bid (how replay reproduces an un-bid / un-taken-over seat). */
+  setHumanBid(corpId: string, bid: BidOrder | null): void {
+    const bot = this.bots.get(corpId);
+    if (bot && "pendingBid" in bot) {
+      (bot as { pendingBid: BidOrder | null }).pendingBid = bid;
+    }
+  }
+
+  /** True while the opening auction is enabled but not yet resolved (the bid window). */
+  get auctionPending(): boolean {
+    return this.openingAuction && !this.auctionResolved;
+  }
+
+  /**
+   * Resolve the opening Inner Ring auction (Section 05) before turn 1, returning its report. Valid
+   * only while no turn has resolved and the auction is enabled; idempotent via `auctionResolved`.
+   * This is the stepped entry point the interactive/worker path uses (the headless `run()` invokes
+   * the auction inline). Does NOT advance the turn counter — turn 1 stays the first playable turn.
+   */
+  stepAuction(): TurnReport {
+    if (!this.openingAuction) throw new Error("Opening auction is disabled for this game");
+    if (this.turn !== 0 || this.auctionResolved) throw new Error("Auction already resolved");
+    this.runOpeningAuction();
+    const report = this.buildReport("auction");
+    this.events = [];
+    this.ledgerLines = [];
+    this.planningCreditsBase = new Map(this.corps.map((c) => [c.id, c.credits]));
+    return report;
   }
 
   /** Resolve one turn and return its report. (Turn 1 is the first playable turn.) */
@@ -634,19 +883,48 @@ export class Engine {
     // 1. Lock: collect orders from every bot.
     const ordersByCorp = new Map<string, Order[]>();
     const orderCounts: Record<string, number> = {};
+    // Phase 0 early-game instrumentation: per-seat consequential (non-no-op) order count, and a
+    // tally of idle seats (only a single export/build this turn).
+    const consequentialPerCorp: Record<string, number> = {};
+    let idleSeats = 0;
     for (const corp of this.corps) {
       const bot = this.bots.get(corp.id)!;
       const orders = bot.decide(this.viewFor(corp));
       ordersByCorp.set(corp.id, orders);
       orderCounts[corp.id] = orders.length;
+      const consequential = orders.filter((o) => !isNoOpOrder(o));
+      consequentialPerCorp[corp.id] = consequential.length;
+      if (
+        consequential.length === 0 ||
+        (consequential.length === 1 && isIdleOrder(consequential[0]!))
+      ) {
+        idleSeats += 1;
+      }
+    }
+
+    // 1.3 Logistics focus (Phase D): lock in each seat's single per-turn focus token. Rebuilt from
+    // scratch every turn (no carryover, no stacking); each chosen mode is read as a pure one-turn
+    // modifier at its own resolution step below (construction 1.4, convoy launch 4, fleet move 6.6).
+    this.turnFocus.clear();
+    for (const corp of this.corps) {
+      const focus = resolveLogisticsFocus(ordersByCorp.get(corp.id) ?? []);
+      if (focus) this.turnFocus.set(corp.id, focus);
     }
 
     // 1.4 Construction: advance each colony's build queue (Section 24, Phase 4a) BEFORE new orders
     // are queued, so a build only progresses on the turns after it was ordered (no same-turn chain).
     this.advanceConstruction();
 
+    // 1.45 Opening commands (Section 05): on Turn 1 only, resolve the free Authority probes and the
+    // optional named maiden voyage from the home's startup stockpile, before the rest of the turn.
+    if (this.turn === 1) this.resolveOpeningCommands(ordersByCorp);
+
     // 1.5 Administrative builds (claims, surveys, ships, research, depots, finance).
     this.resolveAdministrative(ordersByCorp);
+
+    // 1.55 Standing trade routes: apply create/toggle/remove so a route enabled this turn can
+    // auto-launch later this turn if its stockpile already qualifies.
+    this.resolveStandingRouteOrders(ordersByCorp);
 
     // 2. Production into local stockpiles (scaled by unrest; hydroponics add food).
     this.resolveProduction();
@@ -700,7 +978,7 @@ export class Engine {
     }
 
     // 10. Report.
-    this.recordSnapshot(this.turn, orderCounts, launchInfo, raidStats, equityStats);
+    this.recordSnapshot(this.turn, orderCounts, consequentialPerCorp, idleSeats, launchInfo, raidStats, equityStats);
   }
 
   /** Construction-point cost of one queued building kind (Section 24, Phase 4a). */
@@ -745,6 +1023,9 @@ export class Engine {
   private advanceConstruction(): void {
     const baseRate = this.config.tuning.construction.pointsPerTurn;
     if (baseRate <= 0) return;
+    // Phase D: `expediteBuild` grants one extra turn of construction, spent on the FIRST building
+    // system the owner has this turn — bounded to one queue so the focus shaves a single turn, once.
+    const expediteUsed = new Set<string>();
     for (const sys of this.galaxy.allSystems()) {
       if (sys.queue.length === 0) continue;
       // Modular Construction (Section 28) speeds the owning charter's build queue.
@@ -766,6 +1047,11 @@ export class Engine {
         }
       }
       let points = baseRate * (owner ? this.mods(owner).constructionRateMult : 1);
+      // One-turn expedite: add a second turn's worth to this corp's first building system this turn.
+      if (owner && this.turnFocus.get(owner.id) === "expediteBuild" && !expediteUsed.has(owner.id) && sys.queue.some((q) => q.paid)) {
+        points += baseRate * this.mods(owner).constructionRateMult;
+        expediteUsed.add(owner.id);
+      }
       while (points > 0) {
         const item = sys.queue.find((q) => q.paid);
         if (!item) break;
@@ -1558,9 +1844,12 @@ export class Engine {
           price,
           systemId: sys.id,
         });
-        // Warships stationed at the origin escort its outbound convoys automatically.
+        // Warships stationed at the origin escort its outbound convoys automatically. Phase D:
+        // `escortNext` adds a one-turn flat escort bonus to all of this corp's outbound convoys.
+        const focusBonus =
+          this.turnFocus.get(corp.id) === "escortNext" ? this.config.tuning.logisticsFocus.escortBonus : 0;
         const escort =
-          this.stationedDefense(sys.id, corp.id) + (escortBySystem.get(`${corp.id}:${sys.id}`) ?? 0);
+          this.stationedDefense(sys.id, corp.id) + (escortBySystem.get(`${corp.id}:${sys.id}`) ?? 0) + focusBonus;
         this.convoys.push(
           this.makeConvoy(corp.id, "sell", resource, qty, path.systems, path.routes, payout, escort, value),
         );
@@ -1594,6 +1883,33 @@ export class Engine {
         convoysLaunched++;
         cargoValueShipped += value;
         recordRoutes(path.routes);
+      }
+    }
+
+    // Standing trade routes: auto-launch <=1 sell convoy per enabled route this turn (origin → hub)
+    // when the origin stockpile is at least reserve + batch. No per-turn order needed — a pure state
+    // function, so it replays identically. Iteration is over stable arrays (no Rng, no Map order).
+    for (const corp of this.corps) {
+      for (const route of corp.standingRoutes) {
+        if (!route.enabled) continue;
+        const sys = this.galaxy.systems.get(route.originSystemId);
+        if (!sys || sys.owner !== corp.id || !listed.has(route.resource)) continue;
+        if ((sys.stockpile[route.resource] ?? 0) < route.reserve + route.batch) continue;
+        const path = this.galaxy.shortestWarpPath(sys.id, this.galaxy.hubId, corp.rangeTier);
+        if (!path) continue;
+        const qty = route.batch;
+        sys.stockpile[route.resource] -= qty;
+        const price = this.market.prices[route.resource];
+        const marketEdge = this.mods(corp).marketEdge;
+        const shipping = this.config.tuning.shippingFeePerHop * path.routes.length * qty * this.shippingMultiplier(path.systems, corp.id);
+        const payout = Math.max(0, (qty * price * (1 + marketEdge) - shipping) * (1 - this.warTariffFor(corp.id)));
+        const value = qty * this.config.tuning.basePrices[route.resource];
+        const escort = this.stationedDefense(sys.id, corp.id) + (escortBySystem.get(`${corp.id}:${sys.id}`) ?? 0);
+        this.convoys.push(this.makeConvoy(corp.id, "sell", route.resource, qty, path.systems, path.routes, payout, escort, value));
+        convoysLaunched++;
+        cargoValueShipped += value;
+        recordRoutes(path.routes);
+        this.events.push({ type: "automation", corpId: corp.id, routeId: route.id, resource: route.resource, quantity: qty, systemId: sys.id, payout });
       }
     }
 
@@ -1644,6 +1960,20 @@ export class Engine {
         // only when the victim has real evidence of WHO (review Section 11: deniability works).
         if (result.cargoDestroyed + result.cargoPlundered > 0 && sponsorEvidence >= 0.5) {
           this.addGrudge(convoy.owner, attacker.id, 1);
+        }
+        // Rare full destruction is a named diplomatic incident (rule #13): folklore name + evidence
+        // trail + report headline, and a heavier grudge. Stamped on the raid event and the convoy.
+        if (result.outcome === "destroyed") {
+          const incidentId = incidentIdFor(this.seed, this.turn, convoy.id);
+          const name = incidentName(this.seed, this.turn, convoy.id);
+          convoy.incidentId = incidentId;
+          const ev = this.events[this.events.length - 1];
+          if (ev && ev.type === "raid") { ev.incidentId = incidentId; ev.incidentName = name; }
+          this.events.push({
+            type: "diplomaticIncident", name, incidentId, attackerId: attacker.id, defenderId: convoy.owner,
+            routeId, convoyId: convoy.id, resource: convoy.resource, cargoLost: result.cargoDestroyed + result.cargoPlundered, sponsorEvidence,
+          });
+          this.addGrudge(convoy.owner, attacker.id, 3);
         }
       }
       if (
@@ -2003,9 +2333,103 @@ export class Engine {
     this.log(`  ${corp.name}'s survey vessel scouts ${sys.name} — full deposit intel acquired`);
   }
 
+  // ----- Opening commands (Section 05, Turn 1) -----
+
+  /** Unowned non-hub systems within a charter's warp range from its home — the targets it may run a
+   *  free opening Authority probe against (also surfaced to the UI). */
+  openingSurveyTargets(corp: Corporation): string[] {
+    const homeId = corp.ownedSystemIds[0];
+    if (!homeId) return [];
+    const out: string[] = [];
+    for (const sys of this.galaxy.allSystems()) {
+      if (sys.owner !== null || sys.id === this.galaxy.hubId) continue;
+      if (corp.surveyedSystemIds.includes(sys.id)) continue;
+      if (this.galaxy.shortestWarpPath(homeId, sys.id, corp.rangeTier)) out.push(sys.id);
+    }
+    return out;
+  }
+
+  /** Surveys remaining for a corp's opening probes (UI). */
+  openingSurveysRemaining(corpId: string): number {
+    return Math.max(0, this.config.tuning.openingSurveySlots - (this.openingSurveysUsed.get(corpId) ?? 0));
+  }
+
+  /** Public map markers visible to a seat (survey pings + auction interest). */
+  markersFor(): PublicMarker[] {
+    return this.publicMarkers;
+  }
+
+  /** Turn-1 opening: resolve the free Authority probes (instant intel + public ping) and the optional
+   *  named maiden voyage from the home's startup stockpile. Deterministic; no Rng. */
+  private resolveOpeningCommands(ordersByCorp: Map<string, Order[]>): void {
+    const slots = this.config.tuning.openingSurveySlots;
+    for (const corp of this.corps) {
+      const orders = ordersByCorp.get(corp.id) ?? [];
+      const homeId = corp.ownedSystemIds[0];
+      const home = homeId ? this.galaxy.systems.get(homeId) : undefined;
+      if (!home) continue;
+      const eligible = new Set(this.openingSurveyTargets(corp));
+      let used = this.openingSurveysUsed.get(corp.id) ?? 0;
+      for (const o of orders) {
+        if (o.kind !== "openingSurvey" || used >= slots) continue;
+        const target = this.galaxy.systems.get(o.targetSystemId);
+        if (!target || !eligible.has(target.id)) continue;
+        this.surveyReveal(corp, target);
+        this.publicMarkers.push({ kind: "survey_ping", systemId: target.id, turn: this.turn, corpId: corp.id });
+        used++;
+      }
+      this.openingSurveysUsed.set(corp.id, used);
+      const fx = orders.find((o): o is Extract<Order, { kind: "firstExport" }> => o.kind === "firstExport");
+      if (fx) this.launchFirstExport(corp, home, fx);
+    }
+  }
+
+  private launchFirstExport(corp: Corporation, home: System, order: Extract<Order, { kind: "firstExport" }>): void {
+    if (order.quantity <= 0 || !this.listedResources().includes(order.resource)) return;
+    const qty = Math.min(order.quantity, Math.floor(home.stockpile[order.resource] ?? 0));
+    if (qty <= 0) return;
+    const path = this.galaxy.shortestWarpPath(home.id, this.galaxy.hubId, corp.rangeTier);
+    if (!path) return;
+    home.stockpile[order.resource] -= qty;
+    const price = this.market.prices[order.resource];
+    const marketEdge = this.mods(corp).marketEdge;
+    const shipping = this.config.tuning.shippingFeePerHop * path.routes.length * qty * this.shippingMultiplier(path.systems, corp.id);
+    const payout = Math.max(0, (qty * price * (1 + marketEdge) - shipping) * (1 - this.warTariffFor(corp.id)));
+    const value = qty * this.config.tuning.basePrices[order.resource];
+    const escort = this.stationedDefense(home.id, corp.id);
+    this.convoys.push(this.makeConvoy(corp.id, "sell", order.resource, qty, path.systems, path.routes, payout, escort, value, `First Shipment — ${corp.name}`, true));
+    for (const rid of path.routes) this.galaxy.recordTraffic(rid, this.turn);
+    this.events.push({ type: "fill", corpId: corp.id, side: "sell", resource: order.resource, quantity: qty, price, systemId: home.id });
+  }
+
+  /** Apply standing-route create/toggle/remove orders (the route DEFINITIONS; launches are a pure
+   *  per-turn function of state in resolveMarketAndLaunch). Silent no-ops on invalid orders. */
+  private resolveStandingRouteOrders(ordersByCorp: Map<string, Order[]>): void {
+    const listed = new Set(this.listedResources());
+    for (const corp of this.corps) {
+      for (const o of ordersByCorp.get(corp.id) ?? []) {
+        if (o.kind === "createStandingRoute") {
+          const sys = this.galaxy.systems.get(o.originSystemId);
+          if (o.batch <= 0 || o.reserve < 0 || !sys || sys.owner !== corp.id || !listed.has(o.resource)) continue;
+          corp.standingRoutes.push({
+            id: `sr-${this.standingRouteCounter++}`,
+            originSystemId: o.originSystemId, resource: o.resource, batch: o.batch, reserve: o.reserve, enabled: o.enabled ?? false,
+          });
+        } else if (o.kind === "setStandingRouteEnabled") {
+          const r = corp.standingRoutes.find((x) => x.id === o.routeId);
+          if (r) r.enabled = o.enabled;
+        } else if (o.kind === "removeStandingRoute") {
+          corp.standingRoutes = corp.standingRoutes.filter((x) => x.id !== o.routeId);
+        }
+      }
+    }
+  }
+
   private resolveFleetMovement(): void {
     // Group ships that arrive at the same destination this turn so a fleet fights as one.
     const arrivals = new Map<string, { corp: Corporation; sys: System; ships: Ship[]; attack: boolean }>();
+    // Phase D: `surveyPush` shaves one turn off ONE in-flight outbound survey leg per corp this turn.
+    const surveyPushUsed = new Set<string>();
     for (const corp of this.corps) {
       for (const ship of corp.ships) {
         const tr = ship.transit;
@@ -2017,6 +2441,12 @@ export class Engine {
         // is created later in this same pass and so first advances next turn (it can't fly two legs
         // in one turn), which is correct.
         tr.segmentTurnsLeft -= 1;
+        // Accelerate an outbound survey vessel (surveyReturnTo set = heading out to scout) by one
+        // extra turn — once per corp, never the return leg or combat fleets.
+        if (ship.surveyor && tr.surveyReturnTo && this.turnFocus.get(corp.id) === "surveyPush" && !surveyPushUsed.has(corp.id)) {
+          tr.segmentTurnsLeft -= 1;
+          surveyPushUsed.add(corp.id);
+        }
         if (tr.segmentTurnsLeft > 0) continue;
         // A Warp Disruptor (Section 04) holds a rival fleet on its FINAL approach: as the last
         // segment completes (position not yet stepped onto the destination), if the destination
@@ -2041,6 +2471,12 @@ export class Engine {
           fromSystemId: tr.path[tr.position - 1]!,
           toSystemId: tr.path[tr.position]!,
           offLane: tr.routeIds[tr.position - 1] === "",
+          icon: ship.surveyor ? "survey"
+            : ship.raider ? "raider"
+            : ship.rangeTier >= 7 ? "capital"
+            : ship.rangeTier >= 5 ? "cruiser"
+            : ship.rangeTier >= 3 ? "frigate"
+            : "escort",
         });
         if (tr.position < tr.path.length - 1) {
           // Off-lane legs carry a "" route id (no WarpRoute): prefer the stored speed-baked
@@ -2131,6 +2567,7 @@ export class Engine {
         fromSystemId: convoy.path[convoy.position - 1]!,
         toSystemId: convoy.path[convoy.position]!,
         offLane: convoy.routeIds[convoy.position - 1] === "",
+        icon: convoy.value >= 1800 ? "freighter" : "trader",
       });
       if (convoy.position >= convoy.path.length - 1) {
         this.deliverConvoy(convoy);
@@ -2838,6 +3275,8 @@ export class Engine {
     payout: number,
     escort: number,
     value: number,
+    name?: string,
+    firstExport?: boolean,
   ): Convoy {
     const firstRoute = this.galaxy.routes.get(routeIds[0] ?? "");
     // Freighter mass-fuel (Section 04/07b): bulk cargo burns fuel by mass × distance, but warp
@@ -2868,6 +3307,8 @@ export class Engine {
       payout,
       escort,
       value,
+      ...(name ? { name } : {}),
+      ...(firstExport ? { firstExportForPlayer: true } : {}),
     };
   }
 
@@ -3058,6 +3499,8 @@ export class Engine {
   private recordSnapshot(
     turn: number,
     orderCounts: Record<string, number>,
+    consequentialPerCorp: Record<string, number>,
+    idleSeats: number,
     launch?: { convoysLaunched: number; cargoValueShipped: number; routeTraffic: Record<string, number>; escortOrders?: number },
     raid?: { convoysRaided: number; cargoValueLost: number; largestSingleRaidLoss?: number; raidOutcomes: ReturnType<typeof emptyRaidOutcomes> },
     equity?: { acquisitions: number; distress: number; taxLevied: number },
@@ -3068,12 +3511,23 @@ export class Engine {
       credits[c.id] = Math.round(c.credits);
       valuation[c.id] = c.valuation;
     }
+    // Turn-over-turn absolute % change of each clearing price vs the previous snapshot (volatility).
+    const prev = this.metrics.snapshots[this.metrics.snapshots.length - 1]?.prices;
+    const priceChangePct = {} as Record<Resource, number>;
+    for (const r of RESOURCES) {
+      const now = this.market.prices[r];
+      const before = prev?.[r];
+      priceChangePct[r] = before && before !== 0 ? Math.abs(now - before) / before : 0;
+    }
     const snapshot: TurnSnapshot = {
       turn,
       prices: { ...this.market.prices },
       credits,
       valuation,
       ordersPerCorp: { ...orderCounts },
+      consequentialPerCorp: { ...consequentialPerCorp },
+      idleSeats,
+      priceChangePct,
       convoysLaunched: launch?.convoysLaunched ?? 0,
       convoysRaided: raid?.convoysRaided ?? 0,
       cargoValueShipped: launch?.cargoValueShipped ?? 0,

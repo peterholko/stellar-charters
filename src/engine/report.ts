@@ -60,6 +60,31 @@ export type TurnEvent =
        * < 1 = a deniable privateer strike that left this much evidence ("Suspected sponsor: X (60%)").
        */
       sponsorEvidence: number;
+      /** Set when the raid destroyed the convoy outright — a named diplomatic incident (rule #13). */
+      incidentId?: string;
+      incidentName?: string;
+    }
+  | {
+      type: "automation";
+      corpId: string;
+      routeId: string;
+      resource: Resource;
+      quantity: number;
+      systemId: string;
+      payout: number;
+    }
+  | {
+      type: "diplomaticIncident";
+      /** Stable folklore name, e.g. "The Pale Harbor Reprisal". */
+      name: string;
+      incidentId: string;
+      attackerId: string;
+      defenderId: string;
+      routeId: string;
+      convoyId: string;
+      resource: Resource;
+      cargoLost: number;
+      sponsorEvidence: number;
     }
   | {
       type: "build";
