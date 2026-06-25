@@ -246,6 +246,7 @@ function bodiesEngine(testType: "ocean" | "rocky"): Engine {
   cfg.tuning.fuelPerShipPerTurn = 0;
   cfg.tuning.iceNeed = { ...cfg.tuning.iceNeed, outpost: 0 };
   cfg.tuning.foodNeed = { ...cfg.tuning.foodNeed, outpost: 0 };
+  cfg.tuning.startupInventoryTurns = 0; // isolate dome output — no injected startup food (see above)
   const reg = new Map<string, BotFactory>([["noop", () => new NoopBot()]]);
   return new Engine(cfg, 0, reg);
 }

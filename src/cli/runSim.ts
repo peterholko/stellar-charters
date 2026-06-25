@@ -18,9 +18,11 @@ import {
   runOneGame,
   runProceduralGames,
 } from "../harness/runGames.js";
-import { writePerGameCsv, writePerTurnCsv } from "../harness/csv.js";
+import { writeEarlyGameCsv, writePerGameCsv, writePerTurnCsv } from "../harness/csv.js";
 import { aggregate, renderMarkdown, type Aggregate } from "../harness/report.js";
 import type { GameConfig } from "../engine/config.js";
+import type { GameMetrics } from "../engine/metrics.js";
+import { RESOURCES } from "../engine/types.js";
 
 interface Args {
   games: number;
@@ -86,7 +88,29 @@ function runSingleVerbose(config: GameConfig, args: Args): void {
   const cfg = args.procedural
     ? proceduralConfig(seed, args.players ?? config.players, args.turns ?? config.turns, galaxyOverride(args))
     : config;
-  runOneGame(cfg, seed, { log: (line) => console.log(line) });
+  const metrics = runOneGame(cfg, seed, { log: (line) => console.log(line) });
+  // Phase 0: write the early-game CSV and print the turns 1–6 engagement read for the baseline.
+  const outDir = join(repoRoot, args.outDir);
+  mkdirSync(outDir, { recursive: true });
+  const tag = `${metrics.players}p-seed${seed}`;
+  writeEarlyGameCsv(join(outDir, `early-game-${tag}.csv`), [metrics]);
+  printEarlyGameTable(metrics);
+  console.log(`\nWrote out/early-game-${tag}.csv`);
+}
+
+/** Print the turns 1–6 engagement read (consequential actions, idle seats, price volatility). */
+function printEarlyGameTable(metrics: GameMetrics): void {
+  console.log(`\n--- Early-game engagement (turns 1–6), seed ${metrics.seed} ---`);
+  console.log("turn  conseq/seat  idleSeats  priceVol%");
+  for (const s of metrics.snapshots.filter((s) => s.turn >= 1 && s.turn <= 6)) {
+    const conseq = Object.values(s.consequentialPerCorp);
+    const mean = conseq.length ? conseq.reduce((a, b) => a + b, 0) / conseq.length : 0;
+    const volMean =
+      RESOURCES.reduce((a, r) => a + s.priceChangePct[r], 0) / RESOURCES.length;
+    console.log(
+      `${String(s.turn).padStart(4)}  ${mean.toFixed(2).padStart(11)}  ${String(s.idleSeats).padStart(9)}  ${(volMean * 100).toFixed(2).padStart(8)}`,
+    );
+  }
 }
 
 function runBatch(config: GameConfig, args: Args): void {
@@ -104,6 +128,7 @@ function runBatch(config: GameConfig, args: Args): void {
   const tag = `${games[0]?.players ?? config.players}p`;
   writePerTurnCsv(join(outDir, `per-turn-${tag}.csv`), games);
   writePerGameCsv(join(outDir, `per-game-${tag}.csv`), games);
+  writeEarlyGameCsv(join(outDir, `early-game-${tag}.csv`), games);
 
   const agg = aggregate(config, games);
   const md = renderMarkdown([agg]);

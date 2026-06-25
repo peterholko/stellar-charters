@@ -1,9 +1,10 @@
-import type { PlayerView, ValuationComponent } from "@engine";
+import type { LogisticsFocus, PlayerView, ValuationComponent } from "@engine";
 import { store, useApp } from "../match/store";
 import { buildDigest } from "../match/digest";
 import { buildWarnings } from "../match/warnings";
 import { formatCr } from "../match/format";
 import { Panel, PanelTitle, Sparkline, Badge, Stat, EmptyState } from "../ui/primitives";
+import { Advisor } from "../components/Advisor";
 import { Icon } from "../ui/icons";
 import { CorpCrest } from "../theme/art";
 import { ArtSlot } from "../theme/ArtSlot";
@@ -30,8 +31,40 @@ const partLabels: Record<ValuationComponent, string> = {
   megastructures: "Megastructures", stockpiles: "Stockpiles",
 };
 
+const FOCUS_OPTIONS: { id: LogisticsFocus; label: string; desc: string }[] = [
+  { id: "escortNext", label: "Escort convoys", desc: "Harden this turn's outbound convoys against raiders." },
+  { id: "expediteBuild", label: "Expedite build", desc: "Shave a turn off a build already in progress." },
+  { id: "surveyPush", label: "Push survey", desc: "Speed an in-flight survey vessel by a turn." },
+];
+
+/** Phase D — the single per-turn standing decision. Exclusive (one focus), spent each turn. */
+function LogisticsFocusPanel({ staged }: { staged: ReturnType<typeof useApp>["staged"] }) {
+  const current = staged.find((s) => s.order.kind === "logisticsFocus")?.order;
+  const focus = current && current.kind === "logisticsFocus" ? current.focus : null;
+  return (
+    <Panel className="dashboard__logistics">
+      <PanelTitle icon="bolt" eyebrow="Standing Order" title="Logistics Focus" />
+      <p className="hint">One focus per turn — it's spent this turn, never banked.</p>
+      <div className="focus-grid">
+        {FOCUS_OPTIONS.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            className={`focus-btn ${focus === o.id ? "is-active" : ""}`}
+            onClick={() => store.setLogisticsFocus(focus === o.id ? null : o.id)}
+            title={o.desc}
+          >
+            <strong>{o.label}</strong>
+            <span>{o.desc}</span>
+          </button>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
 export function Dashboard() {
-  const { view, lastReport, valuationHistory, turn, totalTurns, humanCorpId } = useApp();
+  const { view, lastReport, valuationHistory, turn, totalTurns, humanCorpId, staged } = useApp();
   if (!view) return null;
   const me = view.me;
   const phase = phaseOf(Math.max(1, turn), totalTurns);
@@ -58,6 +91,8 @@ export function Dashboard() {
         <Stat label="Systems" value={me.ownedSystemIds.length} icon="systems" />
         <Stat label="Charter" value={me.isFreeOperator ? "Free Operator" : "Chartered"} icon="gavel" tone={me.isFreeOperator ? "negative" : undefined} />
       </div>
+
+      <Advisor />
 
       {parts.length > 0 && (
         <details className="dashboard__valparts">
@@ -95,6 +130,8 @@ export function Dashboard() {
             </div>
           )}
         </Panel>
+
+        <LogisticsFocusPanel staged={staged} />
 
         <Panel className="dashboard__digest">
           <PanelTitle icon="report" eyebrow="Last Resolution" title={lastReport ? `Turn ${lastReport.turn} Digest` : "Awaiting first turn"} right={lastReport ? <Badge tone="info">{formatCr(lastReport.taxLevied)} tax</Badge> : undefined} />

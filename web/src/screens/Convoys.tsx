@@ -6,6 +6,7 @@ import { Panel, PanelTitle, Segmented, Badge, EmptyState, Bar } from "../ui/prim
 import { Icon } from "../ui/icons";
 import { NumberInput } from "../ui/NumberInput";
 import { CorpCrest, ResourceIcon } from "../theme/art";
+import { StandingRoutes } from "./StandingRoutes";
 
 export function Convoys() {
   const { view, humanCorpId } = useApp();
@@ -17,6 +18,7 @@ export function Convoys() {
 
   return (
     <div className="convoys">
+      <StandingRoutes />
       <Panel className="convoys__panel">
         <PanelTitle
           icon="convoys"

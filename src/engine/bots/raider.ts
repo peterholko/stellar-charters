@@ -55,8 +55,11 @@ export class RaiderBot implements Bot {
     orders.push(...maybeResearch(view, RESEARCH_PLANS.raider));
     // Scout rival systems for raid/seizure targets with a survey vessel (Section 25).
     orders.push(...maybeSurvey(view));
-    // Aggressively haunt the busiest export lane from turn 5 onward.
-    if (view.turn >= 5) orders.push(...planRaid(view, { fundFactor: 1.2 }));
+    // Haunt the busiest export lane as soon as there is traffic to threaten (Phase C — pull
+    // deniable violence forward). Route traffic is public from turn 2 and `planRaid` is itself
+    // traffic-gated, so engaging from turn 3 simply acts the moment a lane carries a convoy
+    // (~turn 4) instead of idling two extra turns.
+    if (view.turn >= 3) orders.push(...planRaid(view, { fundFactor: 1.2 }));
     // Sabotage a reachable rival's production as well as its convoys (Section 21).
     if (view.turn >= 8) orders.push(...maybeSabotage(view));
     // Diplomacy & conquest (Section 23): take an ally for cover, then mass a warfleet and seize

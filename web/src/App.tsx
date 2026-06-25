@@ -19,6 +19,8 @@ import { Research } from "./screens/Research";
 import { Turn } from "./screens/Turn";
 import { Report } from "./screens/Report";
 import { Standings, VICTORY } from "./screens/Standings";
+import { Auction } from "./screens/Auction";
+import { OpeningPanel } from "./screens/OpeningPanel";
 
 const NAV: { id: ViewId; label: string; icon: IconName }[] = [
   { id: "dashboard", label: "Command", icon: "dashboard" },
@@ -54,7 +56,7 @@ function Screen({ nav }: { nav: ViewId }) {
 
 export function App() {
   const state = useApp();
-  const { status, phase, nav, view, staged, resolving, turn, totalTurns, selection, humanCorpId, mySeat, players, submittedCount } = state;
+  const { status, phase, nav, view, staged, resolving, turn, totalTurns, selection, humanCorpId, mySeat, players, submittedCount, openingState } = state;
   const [drawer, setDrawer] = useState(false);
   const { user, logout } = useAuth();
 
@@ -102,6 +104,9 @@ export function App() {
     );
   }
   if (!mySeat || !view) return <InProgress username={user.username} />;
+  // The opening Inner Ring auction (Section 05) is the game's first screen — bid for a home before
+  // turn 1. It fully replaces the normal command shell until every charter has bid.
+  if (phase === "auction") return <Auction />;
   const me = view.me;
   const iSubmitted = players.find((p) => p.isYou)?.submitted ?? false;
   const waiting = phase === "play" && iSubmitted && submittedCount < players.length;
@@ -152,6 +157,7 @@ export function App() {
         </nav>
 
         <main className={`workspace${nav === "map" ? " workspace--map" : ""}`}>
+          {openingState && <OpeningPanel />}
           <Screen nav={nav} />
         </main>
         {/* One-time charter pick at join (review Section 5) — overlays until chosen. */}

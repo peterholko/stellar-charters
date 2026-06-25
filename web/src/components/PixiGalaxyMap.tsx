@@ -289,8 +289,8 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
   let halos: { g: Graphics; base: number }[] = [];
   let selRing: { g: Graphics; base: number } | null = null;
   let hubGlow: Graphics | null = null;
-  // "Last turn movements" replay: comets gliding along each visible leg, animated by the ticker.
-  let replay: { elapsed: number; duration: number; loopsLeft: number; dots: { g: Graphics; ax: number; ay: number; bx: number; by: number }[] } | null = null;
+  // "Last turn movements" replay: the actual ship/convoy sprites gliding along each visible leg.
+  let replay: { elapsed: number; duration: number; loopsLeft: number; dots: { g: Container; ax: number; ay: number; bx: number; by: number }[] } | null = null;
 
   // Screen-space label handles for projection.
   let labels: { t: Text; wx: number; wy: number; priority: boolean }[] = [];
@@ -775,30 +775,53 @@ async function createScene(host: HTMLElement, getProps: () => SceneProps): Promi
     const { movementLog, humanCorpId } = getProps();
     if (!movementLog || movementLog.length === 0) return;
     const pal = readPalette(host);
-    const dots: { g: Graphics; ax: number; ay: number; bx: number; by: number }[] = [];
+    const dots: { g: Container; ax: number; ay: number; bx: number; by: number }[] = [];
     for (const m of movementLog) {
       const a = points.get(m.fromSystemId);
       const b = points.get(m.toSystemId);
       if (!a || !b) continue;
-      const color = m.owner === humanCorpId ? pal.accent : pal.rival;
-      // A bright trace of the leg (dashed if off-lane) stays lit for the whole replay, with a
-      // travelling comet sweeping along it so the movement reads clearly.
+      const mine = m.owner === humanCorpId;
+      const color = mine ? pal.accent : pal.rival;
+      const flip = b.x < a.x; // side-profile sprites face right; flip to face the travel direction
+      // A bright trace of the leg (dashed if off-lane) stays lit for the whole replay, with the
+      // ACTUAL ship/convoy sprite sweeping along it so the movement reads as real ships moving.
       const line = new Graphics();
       if (m.offLane) {
         drawDashed(line, a, b, unit * 1.4, unit * 1.0, unit * 0.45, color, 0.6);
       } else {
-        line.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: unit * 0.45, color, alpha: 0.55, cap: "round" });
+        line.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: unit * 0.45, color, alpha: 0.45, cap: "round" });
       }
       layers.replay.addChild(line);
-      const dot = new Graphics();
-      dot.circle(0, 0, unit * 1.4).fill({ color, alpha: 1 });
-      dot.circle(0, 0, unit * 2.4).fill({ color, alpha: 0.25 }); // soft glow halo
-      layers.replay.addChild(dot);
-      dots.push({ g: dot, ax: a.x, ay: a.y, bx: b.x, by: b.y });
+
+      // The travelling actor: a convoy ships a freighter sprite, a fleet ships a warship sprite —
+      // the same fleet-icon assets the static map uses. A soft additive glow trails it so it pops.
+      const cont = new Container();
+      const glow = new Graphics();
+      glow.circle(0, 0, unit * 2.6).fill({ color, alpha: 0.2 });
+      glow.blendMode = "add";
+      cont.addChild(glow);
+      // Exact ship icon for this mover (engine-classified): bulk freighter vs light trader by cargo
+      // value, warship-by-tier, raider, or survey skiff — falling back to a per-kind default.
+      const slot = m.icon ? `fleeticon-${m.icon}` : m.kind === "convoy" ? "fleeticon-trader" : "fleeticon-escort";
+      const sprite = fleetSprite(slot, unit * 6.5, { flip, tint: mine ? undefined : color });
+      if (sprite) {
+        cont.addChild(sprite);
+      } else {
+        // Procedural ship fallback (still a ship, not a dot), pointed along travel.
+        const g = new Graphics();
+        g.rotation = 0;
+        cont.rotation = Math.atan2(b.y - a.y, b.x - a.x);
+        const s = unit * 1.4;
+        g.poly([s, 0, -s * 0.8, s * 0.8, -s * 0.3, 0, -s * 0.8, -s * 0.8]).fill({ color, alpha: 1 });
+        g.stroke({ width: unit * 0.3, color: pal.ink, alpha: 0.7 });
+        cont.addChild(g);
+      }
+      layers.replay.addChild(cont);
+      dots.push({ g: cont, ax: a.x, ay: a.y, bx: b.x, by: b.y });
     }
     if (dots.length === 0) return;
     markCullable(); // replay traces were rebuilt after draw — make them cullable too
-    replay = { elapsed: 0, duration: 2.2, loopsLeft: 1, dots }; // plays through twice
+    replay = { elapsed: 0, duration: 2.8, loopsLeft: 1, dots }; // plays through twice, a touch slower
   }
 
   // ----- animation -----

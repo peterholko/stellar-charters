@@ -50,21 +50,7 @@ export class Market {
    * execution time via `quoteInstant`, so this clearing starts from that price.
    */
   clear(orders: ClearableOrder[]): { fills: MarketFill[]; clearingPrices: Record<Resource, number> } {
-    const demand: Record<Resource, number> = zero();
-    const supply: Record<Resource, number> = zero();
-    for (const o of orders) {
-      if (o.side === "buy") demand[o.resource] += o.quantity;
-      else supply[o.resource] += o.quantity;
-    }
-
-    const clearingPrices: Record<Resource, number> = { ...this.prices };
-    for (const r of RESOURCES) {
-      const imbalance = (demand[r] - supply[r]) / this.tuning.priceReferenceVolume;
-      // Logistic-ish nudge: positive imbalance raises price, negative lowers it.
-      const factor = 1 + this.tuning.priceElasticity * imbalance;
-      const next = clamp(this.prices[r] * factor, this.floor(r), this.ceil(r));
-      clearingPrices[r] = round2(next);
-    }
+    const clearingPrices = projectClearingPrices(this.tuning, this.prices, orders);
 
     const fills: MarketFill[] = [];
     for (const o of orders) {
@@ -84,6 +70,35 @@ export class Market {
     for (const r of RESOURCES) this.prices[r] = clearingPrices[r];
     return { fills, clearingPrices };
   }
+}
+
+/**
+ * Pure clearing-price projection (no mutation, no RNG): given the current posted prices and a batch
+ * of orders, return the per-resource clearing price the turn would land on. `clear` commits these;
+ * read-only previews (Phase B market visibility) call this WITHOUT committing, so they never perturb
+ * the authoritative `Market.prices`.
+ */
+export function projectClearingPrices(
+  tuning: Tuning,
+  prices: Record<Resource, number>,
+  orders: ClearableOrder[],
+): Record<Resource, number> {
+  const demand: Record<Resource, number> = zero();
+  const supply: Record<Resource, number> = zero();
+  for (const o of orders) {
+    if (o.side === "buy") demand[o.resource] += o.quantity;
+    else supply[o.resource] += o.quantity;
+  }
+  const out: Record<Resource, number> = { ...prices };
+  for (const r of RESOURCES) {
+    const imbalance = (demand[r] - supply[r]) / tuning.priceReferenceVolume;
+    // Logistic-ish nudge: positive imbalance raises price, negative lowers it.
+    const factor = 1 + tuning.priceElasticity * imbalance;
+    const floor = tuning.basePrices[r] * tuning.priceFloorFrac;
+    const ceil = tuning.basePrices[r] * tuning.priceCeilFrac;
+    out[r] = round2(clamp(prices[r] * factor, floor, ceil));
+  }
+  return out;
 }
 
 /** A priced instant trade: total credits at the executed prices, the average per unit, and the

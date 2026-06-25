@@ -17,6 +17,7 @@ export type RaidOutcome =
   | "harassed"
   | "damaged"
   | "plundered"
+  | "destroyed"
   | "repelled"
   | "ambushed";
 
@@ -149,6 +150,11 @@ export function resolveRaid(
   if (roll < 0.75 - ratio * 0.1) {
     const destroyed = Math.max(1, Math.round(convoy.quantity * (0.15 + ratio * 0.25)));
     return { ...base, outcome: "damaged", cargoDestroyed: Math.min(convoy.quantity, destroyed) };
+  }
+  // Rare full destruction (Section 13): only when the raider materially overpowers the defense and
+  // the roll lands at the very top — reuses the same `roll`, no extra Rng draw. A named incident.
+  if (ratio >= 0.7 && roll >= 0.97) {
+    return { ...base, outcome: "destroyed", cargoDestroyed: convoy.quantity };
   }
   // Plundered: steal a portion, delivered to the raider.
   const plundered = Math.max(1, Math.round(convoy.quantity * (0.3 + ratio * 0.4)));

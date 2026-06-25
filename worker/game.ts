@@ -13,13 +13,16 @@ import {
   PROCEDURAL_SCENARIO_ID,
   RULESET_VERSION,
   buildClientState,
+  marketPressureFrom,
   defaultRegistry,
   gamePhase,
   generateProceduralScenario,
   loadScenario,
+  type BidOrder,
   type CharterType,
   type ClientPlayer,
   type ClientState,
+  type GamePhase,
   type Order,
   type Resource,
   type Scenario,
@@ -170,12 +173,12 @@ async function createGlobalGame(env: Env, creator: SessionUser): Promise<GameRow
     scenario: SCENARIO_ID,
     players: TOTAL_SEATS,
     turn: 0,
-    phase: "play",
+    phase: "auction",
     status: "active",
   };
   await env.DB.prepare(
     `INSERT INTO games (id, user_id, seed, scenario, players, human_corp, turn, phase, status, host_user_id, created_ts, updated_ts)
-     VALUES (?, ?, ?, ?, ?, 'corp-0', 0, 'play', 'active', ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 'corp-0', 0, 'auction', 'active', ?, ?, ?)`,
   ).bind(row.id, creator.id, row.seed, SCENARIO_ID, row.players, creator.id, now, now).run();
   await env.DB.prepare(
     "INSERT INTO game_players (game_id, corp_id, user_id, display_name, joined_ts) VALUES (?, 'corp-0', ?, ?, ?)",
@@ -203,13 +206,13 @@ async function autoJoin(env: Env, game: GameRow, user: SessionUser, mem: MemberR
 
 // ----- engine reconstruction (AI + human takeover) -----
 
-function buildEngine(game: GameRow, mem: MemberRow[]): Engine {
+function buildEngine(game: GameRow, mem: MemberRow[], useAuction: boolean): Engine {
   const base = resolveScenario(game);
   const baseBots = base.bots ?? ["balanced"];
   const bots: string[] = [];
   for (let i = 0; i < game.players; i++) bots[i] = baseBots[i % baseBots.length]!;
   const config = loadScenario({ ...base, id: game.scenario, players: game.players, bots });
-  const engine = new Engine(config, game.seed, defaultRegistry());
+  const engine = new Engine(config, game.seed, defaultRegistry(), { openingAuction: useAuction });
   // Make seated corps human-controllable; name them after their player.
   const nameByCorp = new Map(mem.map((m) => [m.corp_id, m.display_name]));
   for (const m of mem) engine.makeHybrid(m.corp_id);
@@ -232,8 +235,22 @@ function reconstruct(
   orders: Map<number, Map<string, Order[]>>,
   instants: InstantLog,
 ): { engine: Engine; reports: TurnReport[] } {
-  const engine = buildEngine(game, mem);
+  // An auction-era game has bids stored at turn 0 (or is mid-bidding in the "auction" phase).
+  // Legacy games predate the auction and assign homes deterministically at construction.
+  const useAuction = game.phase === "auction" || orders.has(0);
+  const engine = buildEngine(game, mem, useAuction);
   const reports: TurnReport[] = [];
+  // Opening Inner Ring auction (Section 05): once resolved (phase advanced past "auction"), replay
+  // the sealed bids from turn 0 and assign homes BEFORE turn 1 (no turn-counter shift). While still
+  // "auction", homes stay unassigned — buildClientState serves the pre-auction galaxy for the bid UI.
+  if (useAuction && game.phase !== "auction") {
+    const bids = orders.get(0);
+    for (const m of mem) {
+      const b = bids?.get(m.corp_id)?.find((o) => o.kind === "bid") as BidOrder | undefined;
+      engine.setHumanBid(m.corp_id, b ?? null);
+    }
+    engine.stepAuction();
+  }
   for (let t = 1; t <= game.turn; t++) {
     // Instant actions recorded during turn t's planning window precede turn t's resolution.
     applyInstants(engine, instants.get(t));
@@ -248,7 +265,7 @@ function reconstruct(
 
 // ----- state builders -----
 
-function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn: number, phase: "play" | "over"): ClientState {
+function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn: number, phase: GamePhase): ClientState {
   const players: ClientPlayer[] = mem.map((m) => ({
     corpId: m.corp_id,
     name: m.display_name,
@@ -264,6 +281,7 @@ function spectatorState(game: GameRow, mem: MemberRow[], user: SessionUser, turn
     totalTurns: TOTAL_TURNS,
     humanCorpId: "corp-0",
     prices: { ...BASE_CONFIG.tuning.basePrices },
+    marketPressure: marketPressureFrom(BASE_CONFIG.tuning, [], []),
     listedResources: [],
     systems: [],
     routes: [],
@@ -291,14 +309,21 @@ async function stateFor(env: Env, game: GameRow, user: SessionUser, mem: MemberR
   const phase = gamePhase(engine);
   if (!mySeat) return spectatorState(game, mem, user, engine.currentTurn, phase);
 
-  const upcoming = orders.get(game.turn + 1) ?? new Map<string, Order[]>();
+  // During the opening auction the submission window is the sealed-bid round (stored at turn 0);
+  // otherwise it's the upcoming turn's orders.
+  const upcoming = orders.get(phase === "auction" ? 0 : game.turn + 1) ?? new Map<string, Order[]>();
   const players: ClientPlayer[] = mem.map((m) => ({
     corpId: m.corp_id,
     name: m.display_name,
     isYou: m.user_id === user.id,
     submitted: upcoming.has(m.corp_id),
   }));
-  const base = buildClientState(engine, mySeat, game.id, reports);
+  // Phase B: feed every seat's locked orders for the upcoming turn so the client can show the
+  // fogged market-pressure signal (aggregate direction only — never per-rival data). No market
+  // signal during the auction (those submissions are bids, not market orders).
+  const base = buildClientState(engine, mySeat, game.id, reports, {
+    lockedOrders: (phase === "auction" ? new Map<string, Order[]>() : upcoming).values(),
+  });
   return {
     ...base,
     phase,
@@ -410,6 +435,26 @@ async function submit(request: Request, env: Env, user: SessionUser): Promise<Re
 
   const body = await readJson(request);
   const list = (body?.orders as Order[]) ?? [];
+
+  // Opening Inner Ring auction (Section 05): the first submission window collects sealed bids,
+  // stored at turn 0. The auction resolves — homes assigned — once every seated human has bid; this
+  // does NOT advance the turn counter (turn 1 stays the first playable turn).
+  if (game.phase === "auction") {
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO game_orders (game_id, turn, corp_id, orders_json) VALUES (?, 0, ?, ?)",
+    ).bind(game.id, mine.corp_id, JSON.stringify(list)).run();
+    const bids = (await loadOrders(env, game.id)).get(0) ?? new Map<string, Order[]>();
+    if (!mem.every((m) => bids.has(m.corp_id))) {
+      return json(await stateFor(env, game, user, mem)); // waiting for other bidders
+    }
+    // All seated humans have bid → resolve. The phase guard makes the flip idempotent under
+    // concurrent submits; reconstruct() then replays the bids and seats every charter.
+    await env.DB.prepare(
+      "UPDATE games SET phase='play', updated_ts=? WHERE id=? AND phase='auction'",
+    ).bind(Date.now(), game.id).run();
+    return json(await stateFor(env, { ...game, phase: "play" }, user, mem));
+  }
+
   const upcomingTurn = game.turn + 1;
   await env.DB.prepare(
     "INSERT OR REPLACE INTO game_orders (game_id, turn, corp_id, orders_json) VALUES (?, ?, ?, ?)",

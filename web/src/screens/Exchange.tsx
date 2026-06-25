@@ -6,9 +6,19 @@ import { Panel, PanelTitle, Sparkline, Segmented, Badge, Bar } from "../ui/primi
 import { NumberInput } from "../ui/NumberInput";
 import { Icon } from "../ui/icons";
 import { ResourceIcon } from "../theme/art";
+import type { MarketPressureDirection } from "@engine";
+
+/** Compact ticker glyph + label for the fogged between-turns market-pressure signal (Phase B). */
+const PRESSURE_LABEL: Record<MarketPressureDirection, { glyph: string; text: string; tone: "up" | "down" | "flat" }> = {
+  heavySell: { glyph: "▼▼", text: "heavy sell", tone: "down" },
+  sell: { glyph: "▼", text: "sell", tone: "down" },
+  balanced: { glyph: "▬", text: "balanced", tone: "flat" },
+  buy: { glyph: "▲", text: "buy", tone: "up" },
+  heavyBuy: { glyph: "▲▲", text: "heavy buy", tone: "up" },
+};
 
 export function Exchange() {
-  const { view, priceHistory, listedResources, exchangeDraft } = useApp();
+  const { view, priceHistory, listedResources, marketPressure, exchangeDraft } = useApp();
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [resource, setResource] = useState<Resource>("ice");
   const [systemId, setSystemId] = useState<string>("");
@@ -125,6 +135,7 @@ export function Exchange() {
               const cur = view.market.prices[r];
               const movePct = prev ? ((cur - prev) / prev) * 100 : 0;
               const atFloor = cur <= view.market.floor(r) + 0.01;
+              const pressure = PRESSURE_LABEL[marketPressure[r]?.direction ?? "balanced"];
               return (
                 <button
                   key={r}
@@ -137,6 +148,14 @@ export function Exchange() {
                   <Sparkline data={hist.length > 1 ? hist : [cur, cur]} width={70} height={22} color="auto" fill={false} />
                   <span className="board__price">{cur.toFixed(1)}</span>
                   <span className={`board__move ${movePct >= 0 ? "is-up" : "is-down"}`}>{movePct >= 0 ? "+" : ""}{movePct.toFixed(1)}%</span>
+                  {/* Phase B: fogged net pressure across all seats' locked orders for the next turn —
+                      lets the player read the glut forming before committing. Direction only. */}
+                  <span
+                    className={`board__pressure board__pressure--${pressure.tone}`}
+                    title={`Net market pressure next turn: ${pressure.text} (across all traders' staged orders)`}
+                  >
+                    {pressure.glyph}<span className="board__pressure-text"> {pressure.text}</span>
+                  </span>
                   {atFloor && <Badge tone="negative">Floor</Badge>}
                 </button>
               );

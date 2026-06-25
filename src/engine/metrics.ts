@@ -16,6 +16,16 @@ export interface TurnSnapshot {
   valuation: Record<string, number>;
   /** Orders submitted this turn per corporation (UX-load proxy). */
   ordersPerCorp: Record<string, number>;
+  /**
+   * Early-game engagement instrumentation (Phase 0). Consequential orders per corp are the
+   * submitted orders that aren't no-ops (zero-magnitude orders are dropped). `idleSeats` counts
+   * seats whose only consequential order this turn was a single export (market sell) or a single
+   * build — the "I had nothing to do" signal we want to design away.
+   */
+  consequentialPerCorp: Record<string, number>;
+  idleSeats: number;
+  /** Turn-over-turn absolute % change of the clearing price per resource (volatility proxy). */
+  priceChangePct: Record<Resource, number>;
   convoysLaunched: number;
   convoysRaided: number;
   cargoValueShipped: number;
@@ -67,6 +77,7 @@ export function emptyRaidOutcomes(): Record<RaidOutcome, number> {
     harassed: 0,
     damaged: 0,
     plundered: 0,
+    destroyed: 0,
     repelled: 0,
     ambushed: 0,
   };

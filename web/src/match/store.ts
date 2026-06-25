@@ -4,12 +4,17 @@ import {
   type ClientContact,
   type ClientMovement,
   type ClientPlayer,
+  type ClientStandingRoute,
   type ClientState,
   type GameOutcome,
   type GamePhase,
+  type LogisticsFocus,
+  type MarketPressureCell,
+  type OpeningCommandState,
   type Order,
   type PlayerView,
   type Resource,
+  type StandingRouteSuggestion,
   type TurnReport,
 } from "@engine";
 import { fetchState, instantAction as instantActionApi, newGame, pickCharter, submitOrders, type InstantActionRequest } from "../net/game";
@@ -63,6 +68,8 @@ export interface AppState {
   replayNonce: number;
   /** Goods currently tradable on the Exchange (commodity staging, review Section 13). */
   listedResources: Resource[];
+  /** Fogged net market-pressure direction per resource (Phase B) — drives the Exchange ticker. */
+  marketPressure: Record<Resource, MarketPressureCell>;
   staged: StagedOrder[];
   reports: TurnReport[];
   lastReport: TurnReport | null;
@@ -85,6 +92,12 @@ export interface AppState {
   players: ClientPlayer[];
   totalSeats: number;
   submittedCount: number;
+  /** Turn-1 opening window (Section 05): present only during the opening; drives the opening panel. */
+  openingState: OpeningCommandState | null;
+  /** Your standing trade routes (export automation). */
+  standingRoutes: ClientStandingRoute[];
+  /** A suggested standing route the UI offers for one-click approval. */
+  standingRouteSuggestion: StandingRouteSuggestion | null;
 }
 
 const THEME_KEY = "sc.theme";
@@ -101,6 +114,12 @@ function emptyHistory(): Record<Resource, number[]> {
   const h = {} as Record<Resource, number[]>;
   for (const r of RESOURCES) h[r] = [];
   return h;
+}
+
+function balancedPressure(): Record<Resource, MarketPressureCell> {
+  const p = {} as Record<Resource, MarketPressureCell>;
+  for (const r of RESOURCES) p[r] = { direction: "balanced" };
+  return p;
 }
 
 class Store {
@@ -122,12 +141,13 @@ class Store {
     contacts: [],
     replayNonce: 0,
     listedResources: [...RESOURCES],
+    marketPressure: balancedPressure(),
     staged: [],
     reports: [],
     lastReport: null,
     priceHistory: emptyHistory(),
     valuationHistory: [],
-    nav: "dashboard",
+    nav: "map",
     selection: { kind: "system", id: "hub" },
     theme: loadTheme(),
     resolving: false,
@@ -139,6 +159,9 @@ class Store {
     players: [],
     totalSeats: 4,
     submittedCount: 0,
+    openingState: null,
+    standingRoutes: [],
+    standingRouteSuggestion: null,
   };
 
   subscribe = (l: () => void): (() => void) => {
@@ -187,6 +210,7 @@ class Store {
       movementLog: cs.movementLog ?? [],
       contacts: cs.contacts ?? [],
       listedResources: cs.listedResources ?? [...RESOURCES],
+      marketPressure: cs.marketPressure ?? balancedPressure(),
       reports: cs.reports,
       lastReport: cs.reports.length ? cs.reports[cs.reports.length - 1]! : null,
       priceHistory,
@@ -200,8 +224,19 @@ class Store {
       players: cs.players,
       totalSeats: cs.totalSeats,
       submittedCount: cs.submittedCount,
-      // On the turn the game ends, jump to the results board; otherwise to the turn report.
-      ...(opts?.nav ? { nav: opts.nav } : advanced ? { nav: (cs.phase === "over" ? "standings" : "report") as ViewId } : {}),
+      openingState: cs.openingState ?? null,
+      standingRoutes: cs.standingRoutes ?? [],
+      standingRouteSuggestion: cs.standingRouteSuggestion ?? null,
+      // Map-first turn flow (Section 04, v2.4): when the game ends, jump to the results board;
+      // otherwise land on the map and auto-play the "Last turn movements" replay so the player
+      // reads the turn on the board first. The Report stays one click away on the navrail.
+      ...(opts?.nav
+        ? { nav: opts.nav }
+        : advanced
+          ? cs.phase === "over"
+            ? { nav: "standings" as ViewId }
+            : { nav: "map" as ViewId, replayNonce: this.state.replayNonce + 1 }
+          : {}),
     });
     this.maybePoll();
   }
@@ -212,7 +247,8 @@ class Store {
     if (s.status !== "ready") return false;
     if (s.mySeat === null) return true; // spectating (game full) — watch for an opening
     const me = s.players.find((p) => p.isYou);
-    return s.phase === "play" && !!me?.submitted && s.submittedCount < s.players.length;
+    // Poll while waiting for others — both the normal turn and the opening-auction bid round.
+    return (s.phase === "play" || s.phase === "auction") && !!me?.submitted && s.submittedCount < s.players.length;
   }
 
   private maybePoll(): void {
@@ -285,6 +321,58 @@ class Store {
   unstage(id: string): void { this.set({ staged: this.state.staged.filter((s) => s.id !== id) }); }
   clearStaged(): void { this.set({ staged: [] }); }
 
+  // ----- Turn-1 opening commands (Section 05) -----
+  /** Targets the player has staged an opening probe against this turn. */
+  stagedOpeningSurveys(): string[] {
+    return this.state.staged.flatMap((s) => (s.order.kind === "openingSurvey" ? [s.order.targetSystemId] : []));
+  }
+  /** Toggle a free opening Authority probe on a system (capped client-side by surveysRemaining). */
+  toggleOpeningSurvey(systemId: string): void {
+    if (this.state.players.find((p) => p.isYou)?.submitted) return;
+    const existing = this.state.staged.find((s) => s.order.kind === "openingSurvey" && s.order.targetSystemId === systemId);
+    if (existing) { this.unstage(existing.id); return; }
+    const remaining = this.state.openingState?.surveysRemaining ?? 0;
+    if (this.stagedOpeningSurveys().length >= remaining) return;
+    this.stage({ kind: "openingSurvey", targetSystemId: systemId });
+  }
+  /** The currently-staged first export, or null. */
+  get firstExport(): { resource: Resource; quantity: number } | null {
+    const o = this.state.staged.find((s) => s.order.kind === "firstExport")?.order;
+    return o && o.kind === "firstExport" ? { resource: o.resource, quantity: o.quantity } : null;
+  }
+  /** Stage (or replace) the optional named maiden voyage; pass quantity 0 to clear it. */
+  setFirstExport(resource: Resource, quantity: number): void {
+    if (this.state.players.find((p) => p.isYou)?.submitted) return;
+    const staged = this.state.staged.filter((s) => s.order.kind !== "firstExport");
+    if (quantity > 0) staged.push({ id: nextId(), order: { kind: "firstExport", resource, quantity } });
+    this.set({ staged });
+  }
+
+  // ----- Standing trade routes -----
+  createStandingRoute(originSystemId: string, resource: Resource, batch: number, reserve: number, enabled = true): void {
+    this.stage({ kind: "createStandingRoute", originSystemId, resource, batch, reserve, enabled });
+  }
+  setStandingRouteEnabled(routeId: string, enabled: boolean): void {
+    this.stage({ kind: "setStandingRouteEnabled", routeId, enabled });
+  }
+  removeStandingRoute(routeId: string): void {
+    this.stage({ kind: "removeStandingRoute", routeId });
+  }
+
+  /** The single per-turn logistics focus (Phase D). Exclusive: setting one replaces any prior
+   *  choice; pass null to clear it. Never stacks — at most one `logisticsFocus` order is staged. */
+  setLogisticsFocus(focus: LogisticsFocus | null): void {
+    if (this.state.players.find((p) => p.isYou)?.submitted) return;
+    const staged = this.state.staged.filter((s) => s.order.kind !== "logisticsFocus");
+    if (focus) staged.push({ id: nextId(), order: { kind: "logisticsFocus", focus } });
+    this.set({ staged });
+  }
+  /** The currently-staged logistics focus, or null. */
+  get logisticsFocus(): LogisticsFocus | null {
+    const o = this.state.staged.find((s) => s.order.kind === "logisticsFocus")?.order;
+    return o && o.kind === "logisticsFocus" ? o.focus : null;
+  }
+
   // ----- turn resolution -----
   /** Lane interdictions in the most recently submitted turn (an interdiction covers ONE
    *  resolution — Section 13). Remembered so the turn after, the Report can offer a
@@ -296,6 +384,17 @@ class Store {
     const li = this.lastInterdicts;
     // Remind exactly once — on the first planning window after the trap fired.
     return li && this.state.turn === li.submittedAtTurn + 1 ? li.routeIds : [];
+  }
+
+  /** Submit a sealed opening-auction bid (Section 05): a priority-ordered list of inner-ring systems
+   *  with amounts. Highest valid bid wins each system; you win at most one; losing bids are ~92%
+   *  refunded; winning nothing still grants a fallback home. */
+  submitBid(priorities: { systemId: string; amount: number }[]): void {
+    if (this.state.resolving || this.state.status !== "ready") return;
+    this.set({ resolving: true });
+    void submitOrders([{ kind: "bid", priorities }] as Order[])
+      .then((cs) => this.applyState(cs))
+      .catch((e) => this.set({ resolving: false, error: String(e) }));
   }
 
   submit(): void {
@@ -314,7 +413,7 @@ class Store {
 
   newMatch(): void {
     this.set({ status: "loading", resolving: false });
-    void newGame().then((cs) => this.applyState(cs, { nav: "dashboard" })).catch((e) => this.set({ status: "error", error: String(e) }));
+    void newGame().then((cs) => this.applyState(cs, { nav: "map" })).catch((e) => this.set({ status: "error", error: String(e) }));
   }
 }
 

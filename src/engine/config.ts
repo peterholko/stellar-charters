@@ -119,6 +119,11 @@ export interface Scenario {
 /** Economy/combat constants the engine reads each turn. */
 export interface Tuning {
   startingCredits: number;
+  /** Turns of a home's worked-deposit output seeded into its stockpile at game start, so Turn 1 has
+   *  tradable goods to ship (production itself only arrives next turn). 0 disables the seed. */
+  startupInventoryTurns: number;
+  /** Free instant Authority probes each charter may run in the Turn-1 opening window (Section 05). */
+  openingSurveySlots: number;
   /** Base global market price per resource. */
   basePrices: Record<Resource, number>;
   /** Price floor/ceiling as a fraction of base price (humanity liquidity). */
@@ -379,6 +384,11 @@ export interface Tuning {
   disruptorComponentCost: number; // components consumed per disruptor build
   disruptorDelay: number; // extra turns a rival arrival is held in the disruption field
   disruptorDefenseBonus: number; // added to local raid defense (kept small to avoid turtling)
+  /** Logistics focus (Phase D): one-turn modifiers from the per-turn focus token. */
+  logisticsFocus: {
+    /** Flat escort strength added to this turn's outbound convoys when `escortNext` is chosen. */
+    escortBonus: number;
+  };
   /** Equity & acquisition (Section 17). */
   sharesOutstanding: number;
   acquisitionThreshold: number; // fraction of shares for control
@@ -462,10 +472,13 @@ export interface Tuning {
  * order log through the current engine — can be abandoned for a fresh seed rather than silently
  * re-deriving its history under new rules. Surfaced in ClientState for visibility.
  */
-export const RULESET_VERSION = 12; // v12 (Section 04): a fleet's launch turn counts as travel (distance-1 = 1 turn); per-hull speed scales lane + off-lane transit; ship-mounted sensors surface rival fleet contacts; the Warp Disruptor platform holds rival arrivals for extra turns
+export const RULESET_VERSION = 14; // v14 (Phase D): a per-turn "logistics focus" order (escortNext/expediteBuild/surveyPush) applies one non-stacking, non-queueable modifier at its resolution step — a new numbered resolution hook that changes outcomes
+// v13 (Phase A): inner-ring resource seeding is weighted toward Metals/Silicates (~60% overlap) for a contested opening — different per-system yields change resolution outcomes from committed scenarios
 
 export const DEFAULT_TUNING: Tuning = {
   startingCredits: 6500,
+  startupInventoryTurns: 2,
+  openingSurveySlots: 2,
   basePrices: {
     // Raw feedstocks.
     ice: 8,
@@ -639,6 +652,7 @@ export const DEFAULT_TUNING: Tuning = {
   disruptorComponentCost: 4,
   disruptorDelay: 2,
   disruptorDefenseBonus: 2,
+  logisticsFocus: { escortBonus: 6 },
   sharesOutstanding: 100,
   acquisitionThreshold: 0.5,
   maxDebtToValuation: 1.0,

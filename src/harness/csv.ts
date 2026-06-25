@@ -58,6 +58,47 @@ export function writePerTurnCsv(path: string, games: GameMetrics[]): void {
   writeFileSync(path, toCsv(rows));
 }
 
+/**
+ * One row per (game, turn): Phase 0 early-game engagement instrumentation. Consequential actions
+ * (non-no-op orders summed across seats + mean per seat), idle-seat count, and per-resource
+ * turn-over-turn price volatility. Used to read whether the opening turns give players real
+ * decisions and whether prices actually move early.
+ */
+export function writeEarlyGameCsv(path: string, games: GameMetrics[]): void {
+  ensureDir(path);
+  const header = [
+    "seed",
+    "turn",
+    "seats",
+    "consequentialTotal",
+    "consequentialMean",
+    "idleSeats",
+    "priceVolatilityMean",
+    ...RESOURCES.map((r) => `pchg_${r}`),
+  ];
+  const rows: (string | number)[][] = [header];
+  for (const g of games) {
+    for (const s of g.snapshots) {
+      const consequential = Object.values(s.consequentialPerCorp);
+      const seats = consequential.length;
+      const consequentialTotal = consequential.reduce((a, b) => a + b, 0);
+      const volatilities = RESOURCES.map((r) => s.priceChangePct[r]);
+      const volMean = volatilities.reduce((a, b) => a + b, 0) / RESOURCES.length;
+      rows.push([
+        g.seed,
+        s.turn,
+        seats,
+        consequentialTotal,
+        seats ? round2(consequentialTotal / seats) : 0,
+        s.idleSeats,
+        round4(volMean),
+        ...volatilities.map(round4),
+      ]);
+    }
+  }
+  writeFileSync(path, toCsv(rows));
+}
+
 /** One row per game: final valuations, auction health, pacing milestones. */
 export function writePerGameCsv(path: string, games: GameMetrics[]): void {
   ensureDir(path);
@@ -110,4 +151,8 @@ function avgDefined(values: number[]): number {
 
 function round2(x: number): number {
   return Math.round(x * 100) / 100;
+}
+
+function round4(x: number): number {
+  return Math.round(x * 10000) / 10000;
 }
