@@ -1,5 +1,18 @@
-# Stellar Charters — Game Design Document v2.4
+# Stellar Charters — Game Design Document v2.5
 
+> **v2.5 — "An interactive opening that keeps itself moving" (playable web build).** The game is
+> now a deployed multiplayer web app (server-authoritative, event-sourced) on top of the same
+> engine, and the early game is interactive end-to-end: the **opening Inner Ring auction** is live
+> as the first submission round (sealed bids → home, with a **guaranteed-home fallback** so no one
+> is ever left without a charter); each home is seeded with a **startup stockpile** so **Turn 1**
+> has goods to ship; the **Turn-1 opening window** adds **two free instant Authority probes** and an
+> optional **named first export**; **standing trade routes** let a player automate exports (one sell
+> convoy to the Hub each turn, no per-turn order) so turns 2–5 sustain themselves; a rare **full
+> convoy destruction** raid outcome creates a **named diplomatic incident**; and a contextual
+> **Advisor** ("what to do now") plus a **"Show moves"** map replay (the real ship sprites animate
+> along last turn's legs) make the human turn legible. See the Opening (Section 05), Convoy UX
+> (Section 11) and Raiding (Section 13) sections for the realized mechanics.
+>
 > **v2.4 — "Ship the trade war; compress the empire."** This revision implements the MoO2/MoO3
 > design review: every credit movement now appears on a per-seat **Ledger** with a cause
 > (auto-procurement itemized — no invisible hands); brown-outs and limiting inputs are loud,
@@ -269,10 +282,19 @@ Priority 2: Vesta Minor, bid 3,600 credits
 Priority 3: Pale Harbor, bid 3,200 credits
 # resolution
 highest valid bid wins each system
-losing bids refunded 90–95%
+losing bids refunded ~92%
 one opening claim maximum per player
 
-After the auction, the winning claims come online, production starts, and players begin exporting, surveying deeper systems, and planning their second claim. The inner-ring systems also begin with known safe warp routes to the Wormhole Hub, while deeper routes must be charted by survey ships.
+**Guaranteed home (v2.5).** A charter that wins nothing in the auction forfeits only the non-refunded slice of its top bid and is then **seated by deterministic fallback** on the nearest unclaimed inner-ring system — so a bad bid means a weaker start, never *no* start. Every home is also made habitable and granted a free level-1 extractor on a tradable raw deposit, so it can host a population and produce something to export from the first turn.
+
+### Turn-1 opening window (v2.5)
+
+The auction resolves as the game's **first submission round**; it does not consume a normal turn. Homes come online immediately, and each is seeded with a **startup stockpile** — roughly two turns of its tradable production placed in the local stockpile so **Turn 1 already has goods to ship** (production itself only *arrives* the next turn). In the Turn-1 window each charter may, alongside its normal orders:
+
+- Run **two free instant Authority probes** — pick nearby unclaimed systems and receive full private deposit intel at once (no survey-vessel travel). Each probe leaves a **public ping** on the map: rivals see *that* a system was scouted and by whom, never the intel itself.
+- Launch an optional **named first export** ("First Shipment — <Charter>") from the startup stockpile to the Wormhole Hub — the maiden voyage that teaches the export → arrival → payout loop.
+
+After the opening, the winning claims keep producing, players export, survey deeper systems, set up standing trade routes (Section 11), and plan a second claim. The inner-ring systems begin with known safe warp routes to the Wormhole Hub, while deeper routes must be charted by survey ships.
 
 
 `SECTION 06`
@@ -573,6 +595,12 @@ Exposure: High
 Authority presence: Low
 Actions: [Interdict Route] [Patrol Route] [Escort Convoy]
 
+### Standing Trade Routes (v2.5)
+
+Manually selling every surplus each turn is busywork. A **standing trade route** is player-owned export **automation**: the player approves a route (origin system → Wormhole Hub, one commodity, a per-launch **batch** size and a **reserve** kept back), and while it is enabled the engine **auto-launches at most one sell convoy per route per turn** — with no per-turn order — whenever the origin stockpile is at least `reserve + batch`. Launches use ordinary convoy mechanics (fuel, escort, raid exposure, route heat) and so become **regular, predictable raid targets**, which is the point: recurring trade is what gives raiders something to bite on.
+
+Routes are opt-in and never auto-enabled; the UI suggests one (a home's richest produced tradable) for one-click approval. Each launch is reported in the turn's automation digest. A standing route is **player automation, not neutral background traffic** — every recurring convoy belongs to a charter and can be escorted, raided, or rerouted around.
+
 
 `SECTION 12`
 
@@ -631,12 +659,13 @@ before convoy reaches protected space
 | Harassed | Arrival delayed or shipping cost increased. |
 | Damaged | Some cargo destroyed. |
 | Plundered | Some cargo stolen and delivered to raider's nearest eligible base. |
+| **Destroyed** (rare) | The convoy is lost outright — a **named diplomatic incident** (folklore name + evidence trail + report headline) and a heavier grudge. Only fires when the raider materially overpowers the defense. |
 | Repelled | Defenses stop raid; attackers may take damage. |
 | Ambushed | Defender anticipated the attack; raiders take heavier losses. |
 
 Balance Rule
 
-Raids should usually delay, damage, or partially loot. Total destruction should require a valuable, exposed, poorly defended convoy and a strong committed raid.
+Raids should usually delay, damage, or partially loot. **Total destruction is the rare top band** (v2.5): it requires a valuable, exposed, poorly defended convoy and a strong committed raid, and when it happens it surfaces as a *named* incident with shown math and graded sponsor evidence — a story and a grievance, not just a number.
 
 
 `SECTION 14`
@@ -869,29 +898,29 @@ they become that corporation's controlling player and re-enter charter play.
 
 The opening should teach the game in layers: claim, produce, export, survey, expand, research, supply, raid risk. Food is visible early as a market good, while population becomes more important as outposts develop into settlements.
 
-TURN 0
+OPENING
 
-#### Inner ring revealed
+#### Inner ring auction
 
-Players review pre-surveyed systems near the Wormhole Hub.
+Players review the pre-surveyed inner ring near the Wormhole Hub and submit sealed bids (with fallbacks) for a home. Highest valid bid wins each system; a charter that wins nothing is **seated by fallback** so no one is left out. Homes come online at once, each seeded with a **startup stockpile**.
 
 TURN 1
 
-#### Opening auction
+#### Opening commands
 
-Players submit sealed bids with fallbacks and win one starting charter claim.
+The home already holds tradable startup goods (production *arrives* next turn). Players run **two free Authority probes** on nearby systems, optionally launch a **named first export** to the Hub, and can approve a **standing trade route** — alongside their normal orders.
 
 TURN 2
 
-#### First production
+#### First payout & automation
 
-The starting system comes online. Players launch first exports and survey deeper.
+The maiden voyage settles at the Hub — players learn that selling pays after arrival. Standing routes begin shipping surplus automatically each turn, and players survey deeper.
 
 TURN 3
 
-#### First payout
+#### First production cycle
 
-One-turn exports settle. Players learn that selling pays after arrival.
+Local extractors' output now lands in stockpiles, feeding exports and standing routes; players plan a second claim or save for range tech.
 
 TURN 4
 
@@ -946,7 +975,7 @@ The resolution order must make timing legible and avoid same-turn chaining explo
 1. **Orders lock.** All submitted actions become final.
 2. **Production.** Systems produce into local stockpiles.
 3. **Market clearing.** Buy/sell orders fill or fail based on market/limit rules.
-4. **Convoy launch.** Filled buys, exports, and transfers create convoys on selected warp paths.
+4. **Convoy launch.** Filled buys, exports, and transfers create convoys on selected warp paths. **Enabled standing trade routes auto-launch here** — one sell convoy per route when the origin is stocked above its reserve (no per-turn order needed).
 5. **Warp-route interdiction.** Privateers/raiders assigned to warp tunnels may intercept matching new convoys.
 6. **Targeted raids.** Raids against visible in-transit convoys resolve.
 7. **Arrivals and settlements.** Convoys reaching destinations deliver goods or pay export proceeds.
@@ -955,6 +984,8 @@ The resolution order must make timing legible and avoid same-turn chaining explo
 10. **Reports published.** Players receive digest, map changes, warp-route history, and warnings.
 
 **No same-turn chaining**Goods arriving during resolution are available in the next order window, not earlier in the same resolution sequence.
+
+**Opening (v2.5).** The Inner Ring auction resolves once, before Turn 1, as its own submission round — it assigns homes from bids and does **not** advance the turn counter. On **Turn 1** the opening commands (free Authority probes, the named first export) resolve at the very start of the turn, before production, drawing on the pre-seeded startup stockpile; the rest of the turn then resolves normally.
 
 
 `SECTION 21`
@@ -1353,6 +1384,6 @@ while the victory-type spread stays varied (technology / monopoly / conquest / e
 
 ◆ END OF DOSSIER ◆
 
-STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.2  
+STELLAR CHARTERS · GAME DESIGN DOCUMENT v2.5  
 WORMHOLE FRONTIER · STELLAR CHARTERS · GLOBAL EXCHANGE · WARP ROUTES · CONVOY WARFARE · POST-CHARTER PLAY · POPULATION & FOOD  
 "The charter gives you rights. The market decides whether you survive them."

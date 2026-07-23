@@ -1,12 +1,26 @@
 # Stellar Charters
 
-Async 4X / economic-warfare game design. See [`game-design-doc.md`](./game-design-doc.md)
-for the full design (v2.2).
+An asynchronous 4X / economic-warfare game — a wormhole frontier of corporate trade war for
+4–12 players. See [`game-design-doc.md`](./game-design-doc.md) for the full design (v2.5).
 
-This repo contains a **headless balance simulator** with **4–8 all-bot corporations**,
-used to test whether the design is fun and the economy is viable *before* building a UI.
-It now covers a **full 42-turn match** spanning the early, mid, and late game (42 turns ≈
-a 3-week session at 2 turns/day):
+The repo is **two layers on one shared, deterministic engine** (`src/engine`, pure and
+browser-portable — no Node APIs, randomness only via a seeded PRNG, so it's imported unchanged
+by every consumer):
+
+1. **A playable web app** — a React + PixiJS client (`web/`) and a server-authoritative,
+   **event-sourced** Cloudflare Worker backend (`worker/`, D1). A live global game runs the
+   full opening: an **Inner Ring claim auction** (bid for a home, with a *guaranteed-home
+   fallback* so no one is left out), an interactive **Turn-1 opening** (each home is seeded with
+   a startup stockpile → a **named first export**, plus two free instant Authority probes),
+   **standing trade routes** that automate exports so convoys keep flowing without busywork,
+   deniable raiding that can rarely escalate to a **named diplomatic incident**, an in-app
+   **Advisor** ("what to do now"), and a **"Show moves"** map replay that animates the real ship
+   sprites along last turn's paths.
+2. **A headless balance simulator** (`src/cli`, `src/harness`) — **4–8 all-bot corporations**
+   playing full 42-turn matches, used to test whether the economy is viable and fun *before*
+   (and while) building the UI.
+
+The engine covers the full early, mid, and late game (42 turns ≈ a 3-week session at 2 turns/day):
 
 - **Early/mid (Sections 04–16):** opening auction, local production, the Galactic
   Exchange, warp-route convoys, one-turn interdiction, privateer raiding, Range-2 and
@@ -28,14 +42,20 @@ a 3-week session at 2 turns/day):
 ```bash
 npm install
 
+# ----- Web app (the playable game) -----
+npm run worker:dev   # Cloudflare Worker + D1 backend on :8787
+npm run web:dev      # Vite client on :5173 (proxies /api to the worker)
+npm run web:deploy   # build the client + deploy the worker to Cloudflare
+
+# ----- Headless balance simulator -----
 # Batch: run many seeds, write CSVs + a balance summary to out/
 npm run sim -- --games 200 --players 8 --turns 42
-
 # Single game, full turn-by-turn text log (the human "is it fun?" read)
 npm run sim -- --games 1 --players 8 --seed 0 --verbose
 
-npm test          # vitest unit tests (incl. determinism)
-npm run typecheck # tsc --noEmit
+npm test               # vitest unit tests (determinism, ledger, replay, …)
+npm run typecheck      # tsc --noEmit over src/ + tests/
+npm run worker:typecheck
 ```
 
 CLI flags: `--games N`, `--players N`, `--turns N`, `--seed N|random`, `--scenario PATH`,
@@ -43,16 +63,20 @@ CLI flags: `--games N`, `--players N`, `--turns N`, `--seed N|random`, `--scenar
 
 ## How it's structured
 
-The simulation **engine is a pure, browser-portable core** (`src/engine`, no Node APIs,
-randomness only via a seeded PRNG) so the eventual web app can import it unchanged.
-Node-only concerns live in `src/harness` (CSV/report I/O) and `src/cli`.
+The **engine is a pure, browser-portable core** (`src/engine`, no Node APIs, randomness only via
+a seeded PRNG) so the web client, the Worker, and the simulator all import it unchanged.
 
-- `src/engine/` — `rng`, `types`, `config`, `galaxy` (pathfinding), `market`, `auction`,
-  `raiding`, `engine` (Section 20 resolution order incl. population, depots, and the
-  equity/acquisition step), `metrics`, and `bots/` (`miner`, `raider`, `balanced`, each
-  of which also plays the financier and Free-Operator roles).
-- `src/harness/` — `runGames`, `csv`, `report` (aggregation + risk flags).
-- `src/cli/runSim.ts` — entrypoint.
+- `src/engine/` — `rng`, `types`, `config`, `galaxy` (pathfinding), `market`, `auction` (opening
+  Inner Ring claim auction), `raiding`, `engine` (the Section 20 resolution order incl. the opening
+  commands, standing-route auto-launch, population, depots, raids, and the equity/acquisition step),
+  `clientState` (`buildClientState` — the per-seat fog-of-war view the UI/API serve), `metrics`, and
+  `bots/` (`miner`, `raider`, `balanced`, …, each also playing the financier and Free-Operator roles).
+- `worker/` — the server-authoritative Cloudflare Worker (`game.ts`): one always-on global game,
+  **event-sourced** (reconstructed by replaying `(seed, players, per-seat orders)` — the opening
+  auction is the first submission round), D1 persistence, sessions/auth.
+- `web/` — React 19 + PixiJS 8 SPA (`App.tsx` shell, `match/` store, `net/game.ts` API client,
+  `components/PixiGalaxyMap.tsx`, the Auction / Opening / Advisor / Standing-Routes screens).
+- `src/harness/` — `runGames`, `csv`, `report` (aggregation + risk flags); `src/cli/runSim.ts` entrypoint.
 - `scenarios/*.json` — data-driven maps + tunable balance numbers (regenerate with
   `npx tsx scripts/genScenarios.ts`).
 
